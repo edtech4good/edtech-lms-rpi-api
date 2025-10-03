@@ -1,0 +1,72 @@
+#  Template NodeJS build
+
+#  This template allows you to validate your NodeJS code.
+#  The workflow allows running tests and code linting on the default branch.
+
+pipelines:
+  branches:
+    develop:
+      - step:
+          name: Build
+          image: node:latest
+          script:
+            - npm install
+            - npm run build
+            - cp -r ./artifacts/* ./build
+            - cp ./package.json ./build/package.json
+          artifacts:
+            - build/**
+      - step:
+          name: Build Artifacts
+          image: atlassian/default-image:2
+          script:
+            - cd build && zip -r ../fortykapi.zip *
+          artifacts:
+            - fortykapi.zip
+      - step:
+          name: Upload to S3
+          services:
+            - docker
+          script:
+            # Test upload
+            - pipe: atlassian/aws-code-deploy:0.2.10
+              variables:
+                AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+                AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+                AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+                COMMAND: "upload"
+                APPLICATION_NAME: ${APPLICATION_NAME}
+                ZIP_FILE: "fortykapi.zip"
+
+      - step:
+          name: Deploy with CodeDeploy
+          deployment: staging
+          services:
+            - docker
+          script:
+            # Test upload
+            - pipe: atlassian/aws-code-deploy:0.2.10
+              variables:
+                AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+                AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+                AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+                COMMAND: "deploy"
+                APPLICATION_NAME: ${APPLICATION_NAME}
+                DEPLOYMENT_GROUP: ${DEPLOYMENT_GROUP}
+                IGNORE_APPLICATION_STOP_FAILURES: "true"
+                FILE_EXISTS_BEHAVIOR: "OVERWRITE"
+                WAIT: "true"
+
+  pull-requests:
+    "feature/*": #this runs as default for any branch not elsewhere defined
+      - step:
+          name: Test and Code coverage
+          image: node:latest
+          caches:
+            - node
+          script:
+            - npm install
+            - npm run lint
+            # - npm run test
+            - npm run build
+            # - npm run coverage

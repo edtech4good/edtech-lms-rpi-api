@@ -1,0 +1,7 @@
+export enum Progress {
+	LESSONPRACTICE = 1,
+	LESSONQUIZ = 2,
+	LEVELQUIZ = 3,
+	BASELINEQUESTION = 4,
+}
+
