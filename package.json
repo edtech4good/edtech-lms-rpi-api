@@ -17,6 +17,7 @@
     "start:prod": "node dist/main",
     "db:migrate": "npx sequelize-cli db:migrate",
     "seed:demo": "node scripts/seed-demo-users.js",
+    "seed:content": "node scripts/seed-demo-content.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "model-gen": "sequelize-auto -h localhost -d test -u root -x password --dialect mysql -o ./path/to/models -l ts"
   },
