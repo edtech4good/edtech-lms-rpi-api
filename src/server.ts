@@ -25,7 +25,18 @@ async function bootstrap() {
   SwaggerModule.setup("docs", app, document);
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
-  app.enableCors();
+  app.enableCors({
+    origin: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Accept-Language',
+      'Cache-Control',
+      'TIMEOFFSET',
+    ],
+  });
   app.use(
     helmet({
       contentSecurityPolicy: false,

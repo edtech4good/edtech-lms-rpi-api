@@ -2,6 +2,10 @@
 
 A specialized API for Raspberry Pi devices in the Educational Technology Learning Management System, designed for offline and edge computing scenarios.
 
+## In the full system
+
+This repo is part of the multi-repo offline LMS workspace. See [**ARCHITECTURE.md**](../ARCHITECTURE.md) for how the central LMS, Pi, tablets, and sync endpoints fit together. Legacy diagrams and guides live under [**docs/**](../docs/README.md).
+
 ## 🚀 Features
 
 - **Offline Capability**: Designed for Raspberry Pi devices with limited connectivity
@@ -30,12 +34,9 @@ A specialized API for Raspberry Pi devices in the Educational Technology Learnin
 
 ## 🚀 Quick Start
 
-### 1. Clone the Repository
+### 1. Get the code
 
-```bash
-git clone https://github.com/your-username/edtech-lms-rpi-api.git
-cd edtech-lms-rpi-api
-```
+Clone or copy this repository into your workspace (see parent [**ARCHITECTURE.md**](../ARCHITECTURE.md) for sibling repos).
 
 ### 2. Install Dependencies
 
@@ -45,7 +46,7 @@ npm install
 
 ### 3. Environment Configuration
 
-Set up your environment variables. The application requires configuration through the `FORTYKAPIRPICONFIG` environment variable.
+Configuration is loaded from JSON in **`FORTYKAPIRPICONFIG`**, or from defaults in `src/config.ts`. For local dev without JSON, you can set **`RPI_PORT`** (default `3000`), **`RPI_DB_*`**, etc. See `src/config.ts` for the full fallback list.
 
 ### 4. Database Setup
 
@@ -65,8 +66,11 @@ The API will be available at `http://localhost:3000`
 
 ## 📚 API Documentation
 
-Once the server is running, you can access the Swagger documentation at:
-- Development: `http://localhost:3000/api`
+Swagger UI is mounted at **`/docs`** (not `/api`). With the default port:
+
+- `http://localhost:3000/docs`
+
+Notable routes used by clients: **`GET /export/log`** (zip), **`PUT /import/master`** (curriculum sync zip, teacher/admin roles).
 
 ## 🗂️ Project Structure
 
@@ -128,11 +132,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-If you encounter any issues or have questions:
-
-1. Check the [Issues](https://github.com/your-username/edtech-lms-rpi-api/issues) page
-2. Create a new issue if your problem isn't already reported
-3. Join our community discussions
+If you encounter any issues or have questions, use your team’s issue tracker or internal docs.
 
 ## 🙏 Acknowledgments
 
