@@ -10,6 +10,19 @@ import { config as configValidator } from './validators';
 
 dotenv.config();
 
+/**
+ * Placeholder secrets that are only ever acceptable on a developer machine.
+ * They are committed to a public repository, so anything signing JWTs with
+ * them can have its tokens forged by anyone.
+ */
+const DEV_ONLY_SECRETS = [
+  "local-dev-serversynckey",
+  "local-dev-rpi-jwt-secret-change-me",
+];
+
+const isLocalDev =
+  process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+
 // Default configuration for development
 const defaultConfig = {
   fortyk: {
@@ -63,6 +76,36 @@ try {
 }
 
 const Config: modelconfig = <modelconfig>configvalues;
+
+/**
+ * Fail closed. Checked against the resolved config rather than the environment
+ * so it covers both configuration paths: FORTYKAPIRPICONFIG on a deployed Pi,
+ * and RPI_* environment variables locally.
+ *
+ * NODE_ENV must be set to "development" explicitly to use the placeholders; an
+ * unset NODE_ENV is treated as production, because a Pi in a classroom with a
+ * forgotten variable is exactly the case this is meant to catch.
+ */
+if (!isLocalDev) {
+  const insecure: string[] = [];
+  if (DEV_ONLY_SECRETS.includes(Config.fortyk.api.serversynckey)) {
+    insecure.push("serversynckey (set RPI_SERVER_SYNC_KEY or SERVER_SYNC_KEY)");
+  }
+  if (DEV_ONLY_SECRETS.includes(Config.fortyk.api.rpi.applicationsecret)) {
+    insecure.push(
+      "applicationsecret (set RPI_APPLICATION_SECRET, JWT_SECRET or APPLICATION_SECRET)",
+    );
+  }
+  if (insecure.length > 0) {
+    throw new Error(
+      `Refusing to start with development secrets while NODE_ENV=${
+        process.env.NODE_ENV ?? "(unset)"
+      }. These are committed to a public repository and allow anyone to forge ` +
+        `tokens:\n  - ${insecure.join("\n  - ")}\n` +
+        `Set real values, or set NODE_ENV=development for local work.`,
+    );
+  }
+}
 
 const buildLogger = (): winston.Logger => {
   const loggerConfig = new LoggerConfig();

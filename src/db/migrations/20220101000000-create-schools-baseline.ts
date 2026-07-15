@@ -3,6 +3,12 @@ import { tableNameList } from "../migration-helpers";
 
 /**
  * `20221220143728-countries-schools` alters `schools` and expects it to exist.
+ *
+ * `expectedcontribution` and `expectedusage` are declared here even though they
+ * look like they belong to `20230407050046-create-schools-table`. That migration
+ * is the only other place they are defined, and it early-returns once `schools`
+ * exists — which this baseline guarantees. Without them, models/data-models/school.ts
+ * still selects both columns and every School query fails with ER_BAD_FIELD_ERROR.
  */
 module.exports = {
   up: async (queryInterface: QueryInterface): Promise<void> => {
@@ -22,6 +28,16 @@ module.exports = {
           type: DataTypes.STRING(45),
           allowNull: false,
           unique: true,
+        },
+        expectedcontribution: {
+          type: DataTypes.DOUBLE.UNSIGNED,
+          allowNull: true,
+          defaultValue: null,
+        },
+        expectedusage: {
+          type: DataTypes.DOUBLE.UNSIGNED,
+          allowNull: true,
+          defaultValue: null,
         },
         isdeleted: {
           type: DataTypes.BOOLEAN,
