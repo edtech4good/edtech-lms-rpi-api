@@ -1,10 +1,11 @@
-import { QueryInterface, DataTypes } from "sequelize";
+import { QueryInterface, DataTypes, Transaction } from "sequelize";
+import { addColumnIfMissing } from "../migration-helpers";
 
 module.exports = {
   up: (queryInterface: QueryInterface): Promise<void> =>
-    queryInterface.sequelize.transaction(async (transaction) => {
-      // here go all migration changes
-      await queryInterface.addColumn(
+    queryInterface.sequelize.transaction(async (transaction: Transaction) => {
+      await addColumnIfMissing(
+        queryInterface,
         "studentprogress",
         "resultpercentage",
         {
@@ -12,11 +13,10 @@ module.exports = {
           allowNull: true,
           defaultValue: null,
         },
-        {
-          transaction: transaction,
-        }
+        transaction,
       );
-      await queryInterface.addColumn(
+      await addColumnIfMissing(
+        queryInterface,
         "studentprogress",
         "points",
         {
@@ -24,11 +24,10 @@ module.exports = {
           allowNull: true,
           defaultValue: null,
         },
-        {
-          transaction: transaction,
-        }
+        transaction,
       );
-      return await queryInterface.addColumn(
+      await addColumnIfMissing(
+        queryInterface,
         "studentprogress",
         "fullpoints",
         {
@@ -36,22 +35,19 @@ module.exports = {
           allowNull: true,
           defaultValue: null,
         },
-        {
-          transaction: transaction,
-        }
+        transaction,
       );
     }),
 
   down: (queryInterface: QueryInterface): Promise<void> =>
     queryInterface.sequelize.transaction(async (transaction) => {
-      // here go all migration undo changes
-      queryInterface.removeColumn("studentprogress", "resultpercentage", {
+      await queryInterface.removeColumn("studentprogress", "resultpercentage", {
         transaction,
       });
-      queryInterface.removeColumn("studentprogress", "points", {
+      await queryInterface.removeColumn("studentprogress", "points", {
         transaction,
       });
-      return await queryInterface.removeColumn("studentprogress", "fullpoints", {
+      await queryInterface.removeColumn("studentprogress", "fullpoints", {
         transaction,
       });
     }),

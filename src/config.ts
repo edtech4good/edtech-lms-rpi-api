@@ -14,19 +14,35 @@ dotenv.config();
 const defaultConfig = {
   fortyk: {
     api: {
+      serversynckey:
+        process.env.RPI_SERVER_SYNC_KEY ||
+        process.env.SERVER_SYNC_KEY ||
+        "local-dev-serversynckey",
       rpi: {
-        port: parseInt(process.env.RPI_PORT || "3000"),
-        debug: process.env.NODE_ENV === 'development',
+        port: parseInt(process.env.RPI_PORT || "3000", 10),
+        debug: process.env.NODE_ENV === "development",
+        accessexpirationminutes: parseInt(
+          process.env.RPI_ACCESS_EXPIRATION_MINUTES || "60",
+          10,
+        ),
+        applicationsecret:
+          process.env.RPI_APPLICATION_SECRET ||
+          process.env.JWT_SECRET ||
+          process.env.APPLICATION_SECRET ||
+          "local-dev-rpi-jwt-secret-change-me",
+        offline:
+          process.env.RPI_OFFLINE === "true" ||
+          process.env.RPI_OFFLINE === "1",
         database: {
           name: process.env.RPI_DB_NAME || "edtech_lms_rpi",
           user: process.env.RPI_DB_USER || "root",
           password: process.env.RPI_DB_PASSWORD || "password",
           host: process.env.RPI_DB_HOST || "localhost",
-          port: parseInt(process.env.RPI_DB_PORT || "3306")
-        }
-      }
-    }
-  }
+          port: parseInt(process.env.RPI_DB_PORT || "3306", 10),
+        },
+      },
+    },
+  },
 };
 
 // Try to parse FORTYKAPIRPICONFIG if provided, otherwise use default config
