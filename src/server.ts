@@ -20,9 +20,17 @@ async function bootstrap() {
   Logger.info('Connected to DB');
   const app = await NestFactory.create(AppModule);
   //app.setGlobalPrefix("api");
-  const config = new DocumentBuilder().setTitle('EdTech LMS RPI API').setDescription('Educational Technology Learning Management System RPI API').setVersion("1.0.0").addBearerAuth().build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup("docs", app, document);
+  // Swagger (/docs and /docs-json) is a full map of the API surface — every
+  // route, param and DTO. Useful locally, an anonymous recon aid in production.
+  // Mounted only in local dev, gated on the same isLocalDev the secret guard
+  // and CORS use. To expose it in production later, put it behind auth instead.
+  if (isLocalDev) {
+    const config = new DocumentBuilder().setTitle('EdTech LMS RPI API').setDescription('Educational Technology Learning Management System RPI API').setVersion("1.0.0").addBearerAuth().build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup("docs", app, document);
+  } else {
+    Logger.info('Swagger /docs disabled (production)');
+  }
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
   // CORS: an allowlist in production, permissive in local dev.
