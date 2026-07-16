@@ -3,7 +3,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
-import { Config, Logger } from './config';
+import { Config, Logger, isLocalDev } from './config';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { initModels, setuprelationshipforreport } from './models/data-models/init-models';
 import { dbinstance } from "./services/dbservice"
@@ -25,8 +25,44 @@ async function bootstrap() {
   SwaggerModule.setup("docs", app, document);
   app.use(json({ limit: '50mb' }));
   app.use(urlencoded({ extended: true, limit: '50mb' }));
+  // CORS: an allowlist in production, permissive in local dev.
+  //
+  // Auth here is a Bearer token, not a cookie, so this is defence in depth.
+  // Production browser origins come from CORS_ORIGINS (comma-separated) — for
+  // this API that is the Expo web build. Requests with no Origin header — the
+  // Expo native app, the central API proxying in (RPI_CLOUD), curl and health
+  // checks — are always allowed; CORS only governs browser cross-origin calls.
+  //
+  // Local dev reflects any origin: Expo web (8081/19006) and physical devices
+  // on LAN IPs move around, and dev machines are not the threat model. Gated on
+  // the same isLocalDev the secret guard uses.
+  const allowedOrigins = new Set<string>(
+    (process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean)
+  );
+  if (!isLocalDev && allowedOrigins.size === 0) {
+    Logger.warn(
+      'CORS: no allowed origins configured (set CORS_ORIGINS). Browser clients ' +
+        'will be blocked; no-Origin requests (native app, RPI_CLOUD proxy) still work.'
+    );
+  }
+  Logger.info(
+    `CORS: ${
+      isLocalDev
+        ? 'local dev — reflecting any origin'
+        : `allowlist [${[...allowedOrigins].join(', ') || '(none)'}]`
+    }`
+  );
   app.enableCors({
-    origin: true,
+    origin: isLocalDev
+      ? true
+      : (origin, callback) => {
+          // No Origin header (native app, RPI_CLOUD proxy, curl): allow.
+          if (!origin) return callback(null, true);
+          return callback(null, allowedOrigins.has(origin));
+        },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
       'Content-Type',
