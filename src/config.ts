@@ -20,7 +20,7 @@ const DEV_ONLY_SECRETS = [
   "local-dev-rpi-jwt-secret-change-me",
 ];
 
-const isLocalDev =
+export const isLocalDev =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
 // Default configuration for development
