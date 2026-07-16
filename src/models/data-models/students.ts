@@ -19,6 +19,15 @@ export interface studentsAttributes {
   contact?: string;
   dateofbirth?: Date;
   genderid: number;
+  // Washington Group Short Set, synced from the central API. NULL = not collected.
+  wg_seeing?: number;
+  wg_hearing?: number;
+  wg_walking?: number;
+  wg_remembering?: number;
+  wg_selfcare?: number;
+  wg_communicating?: number;
+  wg_source?: number;
+  wg_collected_at?: Date;
   standard?: string;
   schooltype?: string;
   schoolname?: string;
@@ -73,6 +82,14 @@ export type studentsOptionalAttributes =
   | "fathername"
   | "contact"
   | "dateofbirth"
+  | "wg_seeing"
+  | "wg_hearing"
+  | "wg_walking"
+  | "wg_remembering"
+  | "wg_selfcare"
+  | "wg_communicating"
+  | "wg_source"
+  | "wg_collected_at"
   | "standard"
   | "schooltype"
   | "schoolname"
@@ -100,6 +117,14 @@ export class students
   contact?: string;
   dateofbirth?: Date;
   genderid!: number;
+  wg_seeing?: number;
+  wg_hearing?: number;
+  wg_walking?: number;
+  wg_remembering?: number;
+  wg_selfcare?: number;
+  wg_communicating?: number;
+  wg_source?: number;
+  wg_collected_at?: Date;
   standard?: string;
   schooltype?: string;
   schoolname?: string;
@@ -202,6 +227,38 @@ export class students
         genderid: {
           type: DataTypes.INTEGER,
           allowNull: false,
+        },
+        wg_seeing: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_hearing: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_walking: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_remembering: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_selfcare: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_communicating: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_source: {
+          type: DataTypes.TINYINT,
+          allowNull: true,
+        },
+        wg_collected_at: {
+          type: DataTypes.DATE,
+          allowNull: true,
         },
         standard: {
           type: DataTypes.STRING(250),
