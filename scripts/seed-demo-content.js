@@ -96,17 +96,17 @@ const imgOpt = (i, filename, correct) =>
     questionoptionfile: { filename },
   });
 
-const QUESTIONS = [
+const ALL_QUESTIONS = [
   { t: 1,  ident: "DEMO-T01-mcq-single-text",   text: "Which number is larger?",                      options: [opt(1, "7", false), opt(2, "12", true), opt(3, "3", false)] },
   { t: 2,  ident: "DEMO-T02-mcq-single-image",  text: "Tap the triangle.", options: [imgOpt(1, "triangle.png", true), imgOpt(2, "square.png", false)] },
   { t: 3,  ident: "DEMO-T03-mcq-multi-text",    text: "Select every even number.",                    options: [opt(1, "2", true), opt(2, "5", false), opt(3, "8", true)] },
   { t: 4,  ident: "DEMO-T04-mcq-multi-image",   text: "Select every shape with four sides.", options: [imgOpt(1, "square.png", true), imgOpt(2, "circle.png", false), imgOpt(3, "rectangle.png", true)] },
-  { t: 5,  ident: "DEMO-T05-order-text",        text: "Put these numbers in order, smallest first.",  options: [opt(1, "3", true), opt(2, "6", true), opt(3, "9", true)] },
+  { t: 5,  ident: "DEMO-T05-order-text",        text: "Put these words in order to make a sentence.",  options: [opt(1, "The", true), opt(2, "dog", true), opt(3, "runs", true)] },
   { t: 6,  ident: "DEMO-T06-order-image",       text: "Put the pictures in the order the story happens.", options: [imgOpt(1, "story-1.png", true), imgOpt(2, "story-2.png", true), imgOpt(3, "story-3.png", true)] },
   // The draggable piece is questionassociate.questionassociatetext (see
   // components/practices/DragItem.tsx). It is not a {key,value} pair.
-  { t: 7,  ident: "DEMO-T07-associate",         text: "Match each number to its word.",               options: [opt(1, "1", true, { questionassociate: { questionassociatetext: "one", questionassociatefile: null } }), opt(2, "2", true, { questionassociate: { questionassociatetext: "two", questionassociatefile: null } })] },
-  { t: 8,  ident: "DEMO-T08-fill-blank",        text: "5 + ___ = 8",                                  options: [opt(1, "3", true)], correctvalue: 3 },
+  { t: 7,  ident: "DEMO-T07-associate",         text: "Match each word to the word it rhymes with.", options: [opt(1, "cat", true, { questionassociate: { questionassociatetext: "hat", questionassociatefile: null } }), opt(2, "dog", true, { questionassociate: { questionassociatetext: "log", questionassociatefile: null } })] },
+  { t: 8,  ident: "DEMO-T08-fill-blank",        text: "The cat sat on the ___.",                                  options: [opt(1, "mat", true)] },
   { t: 18, ident: "DEMO-T18-doption1",          text: "Prototype: picture options, variant 1.", options: [imgOpt(1, "triangle.png", true), imgOpt(2, "circle.png", false)] },
   { t: 19, ident: "DEMO-T19-doption3",          text: "Prototype: picture options, variant 3.", options: [imgOpt(1, "square.png", true), imgOpt(2, "circle.png", false)] },
   { t: 20, ident: "DEMO-T20-doption4",          text: "Prototype: picture options, variant 4.", options: [imgOpt(1, "circle.png", true), imgOpt(2, "triangle.png", false)] },
@@ -115,6 +115,16 @@ const QUESTIONS = [
   { t: 23, ident: "DEMO-T23-foption4",          text: "Prototype: typed answer, variant 4.",          options: [opt(1, "9", true)], correctvalue: 9 },
   { t: 24, ident: "DEMO-T24-fraction",          text: "Shade one half.",                              options: [opt(1, "1/2", true, { questionoptionisfraction: true, questionoptionnumeratorvalue: "1", questionoptiondenominatorvalue: "2" })] },
 ];
+
+// Seed only the eight SUPPORTED template types (1–8). The prototypes (18–24)
+// are un-vetted and have undocumented data contracts — e.g. DOption3 (19) is a
+// drag-to-count interaction, not picture MCQ, so the MCQ-shaped fixture above
+// renders as an empty box plus stray option text. Keep their definitions here
+// but don't seed them; drop this filter to re-enable one once it's evaluated
+// (ROADMAP Track C — "evaluate the seven prototypes; decide if each earns a
+// curriculum slot").
+const PROTOTYPE_TEMPLATE_IDS = new Set([18, 19, 20, 21, 22, 23, 24]);
+const QUESTIONS = ALL_QUESTIONS.filter((qq) => !PROTOTYPE_TEMPLATE_IDS.has(qq.t));
 
 const qid = (i) => `b0000000-0000-4000-8000-0000000001${String(i).padStart(2, "0")}`;
 
@@ -148,9 +158,9 @@ async function main() {
     await q(`INSERT IGNORE INTO standards (standardid, standardname, schoolname, schoolid, isdeleted) VALUES (?,?,?,?,0)`,
       [ID.standard, "Class 4A", "Demo Primary School", ID.school]);
     await q(`INSERT IGNORE INTO subjects (subjectid, subjectname, subjectstatus, subjectdescription, isdeleted) VALUES (?,?,1,?,0)`,
-      [ID.subject, "Numeracy", "Demo subject"]);
+      [ID.subject, "Foundational Skills", "Demo subject"]);
     await q(`INSERT IGNORE INTO curriculums (curriculumid, curriculumname, curriculumstatus, curriculumdescription, isdeleted, subjectid) VALUES (?,?,1,?,0,?)`,
-      [ID.curriculum, "Demo Numeracy Curriculum", "Seeded by npm run seed:content", ID.subject]);
+      [ID.curriculum, "Demo Curriculum", "Seeded by npm run seed:content", ID.subject]);
     await q(`INSERT IGNORE INTO grades (gradeid, curriculumid, gradestatus, gradename, gradedescription, gradeorder, isdeleted, passing_points, points) VALUES (?,?,1,?,?,1,0,80,100)`,
       [ID.grade, ID.curriculum, "Grade 1", "Demo grade"]);
     await q(`INSERT IGNORE INTO levels (levelid, gradeid, levelname, leveldescription, isdeleted, levelstatus, levelorder, passing_points, quiz_points, points) VALUES (?,?,?,?,0,1,1,80,20,100)`,
@@ -158,7 +168,7 @@ async function main() {
 
     const lessons = [
       { id: ID.lesson1, name: "Counting to ten", order: 1, doc: ID.doc1, learning: ID.learning1, practice: ID.practice1, quiz: ID.quiz1 },
-      { id: ID.lesson2, name: "Adding small numbers", order: 2, doc: ID.doc2, learning: ID.learning2, practice: ID.practice2, quiz: ID.quiz2 },
+      { id: ID.lesson2, name: "Reading simple words", order: 2, doc: ID.doc2, learning: ID.learning2, practice: ID.practice2, quiz: ID.quiz2 },
     ];
 
     for (const l of lessons) {
