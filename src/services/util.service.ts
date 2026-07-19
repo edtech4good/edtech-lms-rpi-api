@@ -1,13 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { array } from 'check-types';
 import { parseISO } from 'date-fns';
 // @ts-ignore
 import fileExtension from "file-extension";
 import { ExtractJwt } from 'passport-jwt';
-import { literal, Op, WhereOptions } from "sequelize";
 import { FileType } from 'src/models/enums/filetype.enum.';
 import { FileMeta } from 'src/models/filemeta.model';
-import { IFilter, IMultiFilter, IPaging } from 'src/models/IPaging';
+import { IMultiFilter } from 'src/models/IPaging';
 import { replaceAll, stripBom, stripTags, trim } from "voca";
 import { Config } from '../config';
 import { TokenType } from './../models/enums';
@@ -90,39 +88,6 @@ export const rawfilenameextractor = (filename: string): FileMeta => {
 export const replacecaseInsensitive = (input: string, find: string) => {
   const reg = new RegExp(find, "gi")
   return input.replace(reg, "");
-}
-
-export const buildWhere = <T>(paging: IPaging, basewhere: WhereOptions<T>): WhereOptions<T> => {
-  let where = { ...basewhere }
-  if (paging.filter && paging.filter.length > 0) {
-    where = {
-      ...where,
-      [Op.and]:
-        paging.filter.map((x: IFilter) => {
-          if (x.key && x.value) {
-            if (x.value.trim().toLowerCase() === "true" || x.value.trim().toLowerCase() === "false") {
-              return { [x.key || ""]: (x.value.trim().toLowerCase() === "true") || false }
-            } else if (array(x.value)) {
-              return {
-                [Op.and]: (x.value || []).map(xx => ({ [x.key || ""]: { [Op.like]: literal(`'%${xx.trim()}%'`) } }))
-              }
-            } else {
-              const values = x.value.split(",");
-              if (values.length > 0) {
-                return {
-                  [Op.and]: values.map(xx => ({ [x.key || ""]: { [Op.like]: literal(`'%${xx.trim()}%'`) } }))
-                }
-              }
-            }
-
-          } else {
-            return { [x.key || ""]: { [Op.like]: literal(`'%${(x.value || "").trim()}%'`) } }
-          }
-        })
-    };
-
-  }
-  return where
 }
 
 export const buildCustomWhere = (
