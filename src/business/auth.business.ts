@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import md5 from "crypto-js/md5";
+import { verifyPassword } from "src/services/password.service";
 import { rpiuseraccess } from "src/models/data-models/rpiuseraccess";
 import { students } from "src/models/data-models/students";
 import { SchoolUserBusiness } from "./schooluser.business";
@@ -12,7 +12,11 @@ export class AuthBusiness {
     if (!user) {
       throw new BadRequestException("User/Password not matching");
     }
-    if (user.schooluserpasswordhash !== md5(password).toString() || user.isdisabled || !user.schooluserstatus) {
+    if (
+      !verifyPassword(password, user.schooluserpasswordhash) ||
+      user.isdisabled ||
+      !user.schooluserstatus
+    ) {
       throw new BadRequestException("User/Password not matching");
     }
 
