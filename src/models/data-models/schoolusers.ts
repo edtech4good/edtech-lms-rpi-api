@@ -12,6 +12,7 @@ export interface schoolusersAttributes {
   schooluserstatus: number;
   schoolname: string;
   isdisabled: boolean;
+  isdeleted?: boolean;
 
   logintime?: string;
   rpiuseraccesses?: rpiuseraccess[];
@@ -19,7 +20,7 @@ export interface schoolusersAttributes {
 
 export type schoolusersPk = "schooluserid";
 export type schoolusersId = schoolusers[schoolusersPk];
-export type schoolusersOptionalAttributes = "schooluserid" | "schooluserstatus" | "schoolname" | "isdisabled";
+export type schoolusersOptionalAttributes = "schooluserid" | "schooluserstatus" | "schoolname" | "isdisabled" | "isdeleted";
 export type schoolusersCreationAttributes = Optional<schoolusersAttributes, schoolusersOptionalAttributes>;
 
 export class schoolusers extends Model<schoolusersAttributes, schoolusersCreationAttributes> implements schoolusersAttributes {
@@ -30,6 +31,7 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
   schooluserstatus!: number;
   schoolname!: string;
   isdisabled!: boolean;
+  isdeleted!: boolean;
   studentappusages?: studentappusages[];
 
   // schoolusers hasMany students via schooluserid
@@ -78,6 +80,11 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
       type: DataTypes.BOOLEAN,
       allowNull: false,
       defaultValue: 0
+    },
+    isdeleted: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
     }
   }, {
     sequelize,

@@ -33,6 +33,10 @@ export class SchoolUserBusiness {
           "schooluserstatus",
           "schoolname",
           "isdisabled",
+          // So a learner soft-deleted on central propagates here on re-sync and
+          // is then refused at login. Without this, the flag would ride the
+          // export (exclude: []) but never overwrite the existing rpi row.
+          "isdeleted",
         ],
       }
     );

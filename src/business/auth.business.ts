@@ -15,6 +15,7 @@ export class AuthBusiness {
     if (
       !verifyPassword(password, user.schooluserpasswordhash) ||
       user.isdisabled ||
+      user.isdeleted ||
       !user.schooluserstatus
     ) {
       throw new BadRequestException("User/Password not matching");
