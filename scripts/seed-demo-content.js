@@ -96,7 +96,7 @@ const imgOpt = (i, filename, correct) =>
     questionoptionfile: { filename },
   });
 
-const QUESTIONS = [
+const ALL_QUESTIONS = [
   { t: 1,  ident: "DEMO-T01-mcq-single-text",   text: "Which number is larger?",                      options: [opt(1, "7", false), opt(2, "12", true), opt(3, "3", false)] },
   { t: 2,  ident: "DEMO-T02-mcq-single-image",  text: "Tap the triangle.", options: [imgOpt(1, "triangle.png", true), imgOpt(2, "square.png", false)] },
   { t: 3,  ident: "DEMO-T03-mcq-multi-text",    text: "Select every even number.",                    options: [opt(1, "2", true), opt(2, "5", false), opt(3, "8", true)] },
@@ -115,6 +115,16 @@ const QUESTIONS = [
   { t: 23, ident: "DEMO-T23-foption4",          text: "Prototype: typed answer, variant 4.",          options: [opt(1, "9", true)], correctvalue: 9 },
   { t: 24, ident: "DEMO-T24-fraction",          text: "Shade one half.",                              options: [opt(1, "1/2", true, { questionoptionisfraction: true, questionoptionnumeratorvalue: "1", questionoptiondenominatorvalue: "2" })] },
 ];
+
+// Seed only the eight SUPPORTED template types (1–8). The prototypes (18–24)
+// are un-vetted and have undocumented data contracts — e.g. DOption3 (19) is a
+// drag-to-count interaction, not picture MCQ, so the MCQ-shaped fixture above
+// renders as an empty box plus stray option text. Keep their definitions here
+// but don't seed them; drop this filter to re-enable one once it's evaluated
+// (ROADMAP Track C — "evaluate the seven prototypes; decide if each earns a
+// curriculum slot").
+const PROTOTYPE_TEMPLATE_IDS = new Set([18, 19, 20, 21, 22, 23, 24]);
+const QUESTIONS = ALL_QUESTIONS.filter((qq) => !PROTOTYPE_TEMPLATE_IDS.has(qq.t));
 
 const qid = (i) => `b0000000-0000-4000-8000-0000000001${String(i).padStart(2, "0")}`;
 
