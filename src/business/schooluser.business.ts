@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BadRequestException } from "@nestjs/common";
-import md5 from "crypto-js/md5";
+import { hashPassword } from "src/services/password.service";
 import { Op, Transaction } from "sequelize";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { v4 as uuidv4 } from "uuid";
@@ -63,7 +63,7 @@ export class SchoolUserBusiness {
 
   createUser = async (user: schoolusersAttributes) => {
     user.schooluserid = uuidv4();
-    user.schooluserpasswordhash = md5(user.schooluserpasswordhash).toString();
+    user.schooluserpasswordhash = hashPassword(user.schooluserpasswordhash);
     user.isdisabled = false;
     return schoolusers.create(user);
   };
