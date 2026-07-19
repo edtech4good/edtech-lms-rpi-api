@@ -48,6 +48,20 @@ export class SchoolUserBusiness {
       newschooluser.map((x) => ({ ...x, schooluserrole: SchoolRole.TEACHER })),
       {
         transaction,
+        // Upsert (matches importschoolusers). Without this a re-import of an
+        // existing teacher throws on the duplicate PK, and a soft-deleted
+        // teacher's `isdeleted` never lands here — so the login guard could not
+        // block them via this path. (Teachers also ride the student re-sync
+        // since they carry a `students` row, but keep this path consistent.)
+        updateOnDuplicate: [
+          "schoolusername",
+          "schooluserpasswordhash",
+          "schooluserrole",
+          "schooluserstatus",
+          "schoolname",
+          "isdisabled",
+          "isdeleted",
+        ],
       }
     );
   importschoolteacher = async (newteacheruser: schoolusers) => {
