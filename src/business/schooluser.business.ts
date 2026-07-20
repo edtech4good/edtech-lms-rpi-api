@@ -23,7 +23,16 @@ export class SchoolUserBusiness {
     tnx: Transaction
   ) =>
     schoolusers.bulkCreate(
-      newschooluser.map((x) => ({ ...x, schooluserrole: SchoolRole.STUDENT })),
+      // Carry the source role from the central export (which sends the real
+      // `schooluserrole` — `exclude: []`), don't force STUDENT. The online
+      // student sync includes teachers (they carry a `students` row), so forcing
+      // STUDENT here stored them as students and, because `schooluserrole` is in
+      // `updateOnDuplicate`, a re-sync overwrote an existing teacher TEACHER->STUDENT.
+      // Fall back to STUDENT only if a row arrives without a role.
+      newschooluser.map((x) => ({
+        ...x,
+        schooluserrole: x.schooluserrole ?? SchoolRole.STUDENT,
+      })),
       {
         transaction: tnx,
         updateOnDuplicate: [
