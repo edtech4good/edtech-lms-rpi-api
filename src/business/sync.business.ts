@@ -254,6 +254,8 @@ export class SyncBusiness {
         "expectedcontribution",
         "expectedusage",
         "isdeleted",
+        "uitheme",
+        "brandingconfig",
       ],
     });
   countries = (newCountries: Array<countries>) =>

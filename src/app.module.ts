@@ -16,6 +16,7 @@ import { LevelModule } from "./modules/level/level.module";
 import { QuestionModule } from "./modules/question/question.module";
 import { ReportModule } from "./modules/report/report.module";
 import { ResultModule } from "./modules/result/result.module";
+import { SchoolModule } from "./modules/school/school.module";
 import { StudentModule } from "./modules/student/student.module";
 import { TeacherModule } from "./modules/teachers/teacher.module";
 import { JwtAccessStrategy } from "./services/auth.strategy";
@@ -50,6 +51,7 @@ const providers = () => {
     StudentModule,
     AccessModule,
     ReportModule,
+    SchoolModule,
   ],
 
   controllers: [AppController],

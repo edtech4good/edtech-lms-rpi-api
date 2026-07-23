@@ -73,7 +73,8 @@ export class AuthController {
       data: await new TokenBusiness().generateAuthToken(
         userloggedinfo,
         null,
-        false
+        false,
+        userloggedinfo.getDataValue('schoolTheme')
       ),
       error: false,
     };
