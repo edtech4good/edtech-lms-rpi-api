@@ -118,7 +118,8 @@ export class TokenBusiness {
   generateAuthToken = async (
     user: students,
     baselineid: string | undefined | null = null,
-    baselinepassed: boolean = false
+    baselinepassed: boolean = false,
+    schoolTheme?: { uitheme?: string; schoolid?: string | null }
   ): Promise<LoginTokens> => {
     const userpayload = <Token>{
       studentfirstname: user.studentfirstname,
@@ -148,7 +149,9 @@ export class TokenBusiness {
       baselinepassed,
       profileimage: user.profileimage,
       familyname: user.familyname,
-      is_teacher_acc: user.is_teacher_acc ?? false
+      is_teacher_acc: user.is_teacher_acc ?? false,
+      uitheme: schoolTheme?.uitheme ?? "kids",
+      schoolid: schoolTheme?.schoolid ?? null,
     };
     const accessid = uuidv4();
     const accessToken = this.generateToken(

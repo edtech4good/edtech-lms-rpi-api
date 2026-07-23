@@ -70,6 +70,10 @@ export interface studentsAttributes {
 
   index?: number;
   schooluser?: schoolusers;
+
+  // Runtime-only, attached by AuthBusiness.login for JWT claim generation —
+  // not a column, never persisted.
+  schoolTheme?: { uitheme: string; schoolid: string | null };
 }
 
 export type studentsPk = "studentid";

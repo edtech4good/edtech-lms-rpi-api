@@ -11,11 +11,13 @@ export interface schoolsAttributes {
   expectedcontribution?: number;
   expectedusage?: number;
   isdeleted?: Boolean;
+  uitheme?: string;
+  brandingconfig?: object | null;
 }
 
 export type schoolsPk = "schoolid";
 export type schoolsId = schools[schoolsPk];
-export type schoolsOptionalAttributes = "schoolid" | "isdeleted";
+export type schoolsOptionalAttributes = "schoolid" | "isdeleted" | "uitheme" | "brandingconfig";
 export type schoolsCreationAttributes = Optional<schoolsAttributes, schoolsOptionalAttributes>;
 
 export class schools extends Model<schoolsAttributes, schoolsCreationAttributes> implements schoolsAttributes {
@@ -26,6 +28,8 @@ export class schools extends Model<schoolsAttributes, schoolsCreationAttributes>
   expectedcontribution!: number;
   expectedusage!: number;
   isdeleted!: Boolean;
+  uitheme!: string;
+  brandingconfig!: object | null;
 
   // grades belongsTo curriculums via curriculumid
   countries!: countries;
@@ -71,6 +75,16 @@ export class schools extends Model<schoolsAttributes, schoolsCreationAttributes>
         type: DataTypes.BOOLEAN,
         allowNull: false,
         defaultValue: 0
+      },
+      uitheme: {
+        type: DataTypes.STRING(16),
+        allowNull: false,
+        defaultValue: 'kids'
+      },
+      brandingconfig: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        defaultValue: null
       },
     }, {
       sequelize,

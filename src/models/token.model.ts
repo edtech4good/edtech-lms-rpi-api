@@ -28,4 +28,6 @@ export interface Token {
   familyname?: string;
   is_teacher_acc?: boolean;
   curriculumids?: Array<string>;
+  uitheme?: string;
+  schoolid?: string | null;
 }
