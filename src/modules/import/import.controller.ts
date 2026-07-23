@@ -255,41 +255,70 @@ export class ImportController {
         let newsync: Sync = new Sync();
         newsync = JSON.parse(data);
         const syncb = new SyncBusiness(tnx);
-        await syncb.cleanup();
-        const tempdocumentschunk = chunk(newsync.documents, 2000);
 
-        for await (const smallchunk of tempdocumentschunk) {
-          await syncb.documents(smallchunk);
+        // Sync is a full-replace of content by id: cleanup() wipes every
+        // content table (including ones students hold FKs into, e.g.
+        // grades/levels/lessons) and the imports below re-create the SAME
+        // primary keys from the same central payload. Content ids are
+        // stable across syncs (central is the id authority), so once the
+        // import completes the student FK values are valid again. Turning
+        // FOREIGN_KEY_CHECKS off/on is what makes the intermediate
+        // (post-cleanup, pre-import) state tolerable instead of failing
+        // cleanup() with ER_ROW_IS_REFERENCED on any Pi where students
+        // have progress. This is a session variable scoped to this pooled
+        // connection only (SET, not SET GLOBAL) — it MUST be restored to
+        // 1 before the transaction ends on every path (commit or
+        // rollback), or the connection goes back into the pool with
+        // checks permanently off for whichever request borrows it next.
+        await dbinstance
+          .getdbinstance()
+          .query("SET FOREIGN_KEY_CHECKS = 0", { transaction: tnx });
+        try {
+          await syncb.cleanup();
+          const tempdocumentschunk = chunk(newsync.documents, 2000);
+
+          for await (const smallchunk of tempdocumentschunk) {
+            await syncb.documents(smallchunk);
+          }
+          //to ensure unbroken connection
+          const tempquestionschunk = chunk(newsync.questions, 2000);
+          for await (const smallchunk of tempquestionschunk) {
+            await syncb.questions(smallchunk);
+          }
+
+          await syncb.curriculum(newsync.curriculums);
+          await syncb.curriculumbaseline(newsync.curriculumbaselines);
+          await syncb.grade(newsync.grades);
+          await syncb.level(newsync.levels);
+          await syncb.lesson(newsync.lessons);
+          // countries -> schools -> standards: standards.schoolid references
+          // schools, and schools.countryid references countries, so both
+          // must be imported before standards. (Belt-and-braces alongside
+          // FOREIGN_KEY_CHECKS=0 above: correct on its own merits if that
+          // scope is ever narrowed.)
+          await syncb.countries(newsync.countries);
+          await syncb.schools(newsync.schools);
+          await syncb.standards(newsync.standards);
+
+          const tempquestionschunk1 = chunk(newsync.lessonlearnings, 1);
+          for await (const smallchunk of tempquestionschunk1) {
+            await syncb.lessonlearnings(smallchunk);
+          }
+
+          //await syncb.lessonlearnings(newsync.lessonlearnings);
+          await syncb.lessonquizzes(newsync.lessonquizzes);
+          await syncb.lessonpractices(newsync.lessonpractices);
+          await syncb.lessonpracticequestions(newsync.lessonpracticequestions);
+          await syncb.lessonquizquestions(newsync.lessonquizquestions);
+          await syncb.levelquizquestions(newsync.levelquizquestions);
+          await syncb.baselinequestion(newsync.baselinequestion);
+          await syncb.lessonplans(newsync.lessonplans);
+          await syncb.subject(newsync.subjects);
+        } finally {
+          await dbinstance
+            .getdbinstance()
+            .query("SET FOREIGN_KEY_CHECKS = 1", { transaction: tnx });
         }
-        //to ensure unbroken connection
-        const tempquestionschunk = chunk(newsync.questions, 2000);
-        for await (const smallchunk of tempquestionschunk) {
-          await syncb.questions(smallchunk);
-        }
-
-        await syncb.curriculum(newsync.curriculums);
-        await syncb.curriculumbaseline(newsync.curriculumbaselines);
-        await syncb.grade(newsync.grades);
-        await syncb.level(newsync.levels);
-        await syncb.lesson(newsync.lessons);
-        await syncb.standards(newsync.standards);
-        await syncb.countries(newsync.countries);
-        await syncb.schools(newsync.schools);
-
-        const tempquestionschunk1 = chunk(newsync.lessonlearnings, 1);
-        for await (const smallchunk of tempquestionschunk1) {
-          await syncb.lessonlearnings(smallchunk);
-        }
-
-        //await syncb.lessonlearnings(newsync.lessonlearnings);
-        await syncb.lessonquizzes(newsync.lessonquizzes);
-        await syncb.lessonpractices(newsync.lessonpractices);
-        await syncb.lessonpracticequestions(newsync.lessonpracticequestions);
-        await syncb.lessonquizquestions(newsync.lessonquizquestions);
-        await syncb.levelquizquestions(newsync.levelquizquestions);
-        await syncb.baselinequestion(newsync.baselinequestion);
-        await syncb.lessonplans(newsync.lessonplans);
-        await syncb.subject(newsync.subjects);
 
         tnx.commit();
         Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
