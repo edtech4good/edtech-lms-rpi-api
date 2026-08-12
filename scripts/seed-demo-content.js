@@ -4,7 +4,7 @@
  * name: identical fixture IDs, so the two databases end up looking as they would
  * after a successful cloud-to-classroom sync.
  *
- * Usage: npm run seed:content
+ * Usage: npm run seed:content (requires ALLOW_DEMO_SEED=true)
  *
  * Why both databases need seeding: the tablet reads lessons from THIS api
  * (EXPO_PUBLIC_BASE_URL), not from the central LMS (EXPO_PUBLIC_SYNC_URL).
@@ -129,8 +129,8 @@ const QUESTIONS = ALL_QUESTIONS.filter((qq) => !PROTOTYPE_TEMPLATE_IDS.has(qq.t)
 const qid = (i) => `b0000000-0000-4000-8000-0000000001${String(i).padStart(2, "0")}`;
 
 async function main() {
-  if (process.env.NODE_ENV === "production") {
-    console.error("Refusing to run: NODE_ENV=production. This seeds demo content.");
+  if (process.env.ALLOW_DEMO_SEED !== "true") {
+    console.error("Refusing to run: set ALLOW_DEMO_SEED=true to seed demo data. This replaces the old NODE_ENV check so UAT re-seeds are explicit and prod can never be seeded by accident.");
     process.exit(1);
   }
   const user = process.env.RPI_DB_USER;

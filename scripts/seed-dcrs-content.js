@@ -4,7 +4,7 @@
  * same name: identical fixture IDs, so the two databases end up looking as they
  * would after a successful cloud-to-classroom sync.
  *
- * Usage: npm run seed:dcrs
+ * Usage: npm run seed:dcrs (requires ALLOW_DEMO_SEED=true)
  *
  * What this is: a real client deck — Mekong Inclusive Ventures' (MIV)
  * "Disabilities Capital Readiness" programme, Cohort II, "Module 1: Business
@@ -191,8 +191,8 @@ const QUESTIONS = [
 ];
 
 async function main() {
-  if (process.env.NODE_ENV === "production") {
-    console.error("Refusing to run: NODE_ENV=production. This seeds demo content.");
+  if (process.env.ALLOW_DEMO_SEED !== "true") {
+    console.error("Refusing to run: set ALLOW_DEMO_SEED=true to seed demo data. This replaces the old NODE_ENV check so UAT re-seeds are explicit and prod can never be seeded by accident.");
     process.exit(1);
   }
   const user = process.env.RPI_DB_USER;
