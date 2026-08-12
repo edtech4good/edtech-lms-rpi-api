@@ -146,8 +146,8 @@ FROM
         INNER JOIN
     grades ON grades.gradeid = levels.gradeid
 WHERE
-    ss.studentid = '${studentid}' LIMIT 1`,
-      { type: QueryTypes.SELECT, raw: true }
+    ss.studentid = ? LIMIT 1`,
+      { type: QueryTypes.SELECT, raw: true, replacements: [studentid] }
     );
 
   getstudentquizstats = (studentid: string) =>
@@ -174,9 +174,9 @@ WHERE
           INNER JOIN
       grades ON grades.gradeid = levels.gradeid
   WHERE
-      studentid = '${studentid}'
+      studentid = ?
           AND sp.progresstype = 2;`,
-      { type: QueryTypes.SELECT, raw: true }
+      { type: QueryTypes.SELECT, raw: true, replacements: [studentid] }
     );
 
   getstudentpracticestats = (studentid: string) =>
@@ -203,9 +203,9 @@ WHERE
           INNER JOIN
       grades ON grades.gradeid = levels.gradeid
   WHERE
-      studentid = '${studentid}'
+      studentid = ?
           AND sp.progresstype = 1;`,
-      { type: QueryTypes.SELECT, raw: true }
+      { type: QueryTypes.SELECT, raw: true, replacements: [studentid] }
     );
 
   getstudentlevelstats = (studentid: string) =>
@@ -226,9 +226,9 @@ WHERE
           INNER JOIN
       grades ON grades.gradeid = levels.gradeid
   WHERE
-     studentid = '${studentid}' AND
+     studentid = ? AND
           sp.progresstype = 3;`,
-      { type: QueryTypes.SELECT, raw: true }
+      { type: QueryTypes.SELECT, raw: true, replacements: [studentid] }
     );
 
   updateProfile = async (filename: string, user: Token) => {

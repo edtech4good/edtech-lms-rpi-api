@@ -70,12 +70,16 @@ export class CurriculumBaseLineBusiness {
   WHERE
       studentprogress.progresstype = 2
           -- AND studentprogress.ispass = 1
-          AND studentid like '${studentid}'
-          AND curriculums.curriculumid like '${baselinecurriculumid}'`;
+          AND studentid like ?
+          AND curriculums.curriculumid like ?`;
 
     return dbinstance
       .getdbinstance()
-      .query(query, { type: QueryTypes.SELECT, raw: true });
+      .query(query, {
+        type: QueryTypes.SELECT,
+        raw: true,
+        replacements: [studentid, baselinecurriculumid],
+      });
   };
 
   getBaseLineId = (curriculumid: string) =>
