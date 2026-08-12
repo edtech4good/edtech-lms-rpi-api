@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 /**
  * Loads RPI_DB_* from ../.env and runs scripts/seed-demo-users.sql.
- * Usage: npm run seed:demo
+ * Usage: npm run seed:demo (requires ALLOW_DEMO_SEED=true)
  */
 const fs = require("fs");
 const path = require("path");
@@ -11,6 +11,11 @@ const mysql = require("mysql2/promise");
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
 async function main() {
+  if (process.env.ALLOW_DEMO_SEED !== "true") {
+    console.error("Refusing to run: set ALLOW_DEMO_SEED=true to seed demo data. This replaces the old NODE_ENV check so UAT re-seeds are explicit and prod can never be seeded by accident.");
+    process.exit(1);
+  }
+
   const host = process.env.RPI_DB_HOST || "127.0.0.1";
   const port = parseInt(String(process.env.RPI_DB_PORT || "3306"), 10);
   const user = process.env.RPI_DB_USER;
