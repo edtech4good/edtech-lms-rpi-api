@@ -6,15 +6,18 @@ import {
   HttpStatus,
   Post,
   Query,
+  UseGuards,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiBody, ApiQuery } from "@nestjs/swagger";
 import { ReportBusiness } from "src/business/report.business";
+import { AccessGuard } from "src/guards/access.guard";
+import { TokenType } from "src/models/enums";
 import { IMultiPaging } from "src/models/IPaging";
 
 @ApiTags("Report")
 @Controller("report")
 @ApiBearerAuth()
-// @UseGuards(AccessGuard(TokenType.ACCESS))
+@UseGuards(AccessGuard(TokenType.ACCESS))
 export class ReportController {
   @Post('studentprogress')
   @ApiResponse({

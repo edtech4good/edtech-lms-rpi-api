@@ -1,5 +1,5 @@
 import { meanBy } from "lodash";
-import { col, fn, literal, Op, WhereOptions } from "sequelize";
+import { col, fn, Op, WhereOptions } from "sequelize";
 import { grades, gradesAttributes } from "src/models/data-models/grades";
 import { levels } from "src/models/data-models/levels";
 import { studentgradesprogress } from "src/models/data-models/studentgradesprogress";
@@ -150,7 +150,7 @@ export class GradeBusiness {
     const where: WhereOptions<gradesAttributes> = {
       isdeleted: false,
       gradename: {
-        [Op.like]: literal(`'%${gradename.trim()}%'`)
+        [Op.like]: `%${gradename.trim()}%`
       }
     };
     if(curid){

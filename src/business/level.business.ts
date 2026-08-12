@@ -1,4 +1,4 @@
-import { col, fn, literal, Op, WhereOptions } from "sequelize";
+import { col, fn, Op, WhereOptions } from "sequelize";
 import { lessons } from "src/models/data-models/lessons";
 import { levels, levelsAttributes } from "src/models/data-models/levels";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
@@ -147,7 +147,7 @@ export class LevelBusiness {
     const where: WhereOptions<levelsAttributes> = {
       isdeleted: false,
       levelname: {
-        [Op.like]: literal(`'%${levelname.trim()}%'`)
+        [Op.like]: `%${levelname.trim()}%`
       }
     };
     if(gradeid){

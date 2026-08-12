@@ -1,5 +1,5 @@
 import { meanBy } from "lodash";
-import { literal, Op, QueryTypes, WhereOptions } from "sequelize";
+import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { Transaction } from "sequelize/types";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
@@ -249,7 +249,7 @@ WHERE
   getStudentsWithFilter = async (userid: string, schoolname: string) => {
     const where: WhereOptions<studentsAttributes> = {
       "$schooluser.schoolusername$": {
-        [Op.like]: literal(`'%${userid.trim()}%'`)
+        [Op.like]: `%${userid.trim()}%`
       }
     };
     if(schoolname) where.schoolname = schoolname;
@@ -280,13 +280,14 @@ WHERE
   }
 
   getlogintime = async (schooluserids: string[]) => {
+    const ids = Array.isArray(schooluserids) ? schooluserids : [];
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
     const data = await dbinstance
       .getdbinstance()
       .query(
-        `SELECT max(logintime) as logintime, userid FROM rpiuseraccess where userid in (${schooluserids
-          .map((x) => `'${x}'`)
-          .join()}) group by userid`,
-        { type: QueryTypes.SELECT, raw: true }
+        `SELECT max(logintime) as logintime, userid FROM rpiuseraccess where userid in (${placeholders}) group by userid`,
+        { type: QueryTypes.SELECT, raw: true, replacements: ids }
       );
     return data
   }

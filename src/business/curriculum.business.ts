@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { col, fn, literal, Op, WhereOptions } from "sequelize";
+import { col, fn, Op, WhereOptions } from "sequelize";
 import {
   curriculums,
   curriculumsAttributes,
@@ -150,7 +150,7 @@ export class CurriculumBusiness {
       isdeleted: false,
       curriculumstatus: true,
       curriculumname: {
-        [Op.like]: literal(`'%${cur.trim()}%'`)
+        [Op.like]: `%${cur.trim()}%`
       }
     };
     if(studentid || standardid) {
