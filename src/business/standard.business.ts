@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { literal, Op, WhereOptions } from "sequelize";
+import { Op, WhereOptions } from "sequelize";
 import { standards, standardsAttributes } from "src/models/data-models/standards";
 
 export class StandardBusiness {
@@ -8,7 +8,7 @@ export class StandardBusiness {
     const where: WhereOptions<standardsAttributes> = {
       isdeleted: false,
       standardname: {
-        [Op.like]: literal(`'%${standardname.trim()}%'`),
+        [Op.like]: `%${standardname.trim()}%`,
       },
       schoolname
     };

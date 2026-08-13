@@ -8,7 +8,7 @@ import { studentprogress } from "src/models/data-models/studentprogress";
 import { students } from "src/models/data-models/students";
 import { Token } from "src/models/token.model";
 import { v4 as uuidv4 } from "uuid";
-import { col, fn, literal, Op, Transaction, WhereOptions } from "sequelize";
+import { col, fn, Op, Transaction, WhereOptions } from "sequelize";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { lessons, lessonsAttributes } from "src/models/data-models/lessons";
 import { grades } from "src/models/data-models/grades";
@@ -1588,7 +1588,7 @@ export class LessonBusiness {
     const where: WhereOptions<lessonsAttributes> = {
       isdeleted: false,
       lessonname: {
-        [Op.like]: literal(`'%${lessonname.trim()}%'`)
+        [Op.like]: `%${lessonname.trim()}%`
       }
     };
     if(levelid){
