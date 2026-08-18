@@ -5,7 +5,7 @@ import { Progress } from "src/models/enums/progress.enum";
 import { Token } from "src/models/token.model";
 import { v4 as uuidv4 } from 'uuid';
 import { LessonBusiness } from "./lesson.business";
-import { Transaction } from "sequelize";
+import { Transaction, UniqueConstraintError } from "sequelize";
 import { dbinstance } from "src/services/dbservice";
 import { BadRequestException } from "@nestjs/common";
 
@@ -67,7 +67,7 @@ export class ResultBusiness {
             result = await studentprogress.create({
                 ...tempprogress,
             }, {transaction: tnx});
-            insertquestion(
+            await insertquestion(
                 result.studentprogressid,
                 actualanswers,
                 'levelquizquestionid',
@@ -109,7 +109,7 @@ export class ResultBusiness {
             result = await studentprogress.create({
                 ...tempprogress,
             }, {transaction: tnx});
-            insertquestion(
+            await insertquestion(
                 result.studentprogressid,
                 actualanswers,
                 'baselinequestionid',
@@ -141,36 +141,89 @@ export class ResultBusiness {
         tempprogress.resultpercentage = progress.passpercentage;
         tempprogress.actualanswers = undefined;
         tempprogress.scores = 0;
+        // starttime is optional on the request (joi.date() without .required());
+        // an omitted value must not reach findOrCreate's `where` as undefined
+        // (sequelize 6.6.5 throws on that). Normalize once, up front, so every
+        // later use of tempprogress.starttime is a real Date. A replay whose
+        // starttime was omitted dedupes per-request (new Date() each time) —
+        // same as the pre-fix behavior, since there is no natural key to match.
+        tempprogress.starttime = tempprogress.starttime ?? new Date();
         const hasTried = await this.hasTried(user, progress?.studentprogressreferenceid);
         // get old points to adjust points
         const oldpoints = await this.getoldpoints(user.studentid, progress?.studentprogressreferenceid, progress.points) ?? null;
         const tnx = await dbinstance.getdbinstance().transaction();
         const lessonbusiness = new LessonBusiness();
         let result: studentprogress;
+        let created: boolean;
         try {
-            result = await studentprogress.create({
-                ...tempprogress,
-            }, {transaction: tnx});
-            insertquestion(
-                result.studentprogressid,
-                actualanswers,
-                'lessonpracticequestionid',
-                tnx
-            );
-            if(!hasTried || oldpoints !== null) {
-                await lessonbusiness.updateUserReward(user, lesson.lessonid, progress.points, oldpoints, tnx, tempprogress.starttime)
+            // findOrCreate on the (studentid, studentprogressreferenceid, starttime)
+            // natural key so a replayed submission (at-least-once retry queue)
+            // returns the existing row instead of creating a duplicate one.
+            [result, created] = await studentprogress.findOrCreate({
+                where: {
+                    studentid: tempprogress.studentid,
+                    studentprogressreferenceid: tempprogress.studentprogressreferenceid,
+                    starttime: tempprogress.starttime,
+                },
+                defaults: {
+                    ...tempprogress,
+                },
+                transaction: tnx,
+            });
+            if (created) {
+                await insertquestion(
+                    result.studentprogressid,
+                    actualanswers,
+                    'lessonpracticequestionid',
+                    tnx
+                );
+                if(!hasTried || oldpoints !== null) {
+                    await lessonbusiness.updateUserReward(user, lesson.lessonid, progress.points, oldpoints, tnx, tempprogress.starttime)
+                }
             }
             await lessonbusiness.setstudentactive(user, progress.studentprogressreferenceid, 2, tnx, tempprogress.starttime);
             await tnx.commit();
         } catch(err: any) {
             await tnx.rollback();
-            throw new BadRequestException({
-                error: true,
-                errormessage: err?.response?.errormessage || err.message,
-            });
+            // A genuinely concurrent replay (two in-flight requests racing
+            // on the same submission) can slip past findOrCreate's own
+            // retry: our transaction's REPEATABLE READ snapshot is taken
+            // on its first read, so the recovery SELECT inside findOrCreate
+            // cannot see a sibling row committed by the other request after
+            // that point, and it rethrows the raw UniqueConstraintError.
+            // The unique index has already done its job (no duplicate row
+            // exists) — fetch the winning row with a fresh, untransacted
+            // read and treat this exactly like a losing findOrCreate, so
+            // the caller still cannot tell a replay from a fresh save.
+            if (err instanceof UniqueConstraintError) {
+                const existing = await studentprogress.findOne({
+                    where: {
+                        studentid: tempprogress.studentid,
+                        studentprogressreferenceid: tempprogress.studentprogressreferenceid,
+                        starttime: tempprogress.starttime,
+                    },
+                });
+                if (existing) {
+                    result = existing;
+                    created = false;
+                } else {
+                    throw new BadRequestException({
+                        error: true,
+                        errormessage: err.message,
+                    });
+                }
+            } else {
+                throw new BadRequestException({
+                    error: true,
+                    errormessage: err?.response?.errormessage || err.message,
+                });
+            }
         }
-        await lessonbusiness.addstudentscores(user, lesson.lessonid, tempprogress.starttime ?? new Date(), 0);
-        await lessonbusiness.updateuserdailypoints(lesson.lessonid, user, tempprogress.starttime ?? new Date());
+        if (created) {
+            // Only score a fresh save — a replay must not double-count.
+            await lessonbusiness.addstudentscores(user, lesson.lessonid, tempprogress.starttime, 0);
+        }
+        await lessonbusiness.updateuserdailypoints(lesson.lessonid, user, tempprogress.starttime);
         return result;
     };
     createlessonquizprogress = async (progress: any, lesson: any, user: Token) => {
@@ -185,35 +238,89 @@ export class ResultBusiness {
         tempprogress.resultpercentage = progress.passpercentage;
         tempprogress.actualanswers = undefined;
         tempprogress.scores = this.calculatescore(progress.passpercentage);
+        // starttime is optional on the request (joi.date() without .required());
+        // an omitted value must not reach findOrCreate's `where` as undefined
+        // (sequelize 6.6.5 throws on that). Normalize once, up front, so every
+        // later use of tempprogress.starttime is a real Date. A replay whose
+        // starttime was omitted dedupes per-request (new Date() each time) —
+        // same as the pre-fix behavior, since there is no natural key to match.
+        tempprogress.starttime = tempprogress.starttime ?? new Date();
         const hasTried = await this.hasTried(user, progress?.studentprogressreferenceid);
         // get old points to adjust points
         const oldpoints = await this.getoldpoints(user.studentid, progress?.studentprogressreferenceid, progress.points) ?? null;
         const tnx = await dbinstance.getdbinstance().transaction();
         const lessonbusiness = new LessonBusiness();
         let result: studentprogress;
+        let created: boolean;
         try {
-            result = await studentprogress.create({
-                ...tempprogress,
-            }, {transaction: tnx});
-            insertquestion(
-                result.studentprogressid,
-                actualanswers,
-                'lessonquizquestionid',
-                tnx
-            );
-            if(!hasTried || oldpoints !== null) {
-                await lessonbusiness.updateUserReward(user, lesson.lessonid, progress.points, oldpoints, tnx, tempprogress.starttime)
+            // findOrCreate on the (studentid, studentprogressreferenceid, starttime)
+            // natural key so a replayed submission (at-least-once retry queue)
+            // returns the existing row instead of creating a duplicate one.
+            [result, created] = await studentprogress.findOrCreate({
+                where: {
+                    studentid: tempprogress.studentid,
+                    studentprogressreferenceid: tempprogress.studentprogressreferenceid,
+                    starttime: tempprogress.starttime,
+                },
+                defaults: {
+                    ...tempprogress,
+                },
+                transaction: tnx,
+            });
+            if (created) {
+                await insertquestion(
+                    result.studentprogressid,
+                    actualanswers,
+                    'lessonquizquestionid',
+                    tnx
+                );
+                if(!hasTried || oldpoints !== null) {
+                    await lessonbusiness.updateUserReward(user, lesson.lessonid, progress.points, oldpoints, tnx, tempprogress.starttime)
+                }
             }
             await lessonbusiness.setstudentactive(user, progress.studentprogressreferenceid, 3, tnx, tempprogress.starttime);
             await tnx.commit();
         } catch(err: any) {
             await tnx.rollback();
-            throw new BadRequestException({
-                error: true,
-                errormessage: err?.response?.errormessage || err.message,
-            });
+            // A genuinely concurrent replay (two in-flight requests racing
+            // on the same submission) can slip past findOrCreate's own
+            // retry: our transaction's REPEATABLE READ snapshot is taken
+            // on its first read, so the recovery SELECT inside findOrCreate
+            // cannot see a sibling row committed by the other request after
+            // that point, and it rethrows the raw UniqueConstraintError.
+            // The unique index has already done its job (no duplicate row
+            // exists) — fetch the winning row with a fresh, untransacted
+            // read and treat this exactly like a losing findOrCreate, so
+            // the caller still cannot tell a replay from a fresh save.
+            if (err instanceof UniqueConstraintError) {
+                const existing = await studentprogress.findOne({
+                    where: {
+                        studentid: tempprogress.studentid,
+                        studentprogressreferenceid: tempprogress.studentprogressreferenceid,
+                        starttime: tempprogress.starttime,
+                    },
+                });
+                if (existing) {
+                    result = existing;
+                    created = false;
+                } else {
+                    throw new BadRequestException({
+                        error: true,
+                        errormessage: err.message,
+                    });
+                }
+            } else {
+                throw new BadRequestException({
+                    error: true,
+                    errormessage: err?.response?.errormessage || err.message,
+                });
+            }
         }
-        await lessonbusiness.addstudentscores(user, lesson.lessonid, tempprogress.starttime, tempprogress.scores);
+        if (created) {
+            // Only score a fresh save — a replay must not double-count
+            // (this was the pre-existing replay double-count bug).
+            await lessonbusiness.addstudentscores(user, lesson.lessonid, tempprogress.starttime, tempprogress.scores);
+        }
         await lessonbusiness.updateuserdailypoints(lesson.lessonid, user, tempprogress.starttime);
         return result;
     }
