@@ -20,6 +20,7 @@ export interface questionsAttributes {
   questiontext?: string;
   questiondistractors?: object;
   questionfile?: object;
+  questionfeedback?: object;
   templatetypeid: number;
   isdeleted: boolean;
   questionstatus: boolean;
@@ -39,6 +40,7 @@ export type questionsOptionalAttributes =
   | "questiontext"
   | "questiondistractors"
   | "questionfile"
+  | "questionfeedback"
   | "isdeleted"
   | "questionstatus"
   | "questiontags"
@@ -58,6 +60,7 @@ export class questions
   questiontext?: string;
   questiondistractors?: object;
   questionfile?: object;
+  questionfeedback?: object;
   templatetypeid!: number;
   isdeleted!: boolean;
   questionstatus!: boolean;
@@ -196,6 +199,9 @@ export class questions
             const tempquestioncorrectvalue = this.questioncorrectvalue
               ? this.questioncorrectvalue
               : null;
+            const tempquestionfeedback = this.questionfeedback
+              ? this.questionfeedback
+              : null;
             const converttoobject = (value: string | Object | null) => {
               try {
                 if (!value) {
@@ -214,7 +220,8 @@ export class questions
               questiontext: tempquestiontext,
               questiondistractors: converttoobject(tempquestiondistractors),
               questionheading: converttoobject(tempquestionheading),
-              questioncorrectvalue: converttoobject(tempquestioncorrectvalue)
+              questioncorrectvalue: converttoobject(tempquestioncorrectvalue),
+              questionfeedback: converttoobject(tempquestionfeedback)
             };
           },
           set() {
@@ -238,6 +245,10 @@ export class questions
           allowNull: true,
         },
         questionfile: {
+          type: DataTypes.JSON,
+          allowNull: true,
+        },
+        questionfeedback: {
           type: DataTypes.JSON,
           allowNull: true,
         },
