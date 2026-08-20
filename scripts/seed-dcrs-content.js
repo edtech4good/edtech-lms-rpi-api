@@ -124,6 +124,20 @@ const opt = (i, text, correct, extra = {}) => ({
 
 // Content verbatim from the client deck ("Module 1: Business Vision & Goals"),
 // except Q1 — see note below. All templatetypeid 1 (MCQ single, text).
+//
+// questionfeedback: only q1 carries real feedback (Khmer), used by
+// edtech-lms-ui's e2e/expo-smoke/practice-quiz.spec.ts, which is the only
+// spec in that suite that answers a question deterministically (it always
+// picks the known-wrong "Family and staff pull the same way" option for q1,
+// both as this lesson's practice AND its quiz question). Every other
+// question is left with no feedback (null) so the suite can also prove the
+// generic i18n fallback still renders when questionfeedback is absent.
+// Identical to edtech-lms-api/scripts/seed-dcrs-content.js — keep in lockstep.
+const Q1_FEEDBACK = JSON.stringify({
+  correctmessage: "ល្អណាស់! អ្នកយល់ច្បាស់ហើយ។",
+  incorrectmessage: "សាកល្បងម្តងទៀត ហើយពិនិត្យមេរៀនឡើងវិញ។",
+});
+
 const QUESTIONS = [
   {
     key: "q1",
@@ -136,6 +150,7 @@ const QUESTIONS = [
       opt(2, "Family and staff pull the same way", false),
       opt(3, "You know what is worth buying", false),
     ],
+    feedback: Q1_FEEDBACK,
   },
   {
     key: "q2",
@@ -279,10 +294,10 @@ async function main() {
         };
       });
 
-      await q(`INSERT IGNORE INTO questions (questionid, questionheading, questionoptions, questiontext, questiondistractors, questionfile, templatetypeid, isdeleted, questionstatus, questionidentifier, questiontags, questioncorrectvalue)
-               VALUES (?,?,?,?,?,?,1,0,1,?,?,?)`,
+      await q(`INSERT IGNORE INTO questions (questionid, questionheading, questionoptions, questiontext, questiondistractors, questionfile, templatetypeid, isdeleted, questionstatus, questionidentifier, questiontags, questioncorrectvalue, questionfeedback)
+               VALUES (?,?,?,?,?,?,1,0,1,?,?,?,?)`,
         [id, JSON.stringify({ headingtext: Q.text, headingfile: null }), JSON.stringify(options), Q.text,
-         JSON.stringify([]), null, Q.ident, JSON.stringify(["demo", "dcrs"]), null]);
+         JSON.stringify([]), null, Q.ident, JSON.stringify(["demo", "dcrs"]), null, Q.feedback ?? null]);
     }
 
     // Practice/quiz mapping (own join-row ids; order restarts at 1 per lesson).

@@ -214,11 +214,13 @@ export class SyncBusiness {
         "questiontext",
         "questiondistractors",
         "questionfile",
+        "questionfeedback",
         "templatetypeid",
         "isdeleted",
         "questionstatus",
         "questionidentifier",
         "questiontags",
+        "questioncorrectvalue",
         "lastupdated",
       ],
     });
