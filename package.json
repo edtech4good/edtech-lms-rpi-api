@@ -14,7 +14,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:debug2": "nest start --debug=9230 --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node build/server.js",
     "db:migrate": "npx sequelize-cli db:migrate",
     "seed:demo": "node scripts/seed-demo-users.js",
     "seed:content": "node scripts/seed-demo-content.js",

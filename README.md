@@ -1,141 +1,103 @@
 # EdTech LMS RPI API
 
-A specialized API for Raspberry Pi devices in the Educational Technology Learning Management System, designed for offline and edge computing scenarios.
+This is the classroom half of the LMS. It runs on a Raspberry Pi, or any Linux box, on the school's own network, so students keep learning when the internet is down or was never there. Lessons, quizzes, student logins and progress all live here in a local MySQL database. Content arrives from the central API as a zip. Logs go back the same way.
 
-## In the full system
+Same stack as the central API: NestJS, Sequelize, MySQL, JWT.
 
-This repo is part of the multi-repo offline LMS workspace. See [**ARCHITECTURE.md**](../ARCHITECTURE.md) for how the central LMS, Pi, tablets, and sync endpoints fit together. Legacy diagrams and guides live under [**docs/**](../docs/README.md).
+## How it fits with the other repos
 
-## 🚀 Features
+- [edtech-lms-api](https://github.com/edtech4good/edtech-lms-api) is the central, cloud-side API. It authors the content this one serves and ingests the logs this one exports.
+- [edtech-expo](https://github.com/edtech4good/edtech-expo) is the student app. Its `EXPO_PUBLIC_BASE_URL` points here.
+- [edtech-lms-rpi-report](https://github.com/edtech4good/edtech-lms-rpi-report) is an optional reporting API that can sit next to this one on the same network.
 
-- **Offline Capability**: Designed for Raspberry Pi devices with limited connectivity
-- **Data Synchronization**: Sync data between RPI devices and main LMS server
-- **Student Progress Tracking**: Track student learning progress on local devices
-- **Assessment Management**: Handle quizzes and assessments offline
-- **File Management**: Manage educational content and resources locally
-- **RESTful API**: Well-documented API with Swagger/OpenAPI documentation
-- **Database Migrations**: Sequelize-based database management
-- **JWT Authentication**: Secure authentication for RPI devices
+The routes that matter for sync:
 
-## 🛠️ Technology Stack
+- `PUT /import/master` takes the curriculum zip that the central API builds at `/sync/content`. It needs a token with the admin, superadmin or teacher role.
+- `GET /export/log` returns a zip of the student log plus this server's log files, for upload to the central API at `/log/import`.
+- `GET /export/report-data` does the same for the reporting API.
 
-- **Framework**: NestJS (Node.js)
-- **Database**: MySQL with Sequelize ORM
-- **Authentication**: JWT (JSON Web Tokens)
-- **Documentation**: Swagger/OpenAPI
-- **Language**: TypeScript
-- **Target Platform**: Raspberry Pi (ARM architecture)
+Students log in with `POST /auth/login`. One access token per user: a second login, including one from `curl`, ends the first session.
 
-## 📋 Prerequisites
+## What you need
 
-- Node.js (v14 or higher)
-- MySQL database
-- Raspberry Pi device (optional, can run on any Linux system)
+- Node 20. The deploy image is `node:20-alpine`. Node 20 reached end of life in April 2026, so expect this to move to Node 22.
+- MySQL 8.0
+- A Raspberry Pi is optional. Development happens on a laptop.
 
-## 🚀 Quick Start
-
-### 1. Get the code
-
-Clone or copy this repository into your workspace (see parent [**ARCHITECTURE.md**](../ARCHITECTURE.md) for sibling repos).
-
-### 2. Install Dependencies
+## Running it locally
 
 ```bash
 npm install
-```
-
-### 3. Environment Configuration
-
-Configuration is loaded from JSON in **`FORTYKAPIRPICONFIG`**, or from defaults in `src/config.ts`. For local dev without JSON, you can set **`RPI_PORT`** (default `3000`), **`RPI_DB_*`**, etc. See `src/config.ts` for the full fallback list.
-
-### 4. Database Setup
-
-Create your MySQL database and run migrations:
-
-```bash
+cp env.example .env
 npm run db:migrate
-```
-
-### 5. Start the Development Server
-
-```bash
 npm run start:dev
 ```
 
-The API will be available at `http://localhost:3000`
+The API listens on port 3000 by default. Swagger is at `/docs`.
 
-## 📚 API Documentation
+Configuration lives in `src/config.ts`. The deployed containers pass one JSON value in `FORTYKAPIRPICONFIG`. For local work the flat variables are enough:
 
-Swagger UI is mounted at **`/docs`** (not `/api`). With the default port:
+```env
+RPI_PORT=3001
+RPI_DB_HOST=localhost
+RPI_DB_PORT=3306
+RPI_DB_NAME=edtech_lms_rpi
+RPI_DB_USER=your-db-user
+RPI_DB_PASSWORD=your-db-password
+```
 
-- `http://localhost:3000/docs`
+If the central API is already on 3000 on the same machine, run this one on 3001. The end-to-end tests in edtech-lms-ui expect it there.
 
-Notable routes used by clients: **`GET /export/log`** (zip), **`PUT /import/master`** (curriculum sync zip, teacher/admin roles).
+## Seeding
 
-## 🗂️ Project Structure
+Three scripts, each guarded by `ALLOW_DEMO_SEED=true` so nothing seeds production by accident:
+
+```bash
+# Demo student and teacher accounts
+ALLOW_DEMO_SEED=true npm run seed:demo
+
+# Synthetic demo content, same fixture IDs as the central API's seed:demo
+ALLOW_DEMO_SEED=true npm run seed:content
+
+# A real client curriculum, same fixture IDs as the central API's seed:dcrs
+ALLOW_DEMO_SEED=true npm run seed:dcrs
+```
+
+The student app reads lessons from this API, not from the central one, so a local stack needs content in both databases. The seeds short-circuit the sync for development. They are not a substitute for it.
+
+## Scripts
+
+- `npm run start:dev` runs Nest in watch mode.
+- `npm run build` then `npm start` (or `npm run start:prod`, same thing) is the production path. The build lands in `build/` and both run `build/server.js`.
+- `npm run db:migrate` runs the Sequelize migrations.
+- `npm run lint` and `npm run format` run ESLint and Prettier.
+
+`npm test` prints "no test specified". There are no unit tests here. The Playwright suites in [edtech-lms-ui](https://github.com/edtech4good/edtech-lms-ui) cover this API, including a SQL injection suite that targets it directly.
+
+## Layout
 
 ```
 src/
-├── business/          # Business logic services
-├── config/           # Configuration files
-├── db/              # Database models and migrations
-├── decorators/      # Custom decorators
-├── filters/         # Exception filters
-├── guards/          # Authentication guards
-├── interceptors/    # Request/response interceptors
-├── middlewares/     # Custom middlewares
-├── models/          # Data models and interfaces
-├── modules/         # Feature modules
-├── pipes/           # Validation pipes
-├── services/        # Core services
-└── validators/      # Input validation schemas
+├── business/       # Business logic
+├── config/         # Config validation
+├── db/             # Sequelize models and migrations
+├── decorators/
+├── filters/
+├── guards/
+├── interceptors/
+├── middlewares/
+├── models/
+├── modules/        # Feature modules (auth, import, export, student, ...)
+├── pipes/
+├── services/
+└── validators/
+scripts/            # Seed scripts
 ```
 
-## 🧪 Testing
+## Contributing
 
-```bash
-# Run unit tests
-npm test
+See [CONTRIBUTING.md](CONTRIBUTING.md). This repo and edtech-lms-api share a lot of code by copy rather than by package. Fixes to the central API often never make it here. If you fix something in one, check the other.
 
-# Run linting
-npm run lint
-```
+## License and support
 
-## 🏗️ Building for Production
-
-```bash
-# Build the application
-npm run build
-
-# Start production server
-npm run start:prod
-```
-
-## 📝 Available Scripts
-
-- `npm run start` - Start the application
-- `npm run start:dev` - Start in development mode with hot reload
-- `npm run start:debug` - Start in debug mode
-- `npm run build` - Build the application
-- `npm run test` - Run unit tests
-- `npm run lint` - Run ESLint
-- `npm run format` - Format code with Prettier
-- `npm run db:migrate` - Run database migrations
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on how to contribute to this project.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-If you encounter any issues or have questions, use your team’s issue tracker or internal docs.
-
-## 🙏 Acknowledgments
-
-- Built with [NestJS](https://nestjs.com/)
-- Database management with [Sequelize](https://sequelize.org/)
-- Documentation with [Swagger](https://swagger.io/)
+MIT, see [LICENSE](LICENSE). Questions and bugs go to [GitHub Issues](https://github.com/edtech4good/edtech-lms-rpi-api/issues).
