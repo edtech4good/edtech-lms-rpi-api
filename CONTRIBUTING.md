@@ -1,122 +1,40 @@
-# Contributing to EdTech LMS RPI API
+# Contributing
 
-Thank you for your interest in contributing to the EdTech LMS RPI API! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing. This document explains the workflow and what to verify before opening a pull request.
 
-## Getting Started
+How to get the code and run it locally
 
-### Prerequisites
+See the README. It covers installation, configuration, database setup and how to run the dev server.
 
-- Node.js (v14 or higher)
-- MySQL database
-- Git
-- Raspberry Pi device (optional, for testing)
+Branch and pull request workflow
 
-### Development Setup
+Branch from main with a descriptive name. Make your changes in that branch. When ready, push to your fork and open a pull request. The PR will be squash merged into main.
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/your-username/edtech-lms-rpi-api.git`
-3. Install dependencies: `npm install`
-4. Copy the example environment file: `cp env.example .env`
-5. Configure your environment variables in `.env`
-6. Set up your MySQL database
-7. Run database migrations: `npm run db:migrate`
-8. Start the development server: `npm run start:dev`
+What to verify before opening a PR
 
-## Code Style
-
-This project uses:
-- ESLint for code linting
-- Prettier for code formatting
-- TypeScript for type safety
-
-### Running Linting and Formatting
+Run the linter and formatter:
 
 ```bash
-# Run linting
 npm run lint
-
-# Format code
 npm run format
 ```
 
-## Testing
+If you made database changes, test the migration:
 
 ```bash
-# Run tests
-npm test
+npm run db:migrate
 ```
 
-## Database Migrations
+Test data and one access token per user
 
-When making database changes:
+If you add test data, include Khmer text. The product is taught in Khmer. Note that each user gets one access token at a time, so logging in from a second place ends the first session. Coordinate if you run multiple test suites.
 
-1. Create a new migration file: `npx sequelize-cli migration:generate --name your-migration-name`
-2. Write your migration in the generated file
-3. Test the migration: `npm run db:migrate`
-4. If needed, create a rollback: `npx sequelize-cli migration:generate --name rollback-your-migration-name`
+Proving a new test can fail
 
-## Raspberry Pi Development
+If you add a test or assertion, break the thing it watches once and confirm it goes red before submitting the PR. A test that passes without the code it watches is decorative and reduces confidence in the suite.
 
-### Setting up on Raspberry Pi
+This repo and edtech-lms-api share code by copy. If you fix something here, check whether the central API has the same bug.
 
-1. Install Node.js on your Raspberry Pi
-2. Clone the repository
-3. Install dependencies: `npm install`
-4. Configure environment variables
-5. Set up MySQL database
-6. Run migrations: `npm run db:migrate`
-7. Start the server: `npm run start:prod`
-
-### Cross-compilation
-
-For ARM architecture (Raspberry Pi):
-
-```bash
-# Install cross-compilation tools
-npm install -g @mapbox/node-pre-gyp
-
-# Build for ARM
-npm run build
-```
-
-## Pull Request Process
-
-1. Create a feature branch from `main`
-2. Make your changes
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Run linting and fix any issues
-6. Update documentation if needed
-7. Submit a pull request
-
-### Pull Request Guidelines
-
-- Use clear, descriptive commit messages
-- Keep pull requests focused on a single feature or bug fix
-- Include tests for new functionality
-- Update documentation as needed
-- Ensure your code follows the project's style guidelines
-- Test on both x86 and ARM architectures if possible
-
-## Issue Reporting
-
-When reporting issues, please include:
-
-- Clear description of the problem
-- Steps to reproduce
-- Expected vs actual behavior
-- Environment details (OS, Node.js version, architecture)
-- Relevant error messages or logs
-- Whether the issue occurs on Raspberry Pi
-
-## Security
-
-If you discover a security vulnerability, please do not open a public issue. Instead, please contact the maintainers privately.
-
-## License
+License
 
 By contributing to this project, you agree that your contributions will be licensed under the MIT License.
-
-## Questions?
-
-If you have questions about contributing, please open an issue or contact the maintainers.
