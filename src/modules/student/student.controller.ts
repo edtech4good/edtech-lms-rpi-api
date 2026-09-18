@@ -18,6 +18,7 @@ import {
   BusinessValidationInterceptor,
 } from "src/interceptors";
 import { TokenType } from "src/models/enums";
+import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
 import { UpdateProfileBody } from "./models/StudentRequest";
 import { StudentExist } from "./student.business.validator";
@@ -26,9 +27,14 @@ import { studentprofile } from "./student.request.validator";
 @ApiTags("Student")
 @Controller("student")
 @ApiBearerAuth()
-@UseGuards(AccessGuard(TokenType.ACCESS))
 export class StudentController {
 
+  // Admins/superadmins only — a Teacher may not read other learners' PII on
+  // the rpi either (matches the central API's 16 Jul PILOT.md decision).
+  // A class-level guard would also cover this route and run passport twice
+  // (controller guard + method guard, same jwt-access strategy) for no
+  // benefit, since no other route here needs a role restriction — so each
+  // route below carries its own single guard instead of one at class level.
   @Get('all')
   @ApiResponse({
     status: 200,
@@ -42,7 +48,13 @@ export class StudentController {
     status: 500,
     description: "Server error",
   })
-  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @UseGuards(
+    AccessGuard(
+      TokenType.ACCESS,
+      SchoolRole.ADMIN,
+      SchoolRole.SUPERADMIN
+    )
+  )
   @ApiQuery({ name: "userid", required: false, type: 'string' })
   @ApiQuery({ name: "schoolname", required: false, type: 'string' })
   @HttpCode(HttpStatus.OK)
@@ -70,6 +82,7 @@ export class StudentController {
     status: 500,
     description: "Server error",
   })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
   @UseInterceptors(
     new SchemaValidationInterceptor(studentprofile),
     new BusinessValidationInterceptor([StudentExist])
@@ -98,6 +111,7 @@ export class StudentController {
     status: 500,
     description: "Server error",
   })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
   async getStudentProgress(
     @User() user: Token
@@ -121,6 +135,7 @@ export class StudentController {
     status: 500,
     description: "Server error",
   })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
   async getlogintime(
     @Body() body: any,

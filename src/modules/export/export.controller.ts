@@ -17,15 +17,23 @@ import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
 import { TokenType } from "src/models/enums";
 import { LOGDIR, LOGTYPE } from "src/models/enums/logaccess.enum";
+import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
 import { SyncReport } from 'src/business/sync.report';
 
 @ApiTags("Export")
 @Controller("export")
 @ApiBearerAuth()
+@UseGuards(
+  AccessGuard(
+    TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+  )
+)
 export class ExportController {
   @Get("log")
-  @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
   async exportlog(
     @Response({ passthrough: true }) res: any,
@@ -50,12 +58,11 @@ export class ExportController {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="log-${new Date().toLocaleDateString()}-${new Date().toLocaleTimeString()}.zip"`,
     });
-    Logger.info(`<${user.schoolusername}> export log`, {logaccesstype: LOGTYPE.EXPORTLOG, userid: user.schooluserid});
+    Logger.info(`<${user.schoolusername ?? user.schooluserid}> export log`, {logaccesstype: LOGTYPE.EXPORTLOG, userid: user.schooluserid});
     return new StreamableFile(zip.toBuffer());
   }
 
   @Get("system-log/files")
-  @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
   async exportfiles(
     @Response({ passthrough: true }) res: any,
@@ -73,7 +80,7 @@ export class ExportController {
         throw new InternalServerErrorException("Error read file");
       }
     });
-    Logger.info(`<${user.schoolusername}> export log-files`, {logaccesstype: LOGTYPE.EXPORTLOGFILES, userid: user.schooluserid});
+    Logger.info(`<${user.schoolusername ?? user.schooluserid}> export log-files`, {logaccesstype: LOGTYPE.EXPORTLOGFILES, userid: user.schooluserid});
     res.set({
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="logfiles-${user.schoolname ?? ''}-${new Date().toLocaleDateString()}-${new Date().toLocaleTimeString()}.zip"`,
@@ -95,7 +102,6 @@ export class ExportController {
     description: "Server error",
   })
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AccessGuard(TokenType.ACCESS))
   async getReportData(@Response({ passthrough: true }) res: any) {
     const zip = new AdmZip();
     zip.addFile(
