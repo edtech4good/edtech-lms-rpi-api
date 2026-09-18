@@ -47,7 +47,7 @@
     "check-types": "11.1.2",
     "crypto-js": "4.2.0",
     "csv": "6.0.4",
-    "date-fns": "2.21.1",
+    "date-fns": "4.4.0",
     "dotenv": "8.2.0",
     "file-extension": "4.0.5",
     "file-type": "^16.5.4",
