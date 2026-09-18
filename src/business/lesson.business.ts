@@ -50,6 +50,26 @@ interface LevelQuizCorrectAnswer {
   questionid: number;
 }
 
+/**
+ * A lesson is complete once accumulated points reach its own pass mark
+ * (`lessons.passing_points`), falling back to COMPLETED_PERCENTAGE of
+ * total_points for older content that has no passing_points set. This
+ * replaces the previous "progress strictly greater than 80%" rule, which
+ * left a lesson permanently incomplete when its reachable points (e.g. no
+ * video on the learning activity) summed to exactly the old percentage
+ * threshold.
+ */
+export function lessonPassMark(lesson: lessons): number {
+  if (typeof lesson.passing_points === "number" && lesson.passing_points > 0) {
+    return lesson.passing_points;
+  }
+  if (typeof lesson.total_points === "number" && lesson.total_points > 0) {
+    return Math.ceil((lesson.total_points * COMPLETED_PERCENTAGE) / 100);
+  }
+  // No usable total either: an unreachable pass mark means never complete, not "0 points completes it".
+  return Number.POSITIVE_INFINITY;
+}
+
 export class LessonBusiness {
   isexistsLessonID = async (lessonid: string) => {
     const where: WhereOptions<lessonsAttributes> = {
@@ -447,20 +467,23 @@ export class LessonBusiness {
             curid: grade.curriculumid,
             points: points >= 0 ? points : 0,
             progress: lsp,
-            completed: points >= 0 && Number((points*100/lesson.total_points).toFixed(2)) > COMPLETED_PERCENTAGE ? true : false,
+            completed: points >= 0 && points >= lessonPassMark(lesson) ? true : false,
             scores: 0,
             lastupdated: currentdate
           }, {transaction});
         } else {
           lessonprogress.points += (points < 0 && lessonprogress.points + points < 0) ? 0 : points;
-          if(lessonprogress.points > 100) {
-            // exceed limit
-            lessonprogress.points = 100;
-            points = 0;
+          if(lessonprogress.points > lesson.total_points) {
+            // exceed limit: the lesson keeps only up to its total; the level and grade
+            // below should still accrue the portion of this submission that actually
+            // landed on the lesson, not zero and not the full submitted delta.
+            const overflow = lessonprogress.points - lesson.total_points;
+            lessonprogress.points = lesson.total_points;
+            points = Math.max(0, points - overflow);
           }
           const lsp = Number((lessonprogress.points*100/lesson.total_points).toFixed(2)) ?? 0;
           lessonprogress.progress = lsp;
-          lessonprogress.completed = lessonprogress.progress > COMPLETED_PERCENTAGE ? true : false;
+          lessonprogress.completed = lessonprogress.points >= lessonPassMark(lesson) ? true : false;
           lessonprogress.lastupdated = currentdate;
           await lessonprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
         }
@@ -618,6 +641,7 @@ export class LessonBusiness {
         progress = Number(Number(studentlessonsprogress[0]?.points*100/lesson.total_points).toFixed(2));
       }
       lesson.setDataValue("progress", progress);
+      lesson.setDataValue("completed", Boolean(studentlessonsprogress?.[0]?.completed));
       return lesson;
     });
     return {

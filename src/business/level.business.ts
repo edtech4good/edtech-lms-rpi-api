@@ -1,9 +1,9 @@
 import { col, fn, Op, WhereOptions } from "sequelize";
+import { lessonPassMark } from "src/business/lesson.business";
 import { lessons } from "src/models/data-models/lessons";
 import { levels, levelsAttributes } from "src/models/data-models/levels";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
-import { COMPLETED_PERCENTAGE } from "src/models/enums/constant.enum";
 import { Token } from "src/models/token.model";
 
 export class LevelBusiness {
@@ -98,7 +98,7 @@ export class LevelBusiness {
     const lessonsprogresses = await lessons
       .findAll({
         where: { lessonstatus: true, isdeleted: false },
-        attributes: ["lessonid", "lessonname", "levelid", "total_points"],
+        attributes: ["lessonid", "lessonname", "levelid", "total_points", "passing_points"],
         include: [
           {
             model: studentlessonsprogress,
@@ -118,10 +118,8 @@ export class LevelBusiness {
           );
           if (lvlstudentprogress && lvlstudentprogress.length > 0) {
             const studentpoints = lvlstudentprogress[0].getDataValue("points") ?? 0;
-            const completedpoints =
-              (lsprogress.total_points * COMPLETED_PERCENTAGE) / 100;
             const completed =
-              studentpoints > completedpoints ? true : false;
+              studentpoints >= lessonPassMark(lsprogress) ? true : false;
             lsprogress.setDataValue("completed", completed);
           }
           return lsprogress;
