@@ -1,4 +1,5 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
+import { ThrottlerException } from '@nestjs/throttler';
 import { v4 as uuidv4 } from 'uuid';
 import { ValidationException } from '../models/ValidationException';
 import { Config, Logger } from '../config';
@@ -13,7 +14,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const errordetails = exception as any;
     const logid = uuidv4();
     const isvalidationError = exception instanceof ValidationException;
-    if (!isvalidationError) {
+    // A 429 is expected traffic under the new login rate limiter, not an
+    // application error — logging it at error level with a stack would flood
+    // the error log during a sustained burst of attempts and bury real errors.
+    const isThrottled = exception instanceof ThrottlerException;
+    if (!isvalidationError && !isThrottled) {
       Logger.error('Exception', { exception: errordetails, logid });
     }
     if (exception instanceof CustomForbiddenException) {

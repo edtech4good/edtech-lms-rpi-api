@@ -1,7 +1,11 @@
 -- Demo Pi API users for local development (database: edtech_lms_rpi).
 -- Guarantees: demo.student, demo.teacher accounts in 'Demo Primary School' (schoolid b0000000-0000-4000-8000-000000000002).
 -- Password for both accounts: demo
--- Hash is MD5("demo") using crypto-js, matching SchoolUserBusiness / AuthBusiness.
+-- __PASSWORD_HASH__ is substituted by seed-demo-users.js with a freshly computed
+-- bcrypt(md5("demo")) — the same scheme as src/services/password.service.ts
+-- (crypto-js/md5 + bcryptjs, 10 rounds). SQL can't compute bcrypt itself, so the
+-- literal can't live here; a raw MD5 literal would fail login now that
+-- verifyPassword no longer accepts unsalted MD5.
 --
 -- Expo login (POST http://localhost:3001/auth/login):
 --   Student: studentusername=demo.student, studentpassword=demo
@@ -19,8 +23,8 @@ VALUES ('b0000000-0000-4000-8000-000000000002', 'Demo Primary School', NULL, '[]
 
 INSERT IGNORE INTO `schoolusers` (`schooluserid`, `schoolusername`, `schooluserpasswordhash`, `schooluserrole`, `schooluserstatus`, `schoolname`, `isdisabled`)
 VALUES
-  ('a2222222-2222-4222-8222-222222222222', 'demo.student', 'fe01ce2a7fbac8fafaed7c982a04e229', 4, 1, 'Demo Primary School', 0),
-  ('a3333333-3333-4333-8333-333333333333', 'demo.teacher', 'fe01ce2a7fbac8fafaed7c982a04e229', 3, 1, 'Demo Primary School', 0);
+  ('a2222222-2222-4222-8222-222222222222', 'demo.student', '__PASSWORD_HASH__', 4, 1, 'Demo Primary School', 0),
+  ('a3333333-3333-4333-8333-333333333333', 'demo.teacher', '__PASSWORD_HASH__', 3, 1, 'Demo Primary School', 0);
 
 INSERT IGNORE INTO `students` (`studentid`, `studentfirstname`, `studentlastname`, `genderid`, `city`, `country`, `state`, `curriculumid`, `isactive`, `schooluserid`, `is_teacher_acc`, `schoolname`)
 VALUES

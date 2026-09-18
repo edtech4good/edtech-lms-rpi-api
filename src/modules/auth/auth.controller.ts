@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Post,
   Request,
+  UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import {
@@ -15,6 +16,7 @@ import {
   ApiTags,
   getSchemaPath,
 } from "@nestjs/swagger";
+import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { RealIP } from "nestjs-real-ip";
 import { UserAccessBusiness } from "src/business/useraccess.business";
 import { Logger } from "src/config";
@@ -54,6 +56,10 @@ export class AuthController {
   })
   @UseInterceptors(new SchemaValidationInterceptor(login))
   @HttpCode(HttpStatus.OK)
+  // Rate-limited here only (no global APP_GUARD): 10 attempts per 60s per
+  // tracker key (client IP; see server.ts trust proxy note), then 429.
+  @UseGuards(ThrottlerGuard)
+  @Throttle(10, 60)
   async login(
     @Body() body: LoginRequestBody,
     @RealIP() ip: string

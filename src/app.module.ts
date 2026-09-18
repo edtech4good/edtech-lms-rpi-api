@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { PassportModule } from "@nestjs/passport";
 import { ScheduleModule } from "@nestjs/schedule";
+import { ThrottlerModule } from "@nestjs/throttler";
 import { MorganInterceptor, MorganModule } from "nest-morgan";
 import { AppController } from "./app.controller";
 import { Config } from "./config";
@@ -37,6 +38,11 @@ const providers = () => {
 @Module({
   imports: [
     MorganModule,
+    // Default throttling window/limit for anything opting in with
+    // @UseGuards(ThrottlerGuard). Not applied globally (no APP_GUARD) — only
+    // POST /auth/login opts in today. ThrottlerModule is @Global(), so the
+    // guard is injectable from any module without AuthModule importing it.
+    ThrottlerModule.forRoot({ ttl: 60, limit: 10 }),
     AuthModule,
     CurriculumModule,
     QuestionModule,

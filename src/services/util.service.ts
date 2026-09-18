@@ -15,10 +15,14 @@ export const jwtoptionsbuilder = (tokenformat: TokenType) => {
     case TokenType.ACCESS:
       return {
         secretOrKey: Config.fortyk.api.rpi.applicationsecret,
+        // No fromUrlQueryParameter: URL query strings end up in server access
+        // logs, browser history and Referer headers. Confirmed no client
+        // (edtech-expo's Api.ts) sends the access token any way but the
+        // Authorization header, so query support was dead weight, not a
+        // compat path.
         jwtFromRequest: ExtractJwt.fromExtractors([
           ExtractJwt.fromAuthHeaderAsBearerToken(),
           ExtractJwt.fromBodyField(`accesstoken`),
-          ExtractJwt.fromUrlQueryParameter(`accesstoken`),
         ]),
       };
   }
