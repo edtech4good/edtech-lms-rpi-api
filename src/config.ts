@@ -20,6 +20,14 @@ const DEV_ONLY_SECRETS = [
   "local-dev-rpi-jwt-secret-change-me",
 ];
 
+/**
+ * The compiled-in default for the database password, also committed to a
+ * public repository. Checked separately from DEV_ONLY_SECRETS because
+ * "password" alone isn't distinctive enough to search for in a secrets
+ * scanner the way the other two placeholders are.
+ */
+const DEFAULT_DB_PASSWORD = "password";
+
 export const isLocalDev =
   process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
 
@@ -49,7 +57,7 @@ const defaultConfig = {
         database: {
           name: process.env.RPI_DB_NAME || "edtech_lms_rpi",
           user: process.env.RPI_DB_USER || "root",
-          password: process.env.RPI_DB_PASSWORD || "password",
+          password: process.env.RPI_DB_PASSWORD || DEFAULT_DB_PASSWORD,
           host: process.env.RPI_DB_HOST || "localhost",
           port: parseInt(process.env.RPI_DB_PORT || "3306", 10),
         },
@@ -96,10 +104,15 @@ if (!isLocalDev) {
       "applicationsecret (set RPI_APPLICATION_SECRET, JWT_SECRET or APPLICATION_SECRET)",
     );
   }
+  if (Config.fortyk.api.rpi.database.password === DEFAULT_DB_PASSWORD) {
+    insecure.push(
+      "database password (set RPI_DB_PASSWORD, or database.password in FORTYKAPIRPICONFIG)",
+    );
+  }
   if (insecure.length > 0) {
     throw new Error(
       `Refusing to start with development secrets while NODE_ENV=${
-        process.env.NODE_ENV ?? "(unset)"
+        process.env.NODE_ENV || "(unset)"
       }. These are committed to a public repository and allow anyone to forge ` +
         `tokens:\n  - ${insecure.join("\n  - ")}\n` +
         `Set real values, or set NODE_ENV=development for local work.`,
