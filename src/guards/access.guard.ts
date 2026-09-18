@@ -7,9 +7,7 @@ import { Token } from 'src/models/token.model';
 import { TokenType } from './../models/enums/tokentype.enum';
 const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
   mixin(class LocalAccessGuard extends AuthGuard(`jwt-${tokentype}`) {
-    _context?: ExecutionContext;
     canActivate(context: ExecutionContext) {
-      this._context = context;
       // Add your custom authentication logic here
       // for example, call super.logIn(request) to establish a session.
       return super.canActivate(context);
@@ -17,12 +15,12 @@ const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
 
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    handleRequest(err: any, user: any, _info: any) {
+    handleRequest(err: any, user: any, _info: any, context: ExecutionContext) {
       // You can throw an exception based on either "info" or "err" arguments
 
       if (err || !user) {
-        if (this._context) {
-          const ctx = this._context.switchToHttp();
+        if (context) {
+          const ctx = context.switchToHttp();
           const request: Request = ctx.getRequest();
           if (request.headers.authorization) {
             if (request.headers.authorization === Config.fortyk.api.serversynckey) {
