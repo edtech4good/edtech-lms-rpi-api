@@ -427,7 +427,8 @@ export class ReportBusiness {
                     ]
                 });
                 const schooluser = await schoolusers.findOne({
-                    where: { schooluserid: std.schooluserid }
+                    where: { schooluserid: std.schooluserid },
+                    attributes: { exclude: ["schooluserpasswordhash"] }
                 });
                 if(schoolcountry) std.setDataValue('school', schoolcountry);
                 if(standard) std.setDataValue('class', standard);

@@ -12,12 +12,24 @@ import { ApiTags, ApiBearerAuth, ApiResponse, ApiBody, ApiQuery } from "@nestjs/
 import { ReportBusiness } from "src/business/report.business";
 import { AccessGuard } from "src/guards/access.guard";
 import { TokenType } from "src/models/enums";
+import { SchoolRole } from "src/models/enums/school.role.enum";
 import { IMultiPaging } from "src/models/IPaging";
 
+// No route in this controller is called by the student-facing app (grepped
+// edtech-expo's src/ and app/: nothing hits /report/*, including under a
+// teacher session — TeacherTestScoreScreen goes through /teacher/studentprogress
+// instead), so every route here is restricted the same way import/export are.
 @ApiTags("Report")
 @Controller("report")
 @ApiBearerAuth()
-@UseGuards(AccessGuard(TokenType.ACCESS))
+@UseGuards(
+  AccessGuard(
+    TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+  )
+)
 export class ReportController {
   @Post('studentprogress')
   @ApiResponse({

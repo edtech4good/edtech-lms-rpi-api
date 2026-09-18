@@ -109,12 +109,6 @@ export class SchoolUserBusiness {
   getuserbyname = (schoolusername: string) =>
     schoolusers.findOne({ where: { schoolusername } });
 
-  sanitizeUser = (user: any) => ({
-    ...user,
-    _id: null,
-    passwordhash: null,
-  });
-
   getschoolusers = async () => {
     schoolusers.hasOne(students, {
       foreignKey: "schooluserid",
@@ -129,7 +123,7 @@ export class SchoolUserBusiness {
         schooluserstatus: true,
       },
       attributes: {
-        exclude: [],
+        exclude: ["schooluserpasswordhash"],
       },
       include: [
         {
