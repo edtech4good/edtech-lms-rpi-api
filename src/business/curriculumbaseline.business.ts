@@ -2,7 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { curriculumbaseline, curriculumbaselineAttributes } from "src/models/data-models/curriculumbaseline";
 import { schools, schoolsAttributes } from "src/models/data-models/school";
-import { studentprogress, studentprogressAttributes } from "src/models/data-models/studentprogress";
+import { studentprogress } from "src/models/data-models/studentprogress";
 import { dbinstance } from "src/services/dbservice";
 import { endOfDay, startOfDay } from "date-fns";
 import { students } from "src/models/data-models/students";
@@ -135,11 +135,14 @@ export class CurriculumBaseLineBusiness {
     }
     const baseline = await curriculumbaseline.findOne({where: whereBaseline});
 
-    const whereStudentProgress: WhereOptions<studentprogressAttributes> = {
-      studentid: studentid,
-      studentprogressreferenceid: baseline?.curriculumbaselineid ?? null,
-    }
-    const student = await studentprogress.findOne({where: whereStudentProgress});
+    const student = baseline
+      ? await studentprogress.findOne({
+          where: {
+            studentid,
+            studentprogressreferenceid: baseline.curriculumbaselineid,
+          },
+        })
+      : null;
     const startDate = startOfDay(new Date(baseline?.startdate ?? ''));
     const endDate = endOfDay(new Date(baseline?.enddate ?? ''));
     const currentDate = new Date(currentdate);
