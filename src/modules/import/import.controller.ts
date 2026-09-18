@@ -26,6 +26,7 @@ import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
 import { SyncBusiness } from "src/business/sync.business";
 import { Logger } from "src/config";
+import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
 import { TokenType } from "src/models/enums";
@@ -35,6 +36,47 @@ import { ResponseBoolean } from "src/models/ResponseBoolean";
 import { Sync } from "src/models/Sync";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
+
+/**
+ * `new AdmZip(file.buffer)` throws synchronously on a malformed archive, and
+ * `file` itself is undefined when the multipart part is missing entirely —
+ * neither is caught by the handlers' own try/blocks, so both previously
+ * escaped as a raw 500 leaking adm-zip internals in the message. Centralized
+ * here so all three import routes fail the same way as their other
+ * validation errors: a 400 "Invalid file".
+ */
+function openZip(file: Express.Multer.File): AdmZip {
+  if (!file || !file.buffer) {
+    throw new BadRequestException({
+      error: true,
+      errormessage: "Invalid file",
+    });
+  }
+  try {
+    return new AdmZip(file.buffer);
+  } catch {
+    throw new BadRequestException({
+      error: true,
+      errormessage: "Invalid file",
+    });
+  }
+}
+
+/**
+ * Rejects an entry whose *claimed* uncompressed size exceeds `maxBytes`,
+ * before anything calls `getData()` on it. `entry.header.size` comes from
+ * the zip's central directory and is attacker-controlled — a small file can
+ * claim a huge size (a zip bomb) — but it's read for free, so checking it
+ * first avoids inflating the entry into memory just to find out.
+ */
+function assertEntryWithinLimit(entry: AdmZip.IZipEntry, maxBytes: number): void {
+  if (entry.header.size > maxBytes) {
+    throw new BadRequestException({
+      error: true,
+      errormessage: "import too large",
+    });
+  }
+}
 @ApiTags("Import")
 @Controller("import")
 @ApiBearerAuth()
@@ -58,6 +100,10 @@ export class ImportController {
     description: "Error while importing students",
   })
   @ApiResponse({
+    status: 413,
+    description: "File too large",
+  })
+  @ApiResponse({
     status: 500,
     description: "Server error",
   })
@@ -72,16 +118,21 @@ export class ImportController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor("importfile"))
+  @UseInterceptors(
+    FileInterceptor("importfile", {
+      limits: { fileSize: UploadLimits.STUDENTS_IMPORT_MAX_BYTES },
+    })
+  )
   @HttpCode(HttpStatus.OK)
   @ApiConsumes("multipart/form-data")
   async studentsimport(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
   ): Promise<ResponseBoolean> {
-    const zip = new AdmZip(file.buffer);
+    const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
+      assertEntryWithinLimit(zipEntries[0], UploadLimits.ROSTER_ZIP_DECOMPRESSED_MAX_BYTES);
       try {
         const studentsjson = zipEntries[0].getData().toString("utf8");
         let newstudents: Array<any> = [];
@@ -161,6 +212,10 @@ export class ImportController {
     description: "Error while importing teachers",
   })
   @ApiResponse({
+    status: 413,
+    description: "File too large",
+  })
+  @ApiResponse({
     status: 500,
     description: "Server error",
   })
@@ -175,23 +230,27 @@ export class ImportController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor("importfile"))
+  @UseInterceptors(
+    FileInterceptor("importfile", {
+      limits: { fileSize: UploadLimits.TEACHERS_IMPORT_MAX_BYTES },
+    })
+  )
   @HttpCode(HttpStatus.OK)
   @ApiConsumes("multipart/form-data")
   async teachersimport(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
   ): Promise<ResponseBoolean> {
-    const zip = new AdmZip(file.buffer);
+    const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
+      assertEntryWithinLimit(zipEntries[0], UploadLimits.ROSTER_ZIP_DECOMPRESSED_MAX_BYTES);
       const tnx = await dbinstance.getdbinstance().transaction();
-      const teachersjson = zipEntries[0].getData().toString("utf8");
-
-      let newteachers: Array<any> = [];
-      newteachers = JSON.parse(teachersjson);
       const su = new SchoolUserBusiness();
       try {
+        const teachersjson = zipEntries[0].getData().toString("utf8");
+        let newteachers: Array<any> = [];
+        newteachers = JSON.parse(teachersjson);
         await su.importschoolteachers(newteachers, tnx);
         tnx.commit();
       } catch {
@@ -225,6 +284,10 @@ export class ImportController {
     description: "Error while sync",
   })
   @ApiResponse({
+    status: 413,
+    description: "File too large",
+  })
+  @ApiResponse({
     status: 500,
     description: "Server error",
   })
@@ -239,16 +302,21 @@ export class ImportController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor("importfile"))
+  @UseInterceptors(
+    FileInterceptor("importfile", {
+      limits: { fileSize: UploadLimits.MASTER_IMPORT_MAX_BYTES },
+    })
+  )
   @HttpCode(HttpStatus.OK)
   @ApiConsumes("multipart/form-data")
   async completesync(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
   ): Promise<ResponseBoolean> {
-    const zip = new AdmZip(file.buffer);
+    const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
+      assertEntryWithinLimit(zipEntries[0], UploadLimits.MASTER_ZIP_DECOMPRESSED_MAX_BYTES);
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
         const data = zipEntries[0].getData().toString("utf8");
