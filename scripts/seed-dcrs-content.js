@@ -32,15 +32,19 @@
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  */
 const path = require("path");
-const crypto = require("crypto");
 const dotenv = require("dotenv");
 const mysql = require("mysql2/promise");
+const md5 = require("crypto-js/md5");
+const bcryptjs = require("bcryptjs");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-const md5 = (s) => crypto.createHash("md5").update(s).digest("hex");
 const DEMO_PASSWORD = "demo";
-const PASSWORD_HASH = md5(DEMO_PASSWORD);
+// Must match src/services/password.service.ts exactly: bcrypt(md5(password)),
+// same crypto-js/md5 + bcryptjs libraries, same BCRYPT_ROUNDS (10). A plain
+// md5() hash here would insert a row that fails login now that verifyPassword
+// no longer falls back to raw MD5.
+const PASSWORD_HASH = bcryptjs.hashSync(md5(DEMO_PASSWORD).toString(), 10);
 
 // Identical to edtech-lms-api/scripts/seed-dcrs-content.js. Keep them in step.
 // Numbering is shared across both scripts even where a given id has no use in

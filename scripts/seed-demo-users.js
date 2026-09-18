@@ -7,6 +7,8 @@ const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
 const mysql = require("mysql2/promise");
+const md5 = require("crypto-js/md5");
+const bcryptjs = require("bcryptjs");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -30,7 +32,21 @@ async function main() {
   }
 
   const sqlPath = path.join(__dirname, "seed-demo-users.sql");
-  const sql = fs.readFileSync(sqlPath, "utf8");
+  // SQL can't compute bcrypt, so the .sql carries a __PASSWORD_HASH__
+  // placeholder and this script fills it in — same scheme as
+  // src/services/password.service.ts: bcrypt(md5(password)), same
+  // crypto-js/md5 + bcryptjs libraries, same BCRYPT_ROUNDS (10). Note
+  // INSERT IGNORE means this only sets the hash on a first insert; it will
+  // NOT repair an existing row already seeded with a raw MD5 hash — that
+  // needs the rewrap migration (20260719160000-rewrap-md5-passwords-bcrypt).
+  const passwordHash = bcryptjs.hashSync(md5("demo").toString(), 10);
+  // Replacer is a function, not the hash string directly: a bcrypt hash
+  // contains "$" sequences (e.g. "$2b$10$..."), and String.replace()
+  // special-cases "$"-patterns (`$&`, `$1`, `$$`, ...) in a string
+  // replacement. A function return value is inserted verbatim.
+  const sql = fs
+    .readFileSync(sqlPath, "utf8")
+    .replace(/__PASSWORD_HASH__/g, () => passwordHash);
 
   const conn = await mysql.createConnection({
     host,

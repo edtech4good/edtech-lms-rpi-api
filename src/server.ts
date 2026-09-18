@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
@@ -18,7 +19,16 @@ async function bootstrap() {
 */
 
   Logger.info('Connected to DB');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Trust proxy is a DEPLOYMENT fact, not a code default. Set TRUST_PROXY=1 only
+  // where a reverse proxy (Caddy on UAT/prod) is the sole route in — it is what
+  // makes req.ip, and so the login rate limiter's key, the real client IP.
+  // Leave it UNSET on a Pi: with no proxy in front, trusting X-Forwarded-For lets
+  // any client on the LAN pick its own rate-limit bucket and bypass the limiter.
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy) {
+    app.set('trust proxy', Number(trustProxy) || trustProxy);
+  }
   //app.setGlobalPrefix("api");
   // Swagger (/docs and /docs-json) is a full map of the API surface — every
   // route, param and DTO. Useful locally, an anonymous recon aid in production.
