@@ -1,6 +1,6 @@
 
 
-import { mixin, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, mixin, UnauthorizedException } from '@nestjs/common';
 import { SchoolRole } from 'src/models/enums/school.role.enum';
 import { Token } from 'src/models/token.model';
 export const ClaimGuard = (tokentype: [SchoolRole]) =>
@@ -13,7 +13,7 @@ export const ClaimGuard = (tokentype: [SchoolRole]) =>
       }
 
       if (!tokentype.find(x => x == user.schooluserrole)) {
-        throw new UnauthorizedException();
+        throw new ForbiddenException();
       }
 
       return user;

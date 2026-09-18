@@ -1,4 +1,4 @@
-import { ExecutionContext, mixin, UnauthorizedException } from '@nestjs/common';
+import { ExecutionContext, ForbiddenException, mixin, UnauthorizedException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Request } from 'express';
 import { Config } from 'src/config';
@@ -34,7 +34,7 @@ const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
       }
       if (schoolrole) {
         if (schoolrole.length > 0 && !schoolrole.find(x => x == user.schooluserrole)) {
-          throw new UnauthorizedException();
+          throw new ForbiddenException();
         }
       }
       return user;
