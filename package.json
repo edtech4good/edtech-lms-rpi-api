@@ -5,6 +5,10 @@
   "author": "",
   "private": false,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edtech4good/edtech-lms-rpi-api.git"
+  },
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "nest build",
