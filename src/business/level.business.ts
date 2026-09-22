@@ -1,4 +1,4 @@
-import { col, fn, Op, WhereOptions } from "sequelize";
+import { Op, WhereOptions } from "sequelize";
 import { lessonPassMark } from "src/business/lesson.business";
 import { lessons } from "src/models/data-models/lessons";
 import { levels, levelsAttributes } from "src/models/data-models/levels";
@@ -72,12 +72,7 @@ export class LevelBusiness {
     });
     const levelsresult = await levels.findAll({
       where: { gradeid, levelstatus: true, isdeleted: false },
-      attributes: [
-        "levelid",
-        "levelname",
-        "levelorder",
-        [fn("COUNT", col("lessons.lessonid")), "number_lessons"],
-      ],
+      attributes: ["levelid", "levelname", "levelorder"],
       include: [
         {
           model: studentlevelsprogress,
@@ -85,16 +80,31 @@ export class LevelBusiness {
           where: { studentid: user.studentid },
           attributes: ["points","completed","scores"],
         },
-        {
-          model: lessons,
-          as: "lessons",
-          required: false,
-          where: { lessonstatus: true, isdeleted: false },
-          attributes: [],
-        },
       ],
-      group: ["levels.levelid"],
     });
+    // The query above used to include `lessons` (for a COUNT aggregate) and
+    // `group: ["levels.levelid"]`. Under ONLY_FULL_GROUP_BY, MySQL rejected
+    // that: the studentlevelsprogresses include auto-selects its primary key
+    // (studentlevelsprogresses.studentlevelprogressid), which is not
+    // functionally dependent on levels.levelid, so it had to appear in the
+    // GROUP BY too (issue #43). The `group` was the actual problem; removing
+    // it also removes the aggregate and the `lessons` include, so
+    // number_lessons is now computed in JS from a plain, ungrouped lessons
+    // query instead. Note: the old grouped COUNT was inflated for any
+    // student with more than one studentlevelsprogress row for a level (the
+    // include fanned out), so this count can come out lower than before for
+    // such students; for the same reason, studentlevelsprogresses below may
+    // now hold more than one element instead of always one.
+    const levelids = levelsresult.map((level) => level.levelid);
+    const lessoncounts = await lessons.findAll({
+      where: { lessonstatus: true, isdeleted: false, levelid: { [Op.in]: levelids } },
+      attributes: ["levelid"],
+    });
+    const number_lessons_by_levelid = new Map<string, number>();
+    for (const lesson of lessoncounts) {
+      const levelid = lesson.getDataValue("levelid");
+      number_lessons_by_levelid.set(levelid, (number_lessons_by_levelid.get(levelid) ?? 0) + 1);
+    }
     const lessonsprogresses = await lessons
       .findAll({
         where: { lessonstatus: true, isdeleted: false },
@@ -131,6 +141,7 @@ export class LevelBusiness {
         (lsp) => lsp.levelid === level.levelid && lsp.getDataValue("completed")
       ).length;
       level.setDataValue("number_completed_lessons", number_completed_levels);
+      level.setDataValue("number_lessons", number_lessons_by_levelid.get(level.levelid) ?? 0);
       if (
         level.studentlevelsprogresses &&
         level.studentlevelsprogresses.length > 0
