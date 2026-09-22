@@ -1,0 +1,25 @@
+edtech-lms-rpi-api
+Copyright (C) 2024-2026 Jesse Orndorff
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 of the License only.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+General Public License (LICENSE) for more details.
+
+Copyright history
+- Originally developed for Plus Foundation.
+- Copyright assigned by Plus Foundation to Glean Asia in 2024.
+- Copyright subsequently assigned by Glean Asia to Jesse Orndorff, who
+  maintains the software.
+- All contributions before the relicensing were made by employees or
+  contractors of Glean Asia under that assignment.
+
+Licence history
+- Published under the MIT License from 3 October 2025 until the AGPL
+  relicensing commit on this branch. Copies obtained under the MIT License
+  keep the rights that licence granted for the code as it stood at the
+  time. Everything from the relicensing commit onward is AGPL-3.0-only.
