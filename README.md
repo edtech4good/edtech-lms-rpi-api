@@ -4,6 +4,8 @@ This is the classroom half of the LMS. It runs on a Raspberry Pi, or any Linux b
 
 Same stack as the central API: NestJS, Sequelize, MySQL, JWT.
 
+For where this project came from, see [HISTORY.md](HISTORY.md).
+
 ## How it fits with the other repos
 
 - [edtech-lms-api](https://github.com/edtech4good/edtech-lms-api) is the central, cloud-side API. It authors the content this one serves and ingests the logs this one exports.
