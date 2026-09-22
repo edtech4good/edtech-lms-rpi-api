@@ -31,3 +31,6 @@ updates:
       - dependency-name: "adm-zip"
       # reflect-metadata 0.2 conflicts with @nestjs/* 8 peer ranges; bump with the Nest upgrade.
       - dependency-name: "reflect-metadata"
+      # passport 0.7 is outside @nestjs/passport 8's peer range (^0.4-^0.6);
+      # Dependabot counts 0.x steps as minor. Bump with the Nest upgrade.
+      - dependency-name: "passport"
