@@ -178,8 +178,17 @@ export class LessonBusiness {
   updatelearningprogress = async (
     lessonlearningid: string,
     progress: { content_length: number; time: number; ended: boolean, date: Date },
-    user: Token, 
+    user: Token,
   ) => {
+    // expo-av on web reports fractional millis for both of these (e.g.
+    // 11211.207999999999) — the joi validator no longer requires an integer
+    // (see lesson.request.validator.ts), so round explicitly, once, up
+    // front, before any arithmetic or write below uses either value. Both
+    // columns are INTEGER UNSIGNED; previously Sequelize just truncated the
+    // fractional value silently on insert, which is a different (and
+    // wrong) result than rounding to the nearest integer.
+    progress.time = Math.round(progress.time);
+    progress.content_length = Math.round(progress.content_length);
     const lessonlearning = await this.getlessonlearning(lessonlearningid);
     const student = await this.getstudent(user);
     let learningprogress = await studentlearningprogress.findOne({
@@ -188,8 +197,29 @@ export class LessonBusiness {
         lessonlearningid,
       },
     });
-    if (progress.content_length <= 0)
+    // Media-less learning items (e.g. DCRS/corporate content seeded as video
+    // items whose file does not exist) have no content_length to report, so a
+    // completion (ended: true) with content_length 0 is how they are earned
+    // on open. A still-in-progress report with no content_length is rejected,
+    // since that combination has nothing to measure. See rpi-api#42.
+    if (!progress.ended && progress.content_length <= 0)
       throw new BadRequestException("Content Lenght can not equal 0");
+    // A media-less item has nothing to divide by, so progress_percentage
+    // can't be a real time/content_length ratio. `ended` is always true
+    // here (the throw above rejects the only other case), so this is
+    // effectively always 100 — written as a ternary anyway so the "0% for
+    // an in-progress report" meaning stays legible if that invariant ever
+    // changes. Hoisted so both write sites below use one computed value
+    // instead of repeating the guard.
+    const progressPercentage = Number(
+      (
+        progress.content_length <= 0
+          ? progress.ended
+            ? 100
+            : 0
+          : (progress.time * 100) / progress.content_length
+      ).toFixed(2)
+    );
     let oldpoints: number | null = null;
     const transaction = await dbinstance.getdbinstance().transaction();
     try {
@@ -199,9 +229,7 @@ export class LessonBusiness {
           studentid: student.studentid,
           lessonlearningid,
           content_length: progress.content_length,
-          progress_percentage: Number(
-            ((progress.time * 100) / progress.content_length).toFixed(2)
-          ),
+          progress_percentage: progressPercentage,
           progress: progress.time,
           viewed: progress.ended ? 1 : 0,
           points: progress.ended ? lessonlearning.points : 0,
@@ -215,9 +243,7 @@ export class LessonBusiness {
           learningprogress.viewed > 0 || progress.ended
             ? lessonlearning.points
             : 0;
-        learningprogress.progress_percentage = Number(
-          ((progress.time * 100) / progress.content_length).toFixed(2)
-        );
+        learningprogress.progress_percentage = progressPercentage;
         learningprogress.viewed += progress.ended ? 1 : 0; // view increase
         learningprogress.lastupdated = progress.date;
         await learningprogress.save({
