@@ -34,3 +34,8 @@ updates:
       # passport 0.7 is outside @nestjs/passport 8's peer range (^0.4-^0.6);
       # Dependabot counts 0.x steps as minor. Bump with the Nest upgrade.
       - dependency-name: "passport"
+      # No ESLint configuration is in use here; plugin majors are noise.
+      - dependency-name: "eslint-plugin-unicorn"
+      # @types/express must track the Express major that @nestjs/platform-express 8 brings (4).
+      - dependency-name: "@types/express"
+        update-types: ["version-update:semver-major"]
