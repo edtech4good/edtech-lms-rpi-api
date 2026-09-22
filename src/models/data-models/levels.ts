@@ -20,6 +20,7 @@ export interface levelsAttributes {
   points?: number;
   progress?: number;
   number_completed_lessons?: number;
+  number_lessons?: number;
 
   completed?: boolean;
   studentlevelsprogresses?: studentlevelsprogress[];
