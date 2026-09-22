@@ -1,5 +1,5 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
-import { compile } from 'joi';
+import joi from 'joi';
 import { pick } from 'lodash';
 import { Observable } from 'rxjs';
 import { RequestValidator } from 'src/models';
@@ -14,7 +14,7 @@ export class SchemaValidationInterceptor implements NestInterceptor {
     const request: any = ctx.getRequest();
     const validSchema = pick(this.schema, ['params', 'query', 'body']);
     const object = pick(request, Object.keys(validSchema));
-    const { error } = compile(this.schema)
+    const { error } = joi.compile(this.schema)
       .prefs({ errors: { label: 'key' } })
       .validate(object);
 

@@ -29,3 +29,5 @@ updates:
         update-types:
           - version-update:semver-major
       - dependency-name: "adm-zip"
+      # reflect-metadata 0.2 conflicts with @nestjs/* 8 peer ranges; bump with the Nest upgrade.
+      - dependency-name: "reflect-metadata"

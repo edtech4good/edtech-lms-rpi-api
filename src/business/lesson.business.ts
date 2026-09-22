@@ -378,7 +378,7 @@ export class LessonBusiness {
         },
         attributes: [[fn("sum", col("points")), "points"]],
       });
-      practicepoints += +stp[0]?.points ?? 0;
+      practicepoints += +stp[0]?.points;
     }
     return practicepoints;
   };
@@ -399,7 +399,7 @@ export class LessonBusiness {
         },
         attributes: [[fn("sum", col("points")), "points"]],
       });
-      quizpoints += +stp[0]?.points ?? 0;
+      quizpoints += +stp[0]?.points;
     }
     return quizpoints;
   };
@@ -416,7 +416,7 @@ export class LessonBusiness {
         },
       });
       if (!lslearnings || lslearnings.length <= 0) return 0;
-      const singlepoint = +lesson.learning_points / lslearnings.length ?? 0;
+      const singlepoint = +lesson.learning_points / lslearnings.length;
       return Math.ceil(learningprogress.length * singlepoint);
     }
     return 0;
