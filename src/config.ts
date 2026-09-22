@@ -79,7 +79,7 @@ try {
     configvalues = value;
   }
 } catch (error) {
-  console.warn(`Error parsing FORTYKAPIRPICONFIG: ${error.message}. Using default configuration.`);
+  console.warn(`Error parsing FORTYKAPIRPICONFIG: ${(error as Error).message}. Using default configuration.`);
   configvalues = defaultConfig;
 }
 

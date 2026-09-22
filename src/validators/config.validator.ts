@@ -1,41 +1,34 @@
-import {
-  alternatives,
-  boolean,
-  number,
-  object,
-  string,
-  ValidationError,
-} from "joi";
-export const schema = object()
+import Joi, { ValidationError } from "joi";
+export const schema = Joi.object()
   .keys({
-    fortyk: object()
+    fortyk: Joi.object()
       .keys({
-        api: object()
+        api: Joi.object()
           .keys({
-            serversynckey: string().required().description("serversynckey"),
-            rpi: object()
+            serversynckey: Joi.string().required().description("serversynckey"),
+            rpi: Joi.object()
               .keys({
-                port: number().required().description("port"),
-                debug: boolean().required().description("debug"),
-                accessexpirationminutes: number()
+                port: Joi.number().required().description("port"),
+                debug: Joi.boolean().required().description("debug"),
+                accessexpirationminutes: Joi.number()
                   .required()
                   .description("accessexpirationminutes"),
-                applicationsecret: string()
+                applicationsecret: Joi.string()
                   .required()
                   .description("applicationsecret"),
-                database: object()
+                database: Joi.object()
                   .keys({
-                    name: string().required().description("name"),
-                    user: string().required().description("user"),
-                    password: string().required().description("password"),
-                    port: number().required().default(3306).description("port"),
-                    host: alternatives()
-                      .try(string().uri(), string().ip(), string())
+                    name: Joi.string().required().description("name"),
+                    user: Joi.string().required().description("user"),
+                    password: Joi.string().required().description("password"),
+                    port: Joi.number().required().default(3306).description("port"),
+                    host: Joi.alternatives()
+                      .try(Joi.string().uri(), Joi.string().ip(), Joi.string())
                       .required()
                       .description("host"),
                   })
                   .unknown(true),
-                offline: boolean().required().description("Offline or Online")
+                offline: Joi.boolean().required().description("Offline or Online")
               })
               .unknown(true),
           })
