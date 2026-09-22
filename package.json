@@ -51,7 +51,7 @@
     "dotenv": "8.2.0",
     "file-extension": "4.0.5",
     "file-type": "^16.5.4",
-    "helmet": "4.6.0",
+    "helmet": "8.3.0",
     "ip": "1.1.5",
     "joi": "17.4.0",
     "jsonwebtoken": "^9.0.0",
