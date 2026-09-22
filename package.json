@@ -4,7 +4,7 @@
   "description": "Educational Technology Learning Management System RPI (Raspberry Pi) API",
   "author": "",
   "private": false,
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/edtech4good/edtech-lms-rpi-api.git"

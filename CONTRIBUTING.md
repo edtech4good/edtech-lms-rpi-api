@@ -35,6 +35,13 @@ If you add a test or assertion, break the thing it watches once and confirm it g
 
 This repo and edtech-lms-api share code by copy. If you fix something here, check whether the central API has the same bug.
 
-License
+## Licensing of contributions
 
-By contributing to this project, you agree that your contributions will be licensed under the MIT License.
+By submitting a contribution you agree that it is licensed under the
+AGPL-3.0-only licence of this repository, and you grant Jesse Orndorff a
+perpetual, worldwide, non-exclusive, royalty-free licence to use,
+reproduce, modify, sublicense and distribute your contribution as part of
+this project under any licence, including commercial licences, so the
+project can be dual-licensed. You confirm you have the right to grant
+this. Sign your commits with `git commit -s` (Developer Certificate of
+Origin, https://developercertificate.org/).
