@@ -1,15 +1,17 @@
 -- Demo Pi API users for local development (database: edtech_lms_rpi).
 -- Guarantees: demo.student, demo.teacher accounts in 'Demo Primary School' (schoolid b0000000-0000-4000-8000-000000000002).
--- Password for both accounts: demo
+-- Password for both accounts: 'demo' by default, or SEED_DEMO_PASSWORD if set
+-- when seed-demo-users.js runs. The default is published in this public repo,
+-- so override it for any target that is not a throwaway local database.
 -- __PASSWORD_HASH__ is substituted by seed-demo-users.js with a freshly computed
--- bcrypt(md5("demo")) — the same scheme as src/services/password.service.ts
+-- bcrypt(md5(password)) — the same scheme as src/services/password.service.ts
 -- (crypto-js/md5 + bcryptjs, 10 rounds). SQL can't compute bcrypt itself, so the
 -- literal can't live here; a raw MD5 literal would fail login now that
 -- verifyPassword no longer accepts unsalted MD5.
 --
 -- Expo login (POST http://localhost:3001/auth/login):
---   Student: studentusername=demo.student, studentpassword=demo
---   Teacher: studentusername=demo.teacher, studentpassword=demo
+--   Student: studentusername=demo.student, studentpassword=<seeded password>
+--   Teacher: studentusername=demo.teacher, studentpassword=<seeded password>
 --
 -- Idempotent: uses INSERT IGNORE (safe to run more than once).
 
