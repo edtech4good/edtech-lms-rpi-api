@@ -5,6 +5,7 @@
  * would after a successful cloud-to-classroom sync.
  *
  * Usage: npm run seed:dcrs (requires ALLOW_DEMO_SEED=true)
+ *        SEED_DEMO_PASSWORD='...' npm run seed:dcrs   (any non-local target)
  *
  * What this is: a real client deck — Mekong Inclusive Ventures' (MIV)
  * "Disabilities Capital Readiness" programme, Cohort II, "Module 1: Business
@@ -39,7 +40,11 @@ const bcryptjs = require("bcryptjs");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-const DEMO_PASSWORD = "demo";
+// The default is published in this public repo, so seeding any database that
+// is not a throwaway local one with it creates a real account whose password
+// anyone can read. Override it the way seed-local-dev.js takes
+// SUPERADMIN_PASSWORD.
+const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD || "demo";
 // Must match src/services/password.service.ts exactly: bcrypt(md5(password)),
 // same crypto-js/md5 + bcryptjs libraries, same BCRYPT_ROUNDS (10). A plain
 // md5() hash here would insert a row that fails login now that verifyPassword

@@ -5,6 +5,7 @@
  * after a successful cloud-to-classroom sync.
  *
  * Usage: npm run seed:content (requires ALLOW_DEMO_SEED=true)
+ *        SEED_DEMO_PASSWORD='...' npm run seed:content   (any non-local target)
  *
  * Why both databases need seeding: the tablet reads lessons from THIS api
  * (EXPO_PUBLIC_BASE_URL), not from the central LMS (EXPO_PUBLIC_SYNC_URL).
@@ -34,7 +35,11 @@ const bcryptjs = require("bcryptjs");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
-const DEMO_PASSWORD = "demo";
+// The default is published in this public repo, so seeding any database that
+// is not a throwaway local one with it creates a real account whose password
+// anyone can read. Override it the way seed-local-dev.js takes
+// SUPERADMIN_PASSWORD.
+const DEMO_PASSWORD = process.env.SEED_DEMO_PASSWORD || "demo";
 // Must match src/services/password.service.ts exactly: bcrypt(md5(password)),
 // same crypto-js/md5 + bcryptjs libraries, same BCRYPT_ROUNDS (10). A plain
 // md5() hash here would insert a row that fails login now that verifyPassword

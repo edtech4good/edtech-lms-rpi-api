@@ -39,7 +39,10 @@ async function main() {
   // INSERT IGNORE means this only sets the hash on a first insert; it will
   // NOT repair an existing row already seeded with a raw MD5 hash — that
   // needs the rewrap migration (20260719160000-rewrap-md5-passwords-bcrypt).
-  const passwordHash = bcryptjs.hashSync(md5("demo").toString(), 10);
+  // Published default — override for any non-local target. See
+  // seed-local-dev.js, which takes SUPERADMIN_PASSWORD the same way.
+  const plaintext = process.env.SEED_DEMO_PASSWORD || "demo";
+  const passwordHash = bcryptjs.hashSync(md5(plaintext).toString(), 10);
   // Replacer is a function, not the hash string directly: a bcrypt hash
   // contains "$" sequences (e.g. "$2b$10$..."), and String.replace()
   // special-cases "$"-patterns (`$&`, `$1`, `$$`, ...) in a string
@@ -60,8 +63,8 @@ async function main() {
   try {
     await conn.query(sql);
     console.log("Demo users seeded OK.");
-    console.log("  demo.student / demo  (student)");
-    console.log("  demo.teacher / demo  (teacher — import/sync guards)");
+    console.log(`  demo.student / ${plaintext}  (student)`);
+    console.log(`  demo.teacher / ${plaintext}  (teacher — import/sync guards)`);
   } finally {
     await conn.end();
   }
