@@ -30,3 +30,6 @@ export class AppController {
     return "1.0.0";
   }
 }
+
+// RULESET-PROOF: deliberate type error, throwaway PR, never merge
+export const RULESET_PROOF: number = 'not a number';
