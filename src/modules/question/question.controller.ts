@@ -2,7 +2,6 @@ import {
   Controller,
   Get, HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
   UseGuards,
   UseInterceptors
@@ -14,6 +13,8 @@ import {
   ApiTags
 } from "@nestjs/swagger";
 import { QuestionBusiness } from "src/business/question.business";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
@@ -51,10 +52,7 @@ export class QuestionController {
   ): Promise<any> {
     const question = await new QuestionBusiness().getlessonquestions(lessonid, user);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `lesson ${lessonid} not found`
-      }, `lesson ${lessonid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     return {
       data: question,
@@ -85,10 +83,7 @@ export class QuestionController {
   ): Promise<any> {
     const question = await new QuestionBusiness().getlevelquestions(levelid);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `level ${levelid} not found`
-      }, `level ${levelid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get level quiz <${levelid}>`, {logaccesstype: LOGTYPE.GETLEVELQUIZ, userid: user.schooluserid});
     return {
@@ -120,10 +115,7 @@ export class QuestionController {
   ): Promise<any> {
     const question = await new QuestionBusiness().getpracticequestions(lessonpracticeid);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `lessonpractice ${lessonpracticeid} not found`
-      }, `lessonpractice ${lessonpracticeid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get lesson practice <${lessonpracticeid}>`, {logaccesstype: LOGTYPE.GETLESSONPRACTICE, userid: user.schooluserid});
     return {
@@ -155,10 +147,7 @@ export class QuestionController {
   ): Promise<any> {
     const question = await new QuestionBusiness().getquizquestions(lessonquizid);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `lessonquiz ${lessonquizid} not found`
-      }, `lessonquiz ${lessonquizid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get lesson quiz <${lessonquizid}>`, {logaccesstype: LOGTYPE.GETLESSONQUIZ, userid: user.schooluserid});
     return {
@@ -190,10 +179,7 @@ export class QuestionController {
   ): Promise<any> {
     const question = await new QuestionBusiness().getbaselinequestions(curriculumbaselineid);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `baselinequestion ${curriculumbaselineid} does't have question yet`
-      }, `baselinequestion ${curriculumbaselineid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get baseline question <${curriculumbaselineid}>`, {logaccesstype: LOGTYPE.GETLESSONQUIZ, userid: user.schooluserid});
     return {
@@ -225,10 +211,7 @@ export class QuestionController {
   ): Promise<any> {
     const question = await new QuestionBusiness().getlevelquestionsanswers(levelid, user);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `No level-quiz result is found`
-      }, `level ${levelid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get level quiz <${levelid}> question answers`, {logaccesstype: LOGTYPE.GETLEVELQUIZ, userid: user.schooluserid});
     return {

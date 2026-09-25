@@ -13,7 +13,8 @@ import { LessonBusiness } from "src/business/lesson.business";
 import { Token } from "src/models/token.model";
 import { schools, schoolsAttributes } from "src/models/data-models/school";
 import { GradeBusiness } from "./grade.business";
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 export class CurriculumBusiness {
   findallcurriculum = () => curriculums.findAll();
   findcurriculum = (curriculumid: string) =>
@@ -181,7 +182,7 @@ export class CurriculumBusiness {
     const order = ["curriculumname"];
 
     const currs = await curriculums.findAll({ where, order });
-    if(!user) throw new BadRequestException('User is not a student.');
+    if(!user) throw new ApiError(ErrorCode.NOT_ALLOWED, { message: 'This account is not a student.' });
     for await (const cur of currs) {
       const stdprogresses = await new GradeBusiness().getgradesbycurriculumid(cur.curriculumid, user);
       let progress = 0;

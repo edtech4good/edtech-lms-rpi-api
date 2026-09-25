@@ -5,7 +5,6 @@ import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { schoolusers, students, studentsAttributes } from "../models/data-models/init-models";
 import { GradeBusiness } from "./grade.business";
-import { BadRequestException } from "@nestjs/common";
 
 export class StudentBusiness {
   getstudentbyid = (studentid: string) => {
@@ -98,10 +97,11 @@ export class StudentBusiness {
           ],
         });
       } catch (e) {
-        throw new BadRequestException({
-          error: true,
-          errormessage: e,
-        });
+        // Rethrow the original error (was previously wrapped as a 400
+        // carrying the raw error object as `errormessage`) so the global
+        // filter's Sequelize mapping sees it and can return 503 for a
+        // connection failure instead of a 400 leaking DB detail.
+        throw e;
       }
     }
   }

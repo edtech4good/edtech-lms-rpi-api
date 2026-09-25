@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { UploadLimits } from "src/constants/upload-limits";
 import { Token } from "src/models/token.model";
 import { ImportController } from "./import.controller";
@@ -50,10 +51,21 @@ const mockZipWithEntry = (headerSize: number) => {
   }));
 };
 
-const expectTooLarge = (promise: Promise<unknown>) =>
-  expect(promise).rejects.toMatchObject({
-    response: { error: true, errormessage: "import too large" },
+/**
+ * Since 25 Sep 2026 (docs/api-errors.md) these throw an ApiError, not a bare
+ * BadRequestException carrying a `{error, errormessage}` object: `response`
+ * is now the plain message string itself (Nest's default for a string
+ * HttpException body), and the code/status the global filter will map it to
+ * live on the ApiError instance, not in `.response`.
+ */
+const expectTooLarge = async (promise: Promise<unknown>) => {
+  await expect(promise).rejects.toBeInstanceOf(ApiError);
+  await expect(promise).rejects.toMatchObject({
+    code: ErrorCode.FILE_REJECTED,
+    message: "import too large",
+    response: "import too large",
   });
+};
 
 describe("ImportController zip decompressed-size bound (#32)", () => {
   afterEach(() => {
@@ -82,12 +94,12 @@ describe("ImportController zip decompressed-size bound (#32)", () => {
   });
 
   it("rejects when the multipart part is missing entirely (no file), before any zip is opened", async () => {
-    await expect(
-      new ImportController().studentsimport(
-        undefined as unknown as Express.Multer.File,
-        user
-      )
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const promise = new ImportController().studentsimport(
+      undefined as unknown as Express.Multer.File,
+      user
+    );
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise).rejects.toMatchObject({ code: ErrorCode.FILE_REJECTED });
     expect(AdmZip).not.toHaveBeenCalled();
   });
 
@@ -97,8 +109,8 @@ describe("ImportController zip decompressed-size bound (#32)", () => {
     });
     const file = { buffer: Buffer.from("garbage") } as Express.Multer.File;
 
-    await expect(
-      new ImportController().studentsimport(file, user)
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const promise = new ImportController().studentsimport(file, user);
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise).rejects.toMatchObject({ code: ErrorCode.FILE_REJECTED });
   });
 });

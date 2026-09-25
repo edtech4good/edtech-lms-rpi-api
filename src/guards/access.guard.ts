@@ -19,6 +19,12 @@ const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
       // You can throw an exception based on either "info" or "err" arguments
 
       if (err || !user) {
+        // Fail CLOSED: previously this whole branch (including the final
+        // throw) lived inside `if (context)`, so a call with no context and
+        // no role list fell through to `return user` below with `user`
+        // still undefined/null — passport then let the request through
+        // unauthenticated. `@nestjs/passport` 8 always passes a context in
+        // practice, but the guard must not depend on that to deny access.
         if (context) {
           const ctx = context.switchToHttp();
           const request: Request = ctx.getRequest();
@@ -29,8 +35,8 @@ const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
               }
             }
           }
-          throw err || new UnauthorizedException();
         }
+        throw err || new UnauthorizedException();
       }
       if (schoolrole) {
         if (schoolrole.length > 0 && !schoolrole.find(x => x == user.schooluserrole)) {

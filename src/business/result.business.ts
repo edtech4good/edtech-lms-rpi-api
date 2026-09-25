@@ -7,7 +7,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { LessonBusiness } from "./lesson.business";
 import { Transaction, UniqueConstraintError } from "sequelize";
 import { dbinstance } from "src/services/dbservice";
-import { BadRequestException } from "@nestjs/common";
 
 const insertquestion = async (
     studentprogressid: string,
@@ -80,10 +79,7 @@ export class ResultBusiness {
             await tnx.commit();
         } catch(err: any) {
             await tnx.rollback();
-            throw new BadRequestException({
-                error: true,
-                errormessage: err?.response?.errormessage || err.message,
-            });
+            throw err;
         }
         await lessonbusiness.addstudentlevelquizscores(user, level, tempprogress.starttime ?? new Date(),  tempprogress.scores);
         await lessonbusiness.updateuserdailypointsBylevelquiz(level.levelid, user, tempprogress.starttime ?? new Date());
@@ -119,10 +115,7 @@ export class ResultBusiness {
             await tnx.commit();
         } catch(err: any) {
             await tnx.rollback();
-            throw new BadRequestException({
-                error: true,
-                errormessage: err?.response?.errormessage || err.message,
-            });
+            throw err;
         }
         // await lessonbusiness.addstudentlevelquizscores(user, level, tempprogress.starttime ?? new Date(),  tempprogress.scores);
         // await lessonbusiness.updateuserdailypointsBylevelquiz(level.levelid, user, tempprogress.starttime ?? new Date());
@@ -207,16 +200,10 @@ export class ResultBusiness {
                     result = existing;
                     created = false;
                 } else {
-                    throw new BadRequestException({
-                        error: true,
-                        errormessage: err.message,
-                    });
+                    throw err;
                 }
             } else {
-                throw new BadRequestException({
-                    error: true,
-                    errormessage: err?.response?.errormessage || err.message,
-                });
+                throw err;
             }
         }
         if (created) {
@@ -304,16 +291,10 @@ export class ResultBusiness {
                     result = existing;
                     created = false;
                 } else {
-                    throw new BadRequestException({
-                        error: true,
-                        errormessage: err.message,
-                    });
+                    throw err;
                 }
             } else {
-                throw new BadRequestException({
-                    error: true,
-                    errormessage: err?.response?.errormessage || err.message,
-                });
+                throw err;
             }
         }
         if (created) {

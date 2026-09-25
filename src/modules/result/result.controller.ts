@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller, HttpCode,
   HttpStatus, Param,
@@ -72,12 +71,11 @@ export class ResultController {
         // set active activity for student
         await lessonbusiness.setstudentactive(user, lessonpractice.lessonpracticeid, 2, tnx, result.starttime);
         await tnx.commit();
-      } catch {
+      } catch (err) {
         await tnx.rollback();
-        throw new BadRequestException({
-          error: true,
-          errormessage: "Internal Error",
-        });
+        // Rethrow so a DB failure on this result save maps to 503
+        // (retried by the client), not a 400 the app treats as bad data.
+        throw err;
       }
       await lessonbusiness.updateuserdailypoints(lessonpractice.lessonid, user, result.starttime);
       return {
@@ -150,10 +148,7 @@ export class ResultController {
         await tnx.commit();
       } catch(err: any) {
         await tnx.rollback();
-        throw new BadRequestException({
-          error: true,
-          errormessage: err?.response?.errormessage || err.message,
-        });
+        throw err;
       }
       await lessonbusiness.updateuserdailypoints(lessonquiz.lessonid, user, result.starttime);
       return {
@@ -225,10 +220,7 @@ export class ResultController {
         await tnx.commit();
       } catch(err: any) {
         await tnx.rollback();
-        throw new BadRequestException({
-          error: true,
-          errormessage: err?.response?.errormessage || err.message,
-        });
+        throw err;
       }
       await lessonbusiness.updateuserdailypointsBylevelquiz(levelquiz.levelid, user, result.starttime);
       return {
