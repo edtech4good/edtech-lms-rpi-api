@@ -1,11 +1,13 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import { ValidationError } from 'joi';
-import { flatten, pick, uniq } from 'lodash';
+import { flatten, pick, uniqBy } from 'lodash';
 import { forkJoin, from, Observable } from 'rxjs';
 import { IBusinessRule } from '../models/Ibusinessrule';
 import { RequestValidator } from '../models/RequestValidator';
 import { ValidationException } from '../models/ValidationException';
 import { IRequest } from 'src/models/IRequest';
+import { FieldError } from 'src/models/FieldError';
+import { humanizeJoiMessage, joiFieldLabel } from 'src/utils/joi-message';
 @Injectable()
 export class BusinessValidationInterceptor implements NestInterceptor {
   constructor(private rules: Array<IBusinessRule>) {}
@@ -51,9 +53,21 @@ export class BusinessValidationInterceptor implements NestInterceptor {
         }
       }
       if (validationErrors && validationErrors.length > 0) {
-        const errorsmap = validationErrors.filter(x => x !== null && x !== undefined).map(x => (x ? x.details.map(y => y.message) : ''));
-        if (errorsmap.length > 0) {
-          throw new ValidationException(uniq(flatten(errorsmap).filter(x => x.length > 0)).join(', '));
+        const fieldsmap: FieldError[] = flatten(
+          validationErrors
+            .filter(x => x !== null && x !== undefined)
+            .map(x =>
+              x
+                ? x.details.map(y => {
+                    const field = joiFieldLabel(y.path);
+                    return { field, message: humanizeJoiMessage(field, y.type, y.message) };
+                  })
+                : []
+            )
+        );
+        const fields = uniqBy(fieldsmap.filter(f => f.message.length > 0), f => `${f.field}:${f.message}`);
+        if (fields.length > 0) {
+          throw new ValidationException(fields);
         }
       }
     }

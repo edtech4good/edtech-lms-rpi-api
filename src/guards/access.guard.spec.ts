@@ -47,6 +47,24 @@ describe("AccessGuard", () => {
       expect(() => guard.handleRequest(boom, null, null, context)).toThrow(boom);
     });
 
+    it("fails CLOSED (throws) when there is no context at all, rather than falling through to `return user` with no user", () => {
+      // Regression guard for the 25 Sep 2026 audit's "latent, not
+      // exploitable today" finding: the old handleRequest wrapped its
+      // entire err/no-user branch (including the final throw) inside
+      // `if (context)`. With no context AND no role list, that let a
+      // missing-context call fall all the way to `return user` below with
+      // `user` still null/undefined — passport would then let the request
+      // through unauthenticated. `@nestjs/passport` 8 always passes a
+      // context in practice, so this can't be reached today, but the guard
+      // must not rely on that.
+      const Guard = AccessGuard(TokenType.ACCESS);
+      const guard = new Guard();
+
+      expect(() =>
+        guard.handleRequest(null, null, null, undefined as unknown as ExecutionContext)
+      ).toThrow(UnauthorizedException);
+    });
+
     it("still grants the synthetic server identity for the sync key, reading the header from the passed context (#21)", () => {
       const Guard = AccessGuard(TokenType.ACCESS, SchoolRole.ADMIN);
       const guard = new Guard();

@@ -203,7 +203,7 @@ export class LessonBusiness {
     // on open. A still-in-progress report with no content_length is rejected,
     // since that combination has nothing to measure. See rpi-api#42.
     if (!progress.ended && progress.content_length <= 0)
-      throw new BadRequestException("Content Lenght can not equal 0");
+      throw new BadRequestException("Content length can't be 0.");
     // A media-less item has nothing to divide by, so progress_percentage
     // can't be a real time/content_length ratio. `ended` is always true
     // here (the throw above rejects the only other case), so this is
@@ -276,10 +276,10 @@ export class LessonBusiness {
       await this.updateuserdailypoints(lessonlearning.lessonid, user, progress.date);
     } catch(err: any) {
       await transaction.rollback();
-      throw new BadRequestException({
-        error: true,
-        errormessage: err?.response?.errormessage || err.message,
-      });
+      // Rethrow the original error so a DB failure on this result save maps
+      // to 503 (retried by the client), not a 400 carrying SQL text that
+      // the app treats as bad data and eventually drops.
+      throw err;
     }
   };
 

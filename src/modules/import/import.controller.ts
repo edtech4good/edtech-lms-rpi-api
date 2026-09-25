@@ -29,6 +29,8 @@ import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { TokenType } from "src/models/enums";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
@@ -47,18 +49,12 @@ import { dbinstance } from "src/services/dbservice";
  */
 function openZip(file: Express.Multer.File): AdmZip {
   if (!file || !file.buffer) {
-    throw new BadRequestException({
-      error: true,
-      errormessage: "Invalid file",
-    });
+    throw new ApiError(ErrorCode.FILE_REJECTED, { message: "Invalid file." });
   }
   try {
     return new AdmZip(file.buffer);
   } catch {
-    throw new BadRequestException({
-      error: true,
-      errormessage: "Invalid file",
-    });
+    throw new ApiError(ErrorCode.FILE_REJECTED, { message: "Invalid file." });
   }
 }
 
@@ -71,9 +67,9 @@ function openZip(file: Express.Multer.File): AdmZip {
  */
 function assertEntryWithinLimit(entry: AdmZip.IZipEntry, maxBytes: number): void {
   if (entry.header.size > maxBytes) {
-    throw new BadRequestException({
-      error: true,
-      errormessage: "import too large",
+    throw new ApiError(ErrorCode.FILE_REJECTED, {
+      message: "import too large",
+      status: HttpStatus.PAYLOAD_TOO_LARGE,
     });
   }
 }

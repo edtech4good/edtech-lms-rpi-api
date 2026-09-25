@@ -4,7 +4,6 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  NotFoundException,
   Param,
   Post,
   UseGuards,
@@ -20,6 +19,8 @@ import {
   ApiExtraModels,
 } from "@nestjs/swagger";
 import { LessonBusiness } from "src/business/lesson.business";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
@@ -191,10 +192,7 @@ export class LessonLearningController {
   ): Promise<any> {
     const question = await new LessonBusiness().getlessonbricks(lessonid, user);
     if (!question) {
-      throw new NotFoundException({
-        error: true,
-        errormessage: `lesson ${lessonid} not found`
-      }, `lesson ${lessonid} not found`);
+      throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.studentfirstname}> get all learnings by lesson <${lessonid}>`, {logaccesstype: LOGTYPE.GETALLLEARNINGS, userid: user.schooluserid});
     return {
