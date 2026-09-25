@@ -38,7 +38,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
       await new CurriculumBusiness().getCurriculumsWithFilter(HOSTILE, "", "", "");
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "curriculumname")).toBe(`%${HOSTILE}%`);
-      expect(typeof options.where.curriculumname.val).toBe("undefined");
+      expect(typeof likeValueOf(options.where, "curriculumname")).toBe("string");
     } finally {
       spy.mockRestore();
     }
@@ -50,7 +50,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
       await new GradeBusiness().getGradesWithFilter(HOSTILE, "", "", "");
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "gradename")).toBe(`%${HOSTILE}%`);
-      expect(typeof options.where.gradename.val).toBe("undefined");
+      expect(typeof likeValueOf(options.where, "gradename")).toBe("string");
     } finally {
       spy.mockRestore();
     }
@@ -62,7 +62,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
       await new LessonBusiness().getLessonsWithFilter("", HOSTILE);
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "lessonname")).toBe(`%${HOSTILE}%`);
-      expect(typeof options.where.lessonname.val).toBe("undefined");
+      expect(typeof likeValueOf(options.where, "lessonname")).toBe("string");
     } finally {
       spy.mockRestore();
     }
@@ -74,7 +74,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
       await new LevelBusiness().getLevelsWithFilter("", HOSTILE);
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "levelname")).toBe(`%${HOSTILE}%`);
-      expect(typeof options.where.levelname.val).toBe("undefined");
+      expect(typeof likeValueOf(options.where, "levelname")).toBe("string");
     } finally {
       spy.mockRestore();
     }
@@ -86,7 +86,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
       await new StandardBusiness().getStandardsWithFilter("some-school", HOSTILE);
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "standardname")).toBe(`%${HOSTILE}%`);
-      expect(typeof options.where.standardname.val).toBe("undefined");
+      expect(typeof likeValueOf(options.where, "standardname")).toBe("string");
     } finally {
       spy.mockRestore();
     }

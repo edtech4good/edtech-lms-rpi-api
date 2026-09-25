@@ -110,11 +110,12 @@ describe("StudentBusiness.getStudentsWithFilter SQL parameterization (#16)", () 
 
       // An Op.like clause is a plain object keyed by the Symbol(like); the
       // hostile string sits under that key as data, not inside a
-      // sequelize.literal(...) call (which would carry a `val` string
-      // containing raw SQL text with the term already spliced in).
+      // sequelize.literal(...) call (which would put a Literal instance —
+      // an object with its own `.val` holding the raw SQL text — under
+      // that same symbol key instead of a plain string).
       const likeSymbol = Object.getOwnPropertySymbols(likeClause)[0];
       expect(likeClause[likeSymbol]).toBe(`%${HOSTILE}%`);
-      expect(typeof likeClause.val).toBe("undefined");
+      expect(typeof likeClause[likeSymbol]).toBe("string");
     } finally {
       findAllSpy.mockRestore();
     }
