@@ -77,12 +77,23 @@ const rejectLater = (message: string) =>
   new Promise((_, reject) => setTimeout(() => reject(new Error(message)), 5));
 
 describe("import transactions wait for their writes and commit", () => {
-  let tnx: { commit: jest.Mock; rollback: jest.Mock };
+  let tnx: { commit: jest.Mock; rollback: jest.Mock; rolledBack: boolean };
 
   beforeEach(() => {
+    // rollback finishes a macrotask later and records that it finished, so a
+    // handler that doesn't await it is caught answering before it's done.
     tnx = {
       commit: jest.fn().mockResolvedValue(undefined),
-      rollback: jest.fn().mockResolvedValue(undefined),
+      rollback: jest.fn(
+        () =>
+          new Promise<void>((resolve) =>
+            setTimeout(() => {
+              tnx.rolledBack = true;
+              resolve();
+            }, 5)
+          )
+      ),
+      rolledBack: false,
     };
     jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
     // importschoolusers returns schoolusers.bulkCreate's rows; the controller
@@ -135,7 +146,18 @@ describe("import transactions wait for their writes and commit", () => {
       BadRequestException
     );
     expect(tnx.commit).not.toHaveBeenCalled();
-    expect(tnx.rollback).toHaveBeenCalledTimes(1);
+    expect(tnx.rolledBack).toBe(true);
+  });
+
+  it("teachers import rolls back and answers 400 when the write fails", async () => {
+    mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher9" }]);
+    jest.spyOn(schoolusers, "bulkCreate").mockReturnValue(rejectLater("ER_DUP_ENTRY") as never);
+
+    await expect(new ImportController().teachersimport(file, user)).rejects.toBeInstanceOf(
+      BadRequestException
+    );
+    expect(tnx.commit).not.toHaveBeenCalled();
+    expect(tnx.rolledBack).toBe(true);
   });
 
   it("students import answers 400 when the commit fails", async () => {
@@ -169,6 +191,6 @@ describe("import transactions wait for their writes and commit", () => {
     await expect(new ImportController().completesync(file, user)).rejects.toBeInstanceOf(
       BadRequestException
     );
-    expect(tnx.rollback).toHaveBeenCalledTimes(1);
+    expect(tnx.rolledBack).toBe(true);
   });
 });
