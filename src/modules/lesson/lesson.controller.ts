@@ -122,6 +122,36 @@ export class LessonController {
     };
   }
 
+  @Get("level/:levelid/steps")
+  @ApiResponse({
+    status: 200,
+    description: "Per-activity level steps fetch successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Error while fetching per-activity level steps",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseInterceptors(
+    new SchemaValidationInterceptor(showlevelid),
+    new BusinessValidationInterceptor([DeleteLevel])
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: `levelid`, type: "string", required: true })
+  async getlevelactivitiesprogress(
+    @Param("levelid") levelid: string,
+    @User() user: Token
+  ): Promise<any> {
+    Logger.info(`<${user.studentfirstname}> get level activities progress <${levelid}>`, {logaccesstype: LOGTYPE.GETLESSONSPROGRESS, userid: user.schooluserid});
+    return {
+      data: await new ActivityProgressBusiness().getlevelactivitiesprogress(levelid, user),
+      error: false,
+    };
+  }
+
   @Get(":lessonid/progress")
   @ApiResponse({
     status: 200,
