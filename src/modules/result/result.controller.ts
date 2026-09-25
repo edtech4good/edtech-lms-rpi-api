@@ -32,6 +32,7 @@ import { LevelQuizResultBody } from "./models/LevelQuizResultBody";
 import { resultbaselinequestion, resultlevelquiz, resultpractice, resultquiz } from "./result.request.validator";
 import { BaselineQuestionResultBody } from "./models/BaselineQuestionBody";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
+import { scorepractice } from "src/business/practicescore";
 
 @ApiTags("Result")
 @Controller("result")
@@ -85,24 +86,26 @@ export class ResultController {
         error: false,
       };
     }
-    const data = result.result.map((x) => ({
+    const data = (result.result ?? []).map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
     const correct = data.filter((x) => x.iscorrect === true);
     // const lessonpractice = new LessonBusiness().getlessonpractice(lessonpracticeid);
-    const passpercentage = correct ? ((correct.length * 100) / data.length).toFixed(2) : 0;
-    const { marks, userpoints, fullpoints, lesson} = await lessonbusiness.calculatePracticeScore(lessonpracticeid, correct);
+    // Pass, percentage and marks are scored against this practice's active
+    // questions (see practicescore.ts); points still come from calculatePracticeScore.
+    const score = await scorepractice(lessonpracticeid, data);
+    const { userpoints, fullpoints, lesson} = await lessonbusiness.calculatePracticeScore(lessonpracticeid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: +passpercentage >= 80,
-      passpercentage,
+      ispass: score.ispass,
+      passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: lessonpracticeid,
-      marks,
+      marks: score.marks,
       points: userpoints,
       fullpoints,
     };
