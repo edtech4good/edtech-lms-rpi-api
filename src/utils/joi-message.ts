@@ -44,6 +44,12 @@ export function humanizeJoiMessage(label: string, type: string, rawMessage: stri
       return `${label} is out of range.`;
     case 'date.format':
       return `${label} isn't a valid date.`;
+    case 'object.unknown':
+      // The schema here is the whole request ({ params, query, body }), so
+      // `path` for this type is the attacker-chosen KEY name itself (an
+      // arbitrary extra field), not a field this API defines — never echo
+      // it back, even as a label.
+      return "This request contains a field that isn't allowed.";
     default:
       // Unknown Joi type (or a schema-level custom .messages() override):
       // fall back to Joi's own message rather than guess. Still never
@@ -53,7 +59,18 @@ export function humanizeJoiMessage(label: string, type: string, rawMessage: stri
   }
 }
 
-/** Best-effort field label from a Joi ValidationErrorItem's `path`. */
+/**
+ * Best-effort field label from a Joi ValidationErrorItem's `path`, stripped
+ * of the `body.`/`query.`/`params.` request-part segment: the schema
+ * validated here is the whole `{ params, query, body }` object (see
+ * SchemaValidationInterceptor), so Joi's own `path` always starts with one
+ * of those three, which is plumbing the client never sent and shouldn't see
+ * echoed back as part of a field name.
+ */
+const REQUEST_PART_SEGMENTS = new Set(['body', 'query', 'params']);
+
 export function joiFieldLabel(path: Array<string | number>): string {
-  return path.length > 0 ? path.map(String).join('.') : 'value';
+  const trimmed =
+    path.length > 0 && REQUEST_PART_SEGMENTS.has(String(path[0])) ? path.slice(1) : path;
+  return trimmed.length > 0 ? trimmed.map(String).join('.') : 'value';
 }

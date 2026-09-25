@@ -1,12 +1,22 @@
-import { ArgumentsHost, BadRequestException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  ArgumentsHost,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  PayloadTooLargeException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ThrottlerException } from '@nestjs/throttler';
 import { MulterError } from 'multer';
 import {
   ConnectionError,
   ConnectionRefusedError,
+  DatabaseError,
   ForeignKeyConstraintError,
   TimeoutError as SequelizeTimeoutError,
   UniqueConstraintError,
+  ValidationError as SequelizeValidationError,
+  ValidationErrorItem,
 } from 'sequelize';
 import { Config, Logger } from '../config';
 import { ApiError } from '../models/ApiError';
@@ -156,22 +166,137 @@ describe('GlobalExceptionFilter', () => {
       expect(body.code).toBe(ErrorCode.NOT_ALLOWED);
     });
 
-    it('NotFoundException -> NOT_FOUND 404, and never forwards the exception message (ids/paths in the message must not reach the client)', () => {
-      const { status, body } = catchAndGetBody(
-        new NotFoundException({ error: true, errormessage: 'lesson 8f14e-secret-id not found' }, 'lesson 8f14e-secret-id not found')
-      );
+    it('NotFoundException with a plain string message (Nest\'s own default body — every throw site in this repo now uses ApiError instead) never forwards it: ids/paths must not reach the client', () => {
+      // `new NotFoundException('...')` produces Nest's OWN default
+      // `{statusCode, message, error}` shape, not this repo's own
+      // `{error:true, errormessage}` object — the exact shape an
+      // unmatched route's 404 also uses (see the "unknown route" test
+      // below). This is the actual leak risk; a hand-authored
+      // `{error:true, errormessage}` body is deliberately trusted instead
+      // (see the next test) since every real NOT_FOUND throw site in this
+      // repo now goes through `ApiError`, not a raw `NotFoundException`.
+      const { status, body } = catchAndGetBody(new NotFoundException('lesson 8f14e-secret-id not found'));
       expect(status).toBe(404);
       expect(body.code).toBe(ErrorCode.NOT_FOUND);
       expect(body.errormessage).not.toMatch(/8f14e-secret-id/);
     });
 
-    it('a plain BadRequestException (existing ~30 throw sites) keeps its own plain-language message, mapped to INVALID_INPUT 400', () => {
+    it("an unmatched route's own 404 (Nest's default 'Cannot GET /path?query' message) never leaks the path or query string", () => {
+      const { status, body } = catchAndGetBody(
+        new NotFoundException("Cannot GET /student/secret-student-id?token=abc123")
+      );
+      expect(status).toBe(404);
+      expect(body.code).toBe(ErrorCode.NOT_FOUND);
+      expect(JSON.stringify(body)).not.toMatch(/secret-student-id|token=abc123|Cannot GET/);
+    });
+
+    it("this repo's own {error:true, errormessage} object shape (~15 first-party throw sites, e.g. import.controller.ts's FILE_REJECTED messages) IS trusted and forwarded", () => {
       const { status, body } = catchAndGetBody(
         new BadRequestException({ error: true, errormessage: "Content length can't be 0." })
       );
       expect(status).toBe(400);
       expect(body.code).toBe(ErrorCode.INVALID_INPUT);
       expect(body.errormessage).toBe("Content length can't be 0.");
+    });
+
+    it('a malformed-JSON body (arrives as a plain BadRequestException whose message quotes the offending body) never echoes that fragment in the response', () => {
+      // The exact shape observed from a real Nest app + supertest for
+      // `POST` with invalid JSON: Nest's own default body, `.message` set
+      // to the underlying JSON.parse SyntaxError's message.
+      const exception = new BadRequestException(
+        `Unexpected token 'h', ..."assword": hunter2sec"... is not valid JSON`
+      );
+      const { status, body } = catchAndGetBody(exception);
+      expect(status).toBe(400);
+      expect(body.code).toBe(ErrorCode.INVALID_INPUT);
+      expect(JSON.stringify(body)).not.toMatch(/hunter2sec/);
+    });
+
+    it('any other HttpException status: 4xx -> INVALID_INPUT (generic unless own-shape), 5xx -> INTERNAL (generic, code never contradicts status)', () => {
+      const forbiddenLike = catchAndGetBody(new BadRequestException('some 4xx that is not one of the specific classes'));
+      expect(forbiddenLike.status).toBe(400);
+      expect(forbiddenLike.body.code).toBe(ErrorCode.INVALID_INPUT);
+
+      class CustomServerError extends BadRequestException {
+        constructor() {
+          super('boom');
+          // Force a 5xx status while remaining an HttpException, to prove
+          // the fallback is keyed off the STATUS, not the exception class.
+          Object.defineProperty(this, 'status', { value: 502 });
+        }
+        getStatus() {
+          return 502;
+        }
+      }
+      const serverError = catchAndGetBody(new CustomServerError());
+      expect(serverError.status).toBe(502);
+      expect(serverError.body.code).toBe(ErrorCode.INTERNAL);
+      expect(serverError.body.errormessage).toBe('Something went wrong on our side.');
+    });
+
+    it("a raw (non-HttpException) body-too-large error from body-parser's own middleware (app.use(json(...)) in server.ts, thrown before Nest's pipeline) -> FILE_REJECTED 413", () => {
+      const bodyParserError: any = new Error('request entity too large');
+      bodyParserError.type = 'entity.too.large';
+      bodyParserError.status = 413;
+      bodyParserError.statusCode = 413;
+      const { status, body } = catchAndGetBody(bodyParserError);
+      expect(status).toBe(413);
+      expect(body.code).toBe(ErrorCode.FILE_REJECTED);
+    });
+
+    it('Nest\'s own PayloadTooLargeException (e.g. multer LIMIT_FILE_SIZE, already converted by FileInterceptor before this filter sees it) -> FILE_REJECTED 413', () => {
+      const { status, body } = catchAndGetBody(new PayloadTooLargeException('File too large'));
+      expect(status).toBe(413);
+      expect(body.code).toBe(ErrorCode.FILE_REJECTED);
+    });
+
+    it("Nest's own multer-unexpected-field conversion (BadRequestException('Unexpected field')) -> FILE_REJECTED 400 with a plain message", () => {
+      const { status, body } = catchAndGetBody(new BadRequestException('Unexpected field'));
+      expect(status).toBe(400);
+      expect(body.code).toBe(ErrorCode.FILE_REJECTED);
+      expect(body.errormessage).toBe('That file field is not accepted here.');
+    });
+
+    it('a raw MulterError (name-based detection: @nestjs/platform-express vendors its own multer copy, so instanceof fails across the two) still maps correctly', () => {
+      const raw: any = new Error('File too large');
+      raw.name = 'MulterError';
+      raw.code = 'LIMIT_FILE_SIZE';
+      const { status, body } = catchAndGetBody(raw);
+      expect(status).toBe(413);
+      expect(body.code).toBe(ErrorCode.FILE_REJECTED);
+    });
+
+    it('Sequelize ValidationError -> INVALID_INPUT 400', () => {
+      const exception = new SequelizeValidationError('Validation error', [
+        { message: 'studentfirstname cannot be null', path: 'studentfirstname' } as unknown as ValidationErrorItem,
+      ]);
+      const { status, body } = catchAndGetBody(exception);
+      expect(status).toBe(400);
+      expect(body.code).toBe(ErrorCode.INVALID_INPUT);
+      expect(JSON.stringify(body)).not.toMatch(/studentfirstname/);
+    });
+
+    it("Sequelize DatabaseError for data that can NEVER be saved (MySQL errno 1406, data too long) -> INVALID_INPUT 400, not a 500 or a retried 503", () => {
+      const exception = new DatabaseError({
+        message: "Data too long for column 'studentfirstname' at row 1",
+        sql: '',
+        errno: 1406,
+      } as any);
+      const { status, body } = catchAndGetBody(exception);
+      expect(status).toBe(400);
+      expect(body.code).toBe(ErrorCode.INVALID_INPUT);
+      expect(JSON.stringify(body)).not.toMatch(/studentfirstname/);
+    });
+
+    it('Sequelize DatabaseError for an unrecognized errno -> INTERNAL 500 (falls through to the generic bucket, not 400 or 503)', () => {
+      const exception = new DatabaseError({
+        message: 'Some other MySQL fault',
+        sql: '',
+        errno: 9999,
+      } as any);
+      const { status, body } = catchAndGetBody(exception);
+      expect(status).toBe(500);
+      expect(body.code).toBe(ErrorCode.INTERNAL);
     });
 
     it('anything else (a bare Error, e.g. from an unwrapped throw site) -> INTERNAL 500 with a GENERIC message; the real message/stack never reaches the body', () => {
@@ -239,6 +364,63 @@ describe('GlobalExceptionFilter', () => {
 
       warnSpy.mockRestore();
       errorSpy.mockRestore();
+    });
+
+    it('logs request.route.path (the TEMPLATE) when a route matched, never request.originalUrl or the query string', () => {
+      const errorSpy = jest.spyOn(Logger, 'error').mockImplementation(() => Logger as any);
+
+      catchAndGetBody(new Error('boom'), {
+        route: { path: '/question/lesson/:lessonid' },
+        path: '/question/lesson/abc-123',
+        originalUrl: '/question/lesson/abc-123?token=super-secret',
+        url: '/question/lesson/abc-123?token=super-secret',
+      });
+
+      const [, meta]: any = errorSpy.mock.calls[0];
+      expect(meta.route).toBe('/question/lesson/:lessonid');
+      expect(JSON.stringify(meta)).not.toMatch(/super-secret|abc-123/);
+
+      errorSpy.mockRestore();
+    });
+
+    it('falls back to request.path (never originalUrl/query) when no route matched (e.g. a 404 on an unknown path)', () => {
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => Logger as any);
+
+      catchAndGetBody(new NotFoundException('Cannot GET /nope?token=super-secret'), {
+        route: undefined,
+        path: '/nope',
+        originalUrl: '/nope?token=super-secret',
+      });
+
+      const [, meta]: any = warnSpy.mock.calls[0];
+      expect(meta.route).toBe('/nope');
+      expect(JSON.stringify(meta)).not.toMatch(/super-secret/);
+
+      warnSpy.mockRestore();
+    });
+
+    it('the reference written to the log is the exact same reference sent in the response', () => {
+      const errorSpy = jest.spyOn(Logger, 'error').mockImplementation(() => Logger as any);
+
+      const { body } = catchAndGetBody(new Error('boom'));
+
+      const [, meta]: any = errorSpy.mock.calls[0];
+      expect(meta.reference).toBe(body.reference);
+
+      errorSpy.mockRestore();
+    });
+
+    it('never logs the body fragment from a malformed-JSON exception (the log ships to the cloud in the teacher export)', () => {
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => Logger as any);
+
+      catchAndGetBody(
+        new BadRequestException(`Unexpected token 'h', ..."assword": hunter2sec"... is not valid JSON`)
+      );
+
+      const loggedArgs = JSON.stringify(warnSpy.mock.calls[0]);
+      expect(loggedArgs).not.toMatch(/hunter2sec/);
+
+      warnSpy.mockRestore();
     });
   });
 });

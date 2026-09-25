@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { isAfter } from "date-fns";
 import { maxBy, minBy } from "lodash";
 import { col, fn, Op, WhereOptions } from "sequelize";
@@ -262,7 +263,7 @@ export class ReportBusiness {
             student = await students.findOne({
                 where: { studentid: Default_Test_Student_ID }
             });
-            if(!student) throw new BadRequestException('school has no student!');
+            if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
             where.standard = student?.standard;
             // where.studentid = student.studentid;
         } else if(!where.studentid) {
@@ -697,7 +698,7 @@ export class ReportBusiness {
             student = await students.findOne({
                 where: { studentid: Default_Test_Student_ID }
             });
-            if(!student) throw new BadRequestException('school has no student!');
+            if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
             where.standard = student?.standard;
             // where.studentid = student.studentid;
         } else if(!where.studentid) {
@@ -1274,7 +1275,7 @@ export class ReportBusiness {
             student = await students.findOne({
                 where: { studentid: Default_Test_Student_ID },
             });
-            if(!student) throw new BadRequestException('school has no student!');
+            if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
             where.standard = student?.standard;
         } else if(!where.studentid) {
             student = await students.findOne({

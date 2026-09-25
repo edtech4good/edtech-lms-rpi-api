@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { subDays } from "date-fns";
 import { maxBy, minBy, sumBy } from "lodash";
 import { col, fn, Op } from "sequelize";
@@ -65,7 +66,7 @@ export class TeacherBusiness {
         },
       ],
     });
-    if (!teacher) throw new BadRequestException("No teacher!");
+    if (!teacher) throw new ApiError(ErrorCode.NOT_FOUND);
     const teacheraccess = teacher.getDataValue('rpiuseraccesses') ?? null;
     const timeZone = teacheraccess && teacheraccess.length > 1 ? new Date(teacheraccess[1].logintime) : undefined;
     const calender = timeZone ? new Intl.DateTimeFormat("en-US", {
@@ -133,7 +134,7 @@ export class TeacherBusiness {
     studentlessonsprogress.belongsTo(lessons, {
       foreignKey: "lessonid",
     });
-    if (!user.schoolname) throw new BadRequestException("User has no school!");
+    if (!user.schoolname) throw new ApiError(ErrorCode.NOT_FOUND);
     const limit = paging.pagesize || 20;
     let offset = 0;
     if ((paging.pageindex || 1) > 1) {
@@ -150,7 +151,7 @@ export class TeacherBusiness {
       student = await students.findOne({
         where: { schoolname: user.schoolname }
       });
-      if(!student) throw new BadRequestException('school has no student!');
+      if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
       where.standard = student?.standard;
     }
     if(!lessonwhere.lessonid) {

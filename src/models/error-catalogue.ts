@@ -56,7 +56,7 @@ export const ErrorCatalogue: Record<ErrorCode, ErrorCatalogueEntry> = {
   [ErrorCode.SERVICE_UNAVAILABLE]: {
     status: HttpStatus.SERVICE_UNAVAILABLE,
     message: 'The service is temporarily unavailable.',
-    hint: 'Try again in a few minutes. Your work is kept and retried.',
+    hint: 'Try again in a few minutes.',
   },
   [ErrorCode.INTERNAL]: {
     status: HttpStatus.INTERNAL_SERVER_ERROR,
