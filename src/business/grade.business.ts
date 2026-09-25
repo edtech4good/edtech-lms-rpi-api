@@ -129,7 +129,7 @@ export class GradeBusiness {
             if(lvlstudentprogress) {
               const studentpoints = lvlstudentprogress[0].getDataValue("points") ?? 0;
               const completedpoints = lvlprogress.points*COMPLETED_PERCENTAGE/100;
-              const completed = studentpoints > completedpoints ? true : false;
+              const completed = studentpoints >= completedpoints ? true : false;
               lvlprogress.setDataValue('completed', completed);
             }
             return lvlprogress
