@@ -74,3 +74,19 @@ export function joiFieldLabel(path: Array<string | number>): string {
     path.length > 0 && REQUEST_PART_SEGMENTS.has(String(path[0])) ? path.slice(1) : path;
   return trimmed.length > 0 ? trimmed.map(String).join('.') : 'value';
 }
+
+/**
+ * The `field` value for a single Joi ValidationErrorItem — almost always
+ * `joiFieldLabel(path)`, EXCEPT for `object.unknown`, where `path`'s last
+ * segment is the attacker-chosen key itself (an arbitrary extra field the
+ * client sent, not one this API defines). That key must never reach the
+ * response body, not even as a `fields[].field` value — so this falls back
+ * to the request part it appeared under (`body`/`query`/`params`, i.e. the
+ * path with the offending key dropped), never the key.
+ */
+export function fieldForJoiDetail(path: Array<string | number>, type: string): string {
+  if (type === 'object.unknown') {
+    return path.length > 0 ? String(path[0]) : 'body';
+  }
+  return joiFieldLabel(path);
+}

@@ -21,6 +21,7 @@ import {
 import { Config, Logger } from '../config';
 import { ApiError } from '../models/ApiError';
 import { ErrorCode } from '../models/enums/errorcode.enum';
+import { ErrorCatalogue } from '../models/error-catalogue';
 import { ValidationException } from '../models/ValidationException';
 import { GlobalExceptionFilter } from './global-exception.filter';
 
@@ -93,13 +94,24 @@ describe('GlobalExceptionFilter', () => {
       expect(body.hint).toBeDefined();
     });
 
-    it('ValidationException (Joi) -> INVALID_INPUT 400 with a fields array', () => {
+    it('ValidationException (Joi) -> INVALID_INPUT 400 with a fields array, AND the "check the highlighted fields" hint (fields ARE present)', () => {
       const { status, body } = catchAndGetBody(
         new ValidationException([{ field: 'email', message: 'Enter a valid email address for email.' }])
       );
       expect(status).toBe(400);
       expect(body.code).toBe(ErrorCode.INVALID_INPUT);
       expect(body.fields).toEqual([{ field: 'email', message: 'Enter a valid email address for email.' }]);
+      expect(body.hint).toBe(ErrorCatalogue[ErrorCode.INVALID_INPUT].hint);
+    });
+
+    it('an INVALID_INPUT with no fields (malformed JSON, or an ApiError(INVALID_INPUT) throw site with none) omits the "check the highlighted fields" hint — there is nothing to highlight', () => {
+      const malformed = catchAndGetBody(new BadRequestException('some other 400 with no fields'));
+      expect(malformed.body.code).toBe(ErrorCode.INVALID_INPUT);
+      expect(malformed.body.hint).toBeUndefined();
+
+      const apiError = catchAndGetBody(new ApiError(ErrorCode.INVALID_INPUT, { message: "Content length can't be 0." }));
+      expect(apiError.body.code).toBe(ErrorCode.INVALID_INPUT);
+      expect(apiError.body.hint).toBeUndefined();
     });
 
     it('ThrottlerException -> TOO_MANY_ATTEMPTS 429', () => {
@@ -210,6 +222,23 @@ describe('GlobalExceptionFilter', () => {
       expect(status).toBe(400);
       expect(body.code).toBe(ErrorCode.INVALID_INPUT);
       expect(JSON.stringify(body)).not.toMatch(/hunter2sec/);
+    });
+
+    it('a malformed-JSON body whose SyntaxError message does NOT start with "Unexpected" (detection must not depend on that exact wording) is still recognized', () => {
+      // A different, equally real V8 JSON.parse phrasing (e.g. a missing
+      // comma), still containing "JSON" and still a 400 in Nest's default
+      // body shape. If detection were keyed off `/^Unexpected/`, this
+      // would slip through as an ordinary HttpException and get its
+      // message forwarded (it wouldn't leak a secret here, but it proves
+      // the detection is message-wording-independent, not that this exact
+      // string is safe).
+      const exception = new BadRequestException(
+        `Expected ',' or '}' after property value in JSON at position 12`
+      );
+      const { status, body } = catchAndGetBody(exception);
+      expect(status).toBe(400);
+      expect(body.code).toBe(ErrorCode.INVALID_INPUT);
+      expect(body.errormessage).toBe(ErrorCatalogue[ErrorCode.INVALID_INPUT].message);
     });
 
     it('any other HttpException status: 4xx -> INVALID_INPUT (generic unless own-shape), 5xx -> INTERNAL (generic, code never contradicts status)', () => {
@@ -327,6 +356,50 @@ describe('GlobalExceptionFilter', () => {
   });
 
   describe('logging', () => {
+    it('a Sequelize DatabaseError/ValidationError is logged by errno/sqlState/class only — the driver message (which can quote the offending VALUE, e.g. errno 1366) never reaches the log', () => {
+      const errorSpy = jest.spyOn(Logger, 'error').mockImplementation(() => Logger as any);
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => Logger as any);
+
+      const marker = 'DBVALUESECRET';
+      const dbException = new DatabaseError({
+        message: `Incorrect integer value: '${marker}' for column 'age' at row 1`,
+        sql: '',
+        errno: 9999,
+        code: 'ER_TRUNCATED_WRONG_VALUE',
+      } as any);
+
+      catchAndGetBody(dbException);
+
+      const allLoggedArgs = [...warnSpy.mock.calls, ...errorSpy.mock.calls].map((c) => JSON.stringify(c));
+      expect(allLoggedArgs.join('\n')).not.toMatch(new RegExp(marker));
+
+      const [, meta]: any = errorSpy.mock.calls[0] ?? warnSpy.mock.calls[0];
+      expect(meta.exception.errno).toBe(9999);
+      expect(meta.exception.sqlState).toBe('ER_TRUNCATED_WRONG_VALUE');
+      expect(meta.exception.message).toBeUndefined();
+      expect(meta.exception.stack).toBeUndefined();
+
+      warnSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it('a Sequelize UniqueConstraintError (extends ValidationError) is also logged by errno/class only, not its message (which can name the duplicate value)', () => {
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => Logger as any);
+
+      const marker = 'DUPLICATEVALUESECRET';
+      const exception = new UniqueConstraintError({
+        message: `Duplicate entry '${marker}' for key 'schoolusers.email'`,
+        parent: { errno: 1062, code: 'ER_DUP_ENTRY' } as any,
+      } as any);
+
+      catchAndGetBody(exception);
+
+      const loggedArgs = JSON.stringify(warnSpy.mock.calls[0]);
+      expect(loggedArgs).not.toMatch(new RegExp(marker));
+
+      warnSpy.mockRestore();
+    });
+
     it('logs 4xx at warn and 5xx at error, exactly once, with the reference/code/status/route/userid — never the request body, password, Authorization header or cookies', () => {
       const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => Logger as any);
       const errorSpy = jest.spyOn(Logger, 'error').mockImplementation(() => Logger as any);
@@ -419,6 +492,20 @@ describe('GlobalExceptionFilter', () => {
 
       const loggedArgs = JSON.stringify(warnSpy.mock.calls[0]);
       expect(loggedArgs).not.toMatch(/hunter2sec/);
+
+      warnSpy.mockRestore();
+    });
+
+    it('never logs the message/stack for a malformed-JSON exception phrased differently than "Unexpected ..." (detection is not wording-dependent)', () => {
+      const warnSpy = jest.spyOn(Logger, 'warn').mockImplementation(() => Logger as any);
+
+      catchAndGetBody(
+        new BadRequestException(`Expected ',' or '}' after property value in JSON at position 12`)
+      );
+
+      const [, meta]: any = warnSpy.mock.calls[0];
+      expect(meta.exception.message).not.toMatch(/property value/);
+      expect(meta.exception.stack).toBeUndefined();
 
       warnSpy.mockRestore();
     });

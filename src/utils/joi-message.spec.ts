@@ -1,4 +1,4 @@
-import { humanizeJoiMessage, joiFieldLabel } from './joi-message';
+import { fieldForJoiDetail, humanizeJoiMessage, joiFieldLabel } from './joi-message';
 
 /**
  * SchemaValidationInterceptor validates the whole `{ params, query, body }`
@@ -24,6 +24,23 @@ describe('joiFieldLabel', () => {
 
   it('falls back to "value" for an empty path', () => {
     expect(joiFieldLabel([])).toBe('value');
+  });
+});
+
+describe('fieldForJoiDetail', () => {
+  it('object.unknown never puts the client-controlled key into the field name either — falls back to the request part it appeared under', () => {
+    const field = fieldForJoiDetail(['body', 'evil<script>x'], 'object.unknown');
+    expect(field).toBe('body');
+    expect(field).not.toMatch(/evil/);
+  });
+
+  it('object.unknown at query/params falls back to that part, not "body"', () => {
+    expect(fieldForJoiDetail(['query', 'evil<script>x'], 'object.unknown')).toBe('query');
+    expect(fieldForJoiDetail(['params', 'evil<script>x'], 'object.unknown')).toBe('params');
+  });
+
+  it('any other type uses the normal stripped field label', () => {
+    expect(fieldForJoiDetail(['body', 'email'], 'any.required')).toBe('email');
   });
 });
 

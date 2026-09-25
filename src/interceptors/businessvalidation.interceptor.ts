@@ -7,7 +7,7 @@ import { RequestValidator } from '../models/RequestValidator';
 import { ValidationException } from '../models/ValidationException';
 import { IRequest } from 'src/models/IRequest';
 import { FieldError } from 'src/models/FieldError';
-import { humanizeJoiMessage, joiFieldLabel } from 'src/utils/joi-message';
+import { fieldForJoiDetail, humanizeJoiMessage } from 'src/utils/joi-message';
 @Injectable()
 export class BusinessValidationInterceptor implements NestInterceptor {
   constructor(private rules: Array<IBusinessRule>) {}
@@ -59,7 +59,7 @@ export class BusinessValidationInterceptor implements NestInterceptor {
             .map(x =>
               x
                 ? x.details.map(y => {
-                    const field = joiFieldLabel(y.path);
+                    const field = fieldForJoiDetail(y.path, y.type);
                     return { field, message: humanizeJoiMessage(field, y.type, y.message) };
                   })
                 : []

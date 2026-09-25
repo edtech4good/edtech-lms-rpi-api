@@ -139,4 +139,18 @@ describe('GlobalExceptionFilter (real pipeline: supertest against a real Nest ap
     );
     expect(JSON.stringify(res.body.fields)).not.toMatch(/\bbody\./);
   });
+
+  it('a real Joi "unknown field" failure never puts the client-sent key into the response OR the log, even as a field name', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/e2e/echo')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({ studentfirstname: 'Sokha', 'evil<script>x': 'y' }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_INPUT');
+    expect(JSON.stringify(res.body)).not.toMatch(/evil/);
+
+    const allLoggedArgs = [...warnSpy.mock.calls, ...errorSpy.mock.calls].map((c) => JSON.stringify(c));
+    expect(allLoggedArgs.join('\n')).not.toMatch(/evil/);
+  });
 });

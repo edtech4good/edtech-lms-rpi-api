@@ -128,12 +128,27 @@ function isEntityTooLarge(exception: any): boolean {
  * so LOGGING also never writes that fragment to the error log (which is
  * zipped into the teacher export and shipped to the cloud).
  *
- * Also matches the `.type === 'entity.parse.failed'` / SyntaxError-cause
- * shape body-parser itself throws in versions/setups where Nest does not
- * intercept and re-wrap it, so this keeps working if that ever changes.
+ * Deliberately NOT keyed off `JSON.parse`'s exact wording (Node's message
+ * for this varies — "Unexpected token", "Unexpected end of JSON input",
+ * "Expected ',' or '}' after property value in JSON at position N", and
+ * whatever a future V8/Node version phrases it as): any of
+ *   - a `SyntaxError` with a 400 status (`.status`/`.statusCode`) or
+ *     `.type === 'entity.parse.failed'` (the raw body-parser/http-errors
+ *     shape, in a setup where Nest doesn't intercept and re-wrap it), or
+ *   - a `.cause` that is a `SyntaxError`, or
+ *   - a 400 `HttpException` in Nest's own default body shape (never our
+ *     own `{error:true,errormessage}` shape) whose message mentions "JSON"
+ *     at all
+ * counts, so a Node upgrade that rewords the message can't silently start
+ * leaking the body fragment again.
  */
-const JSON_SYNTAX_ERROR_MESSAGE = /^Unexpected (token|end of JSON|number|string)/i;
 function isBodyParserJsonError(exception: any): boolean {
+  if (exception instanceof SyntaxError) {
+    const syntaxErr: any = exception;
+    if (syntaxErr.type === 'entity.parse.failed' || syntaxErr.status === 400 || syntaxErr.statusCode === 400) {
+      return true;
+    }
+  }
   if (exception?.type === 'entity.parse.failed') {
     return true;
   }
@@ -143,8 +158,9 @@ function isBodyParserJsonError(exception: any): boolean {
   return (
     exception instanceof HttpException &&
     exception.getStatus() === HttpStatus.BAD_REQUEST &&
+    ownShapeMessage(exception) === undefined &&
     typeof exception.message === 'string' &&
-    JSON_SYNTAX_ERROR_MESSAGE.test(exception.message)
+    exception.message.includes('JSON')
   );
 }
 
@@ -173,6 +189,25 @@ function isRouteNotFoundMessage(exception: any): boolean {
  */
 function hasLoggableRequestContent(exception: unknown): boolean {
   return isBodyParserJsonError(exception) || isRouteNotFoundMessage(exception);
+}
+
+/**
+ * Sequelize `DatabaseError` (covers `ForeignKeyConstraintError`, and any
+ * other MySQL-errno-carrying failure) and `ValidationError` (covers
+ * `UniqueConstraintError`, which extends it) both wrap the raw driver
+ * error's own message, which for several real MySQL errnos QUOTES THE
+ * OFFENDING VALUE VERBATIM — e.g. errno 1366 (truncated wrong value):
+ * `Incorrect integer value: 'DBVALUESECRET' for column 'age'`, or a
+ * unique-constraint message naming the duplicate value itself. This log
+ * ships to the cloud (rpi-api's teacher export), so these two families
+ * are logged by errno/sqlState/class only — never `.message` or `.stack`.
+ */
+function sequelizeDbErrorLogFields(exception: unknown): { errno?: number; sqlState?: string } | undefined {
+  if (!(exception instanceof DatabaseError) && !(exception instanceof SequelizeValidationError)) {
+    return undefined;
+  }
+  const original: any = (exception as any)?.original ?? (exception as any)?.parent;
+  return { errno: original?.errno, sqlState: original?.code };
 }
 
 /**
@@ -322,7 +357,16 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const logid = uuidv4();
     const reference = generateErrorReference();
 
-    const { code, status, message, hint, fields } = mapException(exception);
+    const { code, status, message, hint: rawHint, fields } = mapException(exception);
+
+    // INVALID_INPUT's catalogue hint ("Check the highlighted fields.")
+    // only makes sense when there ARE highlighted fields. A malformed-JSON
+    // body, or an ApiError(INVALID_INPUT) throw site that didn't supply
+    // `fields` (there's nothing field-shaped to check — see the ~15
+    // converted throw sites), has none: showing that hint anyway would
+    // point the user at UI that isn't there.
+    const hint =
+      code === ErrorCode.INVALID_INPUT && (!fields || fields.length === 0) ? undefined : rawHint;
 
     // 4xx is expected traffic (bad input, a throttled login burst, a stale
     // token) and logged at warn; 5xx is logged at error. A 429 previously
@@ -344,6 +388,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     // rpi-api's teacher export. Log the exception's class and a fixed note
     // instead of either field.
     const redact = hasLoggableRequestContent(exception);
+    const dbErrorFields = sequelizeDbErrorLogFields(exception);
 
     Logger[level]('Exception', {
       reference,
@@ -352,11 +397,17 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       method: request?.method,
       route,
       userid: request?.user?.schooluserid,
-      exception: {
-        class: errordetails?.constructor?.name,
-        message: redact ? '(withheld: contains request URL/body content)' : errordetails?.message,
-        stack: redact ? undefined : errordetails?.stack,
-      },
+      exception: dbErrorFields
+        ? {
+            class: errordetails?.constructor?.name,
+            errno: dbErrorFields.errno,
+            sqlState: dbErrorFields.sqlState,
+          }
+        : {
+            class: errordetails?.constructor?.name,
+            message: redact ? '(withheld: contains request URL/body content)' : errordetails?.message,
+            stack: redact ? undefined : errordetails?.stack,
+          },
       logid,
     });
 
@@ -373,7 +424,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (fields && fields.length > 0) {
       errorresponse.fields = fields;
     }
-    if (Config.fortyk.api.rpi.debug && errordetails?.stack && !redact) {
+    if (Config.fortyk.api.rpi.debug && errordetails?.stack && !redact && !dbErrorFields) {
       errorresponse.stack = errordetails.stack;
       errorresponse.logid = logid;
     }
