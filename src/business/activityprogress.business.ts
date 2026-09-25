@@ -1,4 +1,5 @@
 import { Op } from "sequelize";
+import { lessons } from "src/models/data-models/lessons";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
 import { lessonpractices } from "src/models/data-models/lessonpractices";
 import { lessonpracticequestions } from "src/models/data-models/lessonpracticequestions";
@@ -26,6 +27,15 @@ interface AttemptActivityProgress {
   question_count: number;
 }
 
+type PracticeActivityProgress = AttemptActivityProgress & { lessonpracticeid: string };
+type QuizActivityProgress = AttemptActivityProgress & { lessonquizid: string };
+
+interface LessonActivitiesProgress {
+  learnings: LearningActivityProgress[];
+  practices: PracticeActivityProgress[];
+  quizzes: QuizActivityProgress[];
+}
+
 export class ActivityProgressBusiness {
   /**
    * Per-activity status (learning/practice/quiz) for every active item in a
@@ -42,37 +52,114 @@ export class ActivityProgressBusiness {
     // helper instead of inventing a new error shape.
     const student = await new LessonBusiness().getstudent(user);
 
-    const [learnings, practices, quizzes] = await Promise.all([
-      lessonlearnings.findAll({
-        where: { lessonid, lessonlearningstatus: true },
-        order: [["lessonlearningorder", "ASC"]],
-        attributes: ["lessonlearningid"],
-      }),
-      lessonpractices.findAll({
-        where: { lessonid, lessonpracticestatus: true },
-        order: [["lessonpracticeorder", "ASC"]],
-        attributes: ["lessonpracticeid"],
-      }),
-      lessonquizzes.findAll({
-        where: { lessonid, lessonquizstatus: true },
-        order: [["lessonquizorder", "ASC"]],
-        attributes: ["lessonquizid"],
-      }),
-    ]);
-
-    const [learningsResult, practicesResult, quizzesResult] = await Promise.all([
-      this.buildlearningsprogress(learnings, student.studentid),
-      this.buildpracticesprogress(practices, student.studentid),
-      this.buildquizzesprogress(quizzes, student.studentid),
-    ]);
+    const bylesson = await this.getactivitiesprogressforlessons([lessonid], student.studentid);
+    const activities = bylesson.get(lessonid) ?? { learnings: [], practices: [], quizzes: [] };
 
     return {
       lessonid,
       pass_percentage: COMPLETED_PERCENTAGE,
-      learnings: learningsResult,
-      practices: practicesResult,
-      quizzes: quizzesResult,
+      learnings: activities.learnings,
+      practices: activities.practices,
+      quizzes: activities.quizzes,
     };
+  };
+
+  /**
+   * Same per-item data as getlessonactivitiesprogress, batched over every
+   * active, non-deleted lesson in a level instead of a single lesson id —
+   * one call for the whole Level Detail screen instead of one round trip
+   * per lesson. Mirrors the lesson filter getlessonsbylevelid
+   * (lesson.business.ts) uses: levelid + lessonstatus true + isdeleted
+   * false. getlessonsbylevelid itself has no ORDER BY, so the lessonorder
+   * ASC ordering here is ours to keep — it is not inherited from there.
+   */
+  getlevelactivitiesprogress = async (levelid: string, user: Token) => {
+    const student = await new LessonBusiness().getstudent(user);
+
+    const levellessons = await lessons.findAll({
+      where: { levelid, lessonstatus: true, isdeleted: false },
+      order: [["lessonorder", "ASC"]],
+      attributes: ["lessonid", "lessonorder"],
+    });
+
+    const lessonids = levellessons.map((lesson) => lesson.lessonid);
+    const bylesson = await this.getactivitiesprogressforlessons(lessonids, student.studentid);
+
+    return {
+      levelid,
+      pass_percentage: COMPLETED_PERCENTAGE,
+      lessons: levellessons.map((lesson) => {
+        const activities = bylesson.get(lesson.lessonid) ?? {
+          learnings: [],
+          practices: [],
+          quizzes: [],
+        };
+        return {
+          lessonid: lesson.lessonid,
+          lessonorder: lesson.lessonorder,
+          learnings: activities.learnings,
+          practices: activities.practices,
+          quizzes: activities.quizzes,
+        };
+      }),
+    };
+  };
+
+  /**
+   * The shared batched core both entry points above call: one set of
+   * queries (Op.in over ALL the given lesson ids) rather than looping per
+   * lesson, then grouped back out by lessonid. Passing a single-element
+   * array from getlessonactivitiesprogress makes that endpoint's output a
+   * special case of this one, so refactoring never changes its shape.
+   */
+  private getactivitiesprogressforlessons = async (
+    lessonids: string[],
+    studentid: string
+  ): Promise<Map<string, LessonActivitiesProgress>> => {
+    const bylesson = new Map<string, LessonActivitiesProgress>();
+    for (const lessonid of lessonids) {
+      bylesson.set(lessonid, { learnings: [], practices: [], quizzes: [] });
+    }
+    if (lessonids.length === 0) return bylesson;
+
+    const [learnings, practices, quizzes] = await Promise.all([
+      lessonlearnings.findAll({
+        where: { lessonid: { [Op.in]: lessonids }, lessonlearningstatus: true },
+        order: [["lessonlearningorder", "ASC"]],
+        attributes: ["lessonlearningid", "lessonid"],
+      }),
+      lessonpractices.findAll({
+        where: { lessonid: { [Op.in]: lessonids }, lessonpracticestatus: true },
+        order: [["lessonpracticeorder", "ASC"]],
+        attributes: ["lessonpracticeid", "lessonid"],
+      }),
+      lessonquizzes.findAll({
+        where: { lessonid: { [Op.in]: lessonids }, lessonquizstatus: true },
+        order: [["lessonquizorder", "ASC"]],
+        attributes: ["lessonquizid", "lessonid"],
+      }),
+    ]);
+
+    const [learningsResult, practicesResult, quizzesResult] = await Promise.all([
+      this.buildlearningsprogress(learnings, studentid),
+      this.buildpracticesprogress(practices, studentid),
+      this.buildquizzesprogress(quizzes, studentid),
+    ]);
+
+    // buildXprogress preserves the input array's order and length 1:1, so
+    // zipping the source items (which carry lessonid) back against the
+    // results by index is safe and keeps each lesson's own item order.
+    learnings.forEach((learning, i) => {
+      bylesson.get(learning.lessonid)?.learnings.push(learningsResult[i]);
+    });
+    practices.forEach((practice, i) => {
+      bylesson.get(practice.lessonid)?.practices.push(practicesResult[i]);
+    });
+    quizzes.forEach((quiz, i) => {
+      bylesson.get(quiz.lessonid)?.quizzes.push(quizzesResult[i]);
+    });
+
+    return bylesson;
   };
 
   private buildlearningsprogress = async (
@@ -117,7 +204,7 @@ export class ActivityProgressBusiness {
   private buildquizzesprogress = async (
     quizzes: lessonquizzes[],
     studentid: string
-  ): Promise<(AttemptActivityProgress & { lessonquizid: string })[]> => {
+  ): Promise<QuizActivityProgress[]> => {
     const lessonquizids = quizzes.map((q) => q.lessonquizid);
     if (lessonquizids.length === 0) return [];
 
@@ -177,7 +264,7 @@ export class ActivityProgressBusiness {
   private buildpracticesprogress = async (
     practices: lessonpractices[],
     studentid: string
-  ): Promise<(AttemptActivityProgress & { lessonpracticeid: string })[]> => {
+  ): Promise<PracticeActivityProgress[]> => {
     const lessonpracticeids = practices.map((p) => p.lessonpracticeid);
     if (lessonpracticeids.length === 0) return [];
 
