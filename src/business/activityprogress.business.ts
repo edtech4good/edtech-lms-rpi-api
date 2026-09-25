@@ -2,6 +2,7 @@ import { Op } from "sequelize";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
 import { lessonpractices } from "src/models/data-models/lessonpractices";
 import { lessonpracticequestions } from "src/models/data-models/lessonpracticequestions";
+import { lessonquizquestions } from "src/models/data-models/lessonquizquestions";
 import { lessonquizzes } from "src/models/data-models/lessonquizzes";
 import { studentlearningprogress } from "src/models/data-models/studentlearningprogress";
 import { studentprogress } from "src/models/data-models/studentprogress";
@@ -22,6 +23,7 @@ interface AttemptActivityProgress {
   status: ActivityStatus;
   attempts: number;
   best_percentage: number | null;
+  question_count: number;
 }
 
 export class ActivityProgressBusiness {
@@ -119,20 +121,36 @@ export class ActivityProgressBusiness {
     const lessonquizids = quizzes.map((q) => q.lessonquizid);
     if (lessonquizids.length === 0) return [];
 
-    const attempts = await studentprogress.findAll({
-      where: {
-        studentid,
-        progresstype: Progress.LESSONQUIZ,
-        studentprogressreferenceid: { [Op.in]: lessonquizids },
-      },
-      attributes: ["studentprogressreferenceid", "resultpercentage"],
-    });
+    const [attempts, questions] = await Promise.all([
+      studentprogress.findAll({
+        where: {
+          studentid,
+          progresstype: Progress.LESSONQUIZ,
+          studentprogressreferenceid: { [Op.in]: lessonquizids },
+        },
+        attributes: ["studentprogressreferenceid", "resultpercentage"],
+      }),
+      lessonquizquestions.findAll({
+        where: {
+          lessonquizid: { [Op.in]: lessonquizids },
+          lessonquizquestionstatus: true,
+        },
+        attributes: ["lessonquizid"],
+      }),
+    ]);
 
     const byquiz = new Map<string, number[]>();
     for (const attempt of attempts) {
       const list = byquiz.get(attempt.studentprogressreferenceid) ?? [];
       list.push(Number(attempt.resultpercentage));
       byquiz.set(attempt.studentprogressreferenceid, list);
+    }
+    const questioncountbyquiz = new Map<string, number>();
+    for (const question of questions) {
+      questioncountbyquiz.set(
+        question.lessonquizid,
+        (questioncountbyquiz.get(question.lessonquizid) ?? 0) + 1
+      );
     }
 
     return quizzes.map((quiz) => {
@@ -151,6 +169,7 @@ export class ActivityProgressBusiness {
         status,
         attempts: attemptcount,
         best_percentage,
+        question_count: questioncountbyquiz.get(quiz.lessonquizid) ?? 0,
       };
     });
   };
@@ -227,6 +246,7 @@ export class ActivityProgressBusiness {
         status,
         attempts: attemptcount,
         best_percentage,
+        question_count: activequestioncount,
       };
     });
   };
