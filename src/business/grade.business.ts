@@ -84,14 +84,11 @@ export class GradeBusiness {
     studentlevelsprogress.belongsTo(levels, {
       foreignKey: "levelid",
     });
+    // Level counts come from a separate grouped query: grouping grades while
+    // including studentgradesprogress breaks under MySQL's ONLY_FULL_GROUP_BY.
     const gradesresult = await grades.findAll({
       where: { curriculumid, gradestatus: true, isdeleted: false },
-      attributes: [
-        "gradeid",
-        "gradename",
-        "gradeorder",
-        [fn("COUNT", col("levels.levelid")), "number_levels"],
-      ],
+      attributes: ["gradeid", "gradename", "gradeorder"],
       include: [
         {
           model: studentgradesprogress,
@@ -99,16 +96,23 @@ export class GradeBusiness {
           where: { studentid: user.studentid },
           attributes: ["points", "completed", "scores"],
         },
-        {
-          model: levels,
-          as: "levels",
-          required: false,
-          where: { levelstatus: true, isdeleted: false },
-          attributes: [],
-        },
       ],
-      group: ["grades.gradeid"],
+      order: [["gradeorder", "ASC"]],
     });
+    const gradeids = gradesresult.map((grade) => grade.gradeid);
+    const levelcounts = (await levels.findAll({
+      attributes: ["gradeid", [fn("COUNT", col("levelid")), "number_levels"]],
+      where: { gradeid: gradeids, levelstatus: true, isdeleted: false },
+      group: ["gradeid"],
+      raw: true,
+    })) as unknown as { gradeid: string; number_levels: number }[];
+    const number_levels_by_gradeid = new Map<string, number>();
+    for (const levelcount of levelcounts) {
+      number_levels_by_gradeid.set(levelcount.gradeid, Number(levelcount.number_levels));
+    }
+    for (const grade of gradesresult) {
+      grade.setDataValue("number_levels", number_levels_by_gradeid.get(grade.gradeid) ?? 0);
+    }
     const levelsprogresses = await levels.findAll({
       where: { levelstatus: true, isdeleted: false },
       attributes: ["levelid", "levelname", "gradeid", "points"],
