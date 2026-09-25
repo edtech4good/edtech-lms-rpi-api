@@ -170,7 +170,12 @@ export class CurriculumBusiness {
     return await curriculums.findAll({ where, order });
   };
 
-  getCurriculumsWithSubject = async (user?: Token) => {
+  // The single source of truth for "which curricula is this student enrolled
+  // in": active, non-deleted curricula whose id is in the student's
+  // curriculumids, ordered by curriculumname. GET curriculum/subjects and
+  // GET student/progress/summary both resolve enrollment this way so the
+  // two endpoints never disagree about the student's curriculum list.
+  getEnrolledCurriculums = async (user?: Token) => {
     const where: WhereOptions<curriculumsAttributes> = {
       isdeleted: false,
       curriculumstatus: true,
@@ -180,8 +185,12 @@ export class CurriculumBusiness {
     };
     const order = ["curriculumname"];
 
-    const currs = await curriculums.findAll({ where, order });
+    return await curriculums.findAll({ where, order });
+  };
+
+  getCurriculumsWithSubject = async (user?: Token) => {
     if(!user) throw new BadRequestException('User is not a student.');
+    const currs = await this.getEnrolledCurriculums(user);
     for await (const cur of currs) {
       const stdprogresses = await new GradeBusiness().getgradesbycurriculumid(cur.curriculumid, user);
       let progress = 0;
