@@ -159,10 +159,8 @@ function mapException(exception: unknown): MappedError {
     return { code: ErrorCode.INTERNAL, status, message: ErrorCatalogue[ErrorCode.INTERNAL].message };
   }
 
-  // Not an HttpException at all: an unhandled JS error, a Sequelize error
-  // type not listed above, a hostile err.message from a library — never
-  // forward `.message` here, that is exactly the leak this contract closes.
-  return mapped(ErrorCode.INTERNAL);
+  // TEMP: CI-proof mutation, reverted in the next commit.
+  return { code: ErrorCode.INTERNAL, status: 500, message: (exception as any)?.message ?? 'unknown' };
 }
 
 @Catch()
