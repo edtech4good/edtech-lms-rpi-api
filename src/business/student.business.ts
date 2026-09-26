@@ -25,6 +25,24 @@ export interface StudentProgressSummaryCurrentLevel {
   lessonsTotal: number;
 }
 
+export interface StudentProgressSummaryLevel {
+  levelid: string;
+  levelname: string;
+  lessonsCompleted: number;
+  lessonsTotal: number;
+  completed: boolean;
+}
+
+export interface StudentProgressSummaryGrade {
+  gradeid: string;
+  gradename: string;
+  lessonsCompleted: number;
+  lessonsTotal: number;
+  levelsCompleted: number;
+  levelsTotal: number;
+  levels: StudentProgressSummaryLevel[];
+}
+
 export interface StudentProgressSummaryCurriculum {
   curriculumid: string;
   curriculumname: string;
@@ -33,6 +51,7 @@ export interface StudentProgressSummaryCurriculum {
   levelsCompleted: number;
   levelsTotal: number;
   currentLevel: StudentProgressSummaryCurrentLevel | null;
+  grades: StudentProgressSummaryGrade[];
 }
 
 export interface StudentProgressSummary {
@@ -414,14 +433,30 @@ WHERE
       let levelsCompleted = 0;
       let levelsTotal = 0;
       let currentLevel: StudentProgressSummaryCurrentLevel | null = null;
+      const gradesOut: StudentProgressSummaryGrade[] = [];
 
       for (const grade of curriculumGrades) {
         const gradeLevels = levelsByGrade.get(grade.gradeid) ?? [];
+        let gradeLessonsCompleted = 0;
+        let gradeLessonsTotal = 0;
+        let gradeLevelsCompleted = 0;
+        let gradeLevelsTotal = 0;
+        const levelsOut: StudentProgressSummaryLevel[] = [];
+
         for (const level of gradeLevels) {
           const levelLessonIds = lessonIdsByLevel.get(level.levelid) ?? [];
           if (levelLessonIds.length === 0) {
             // No active lessons: excluded from levelsCompleted/levelsTotal,
-            // and contributes nothing to the lesson counts either way.
+            // and contributes nothing to the lesson counts either way. Still
+            // surfaced in the grades/levels array (with 0/0, not completed)
+            // so the app can show a "no lessons" state.
+            levelsOut.push({
+              levelid: level.levelid,
+              levelname: level.levelname,
+              lessonsCompleted: 0,
+              lessonsTotal: 0,
+              completed: false,
+            });
             continue;
           }
 
@@ -429,11 +464,15 @@ WHERE
           const levelLessonsCompleted = levelLessonIds.filter((id) => doneLessonIds.has(id)).length;
           lessonsTotal += levelLessonsTotal;
           lessonsCompleted += levelLessonsCompleted;
+          gradeLessonsTotal += levelLessonsTotal;
+          gradeLessonsCompleted += levelLessonsCompleted;
 
           levelsTotal += 1;
+          gradeLevelsTotal += 1;
           const levelComplete = levelLessonsCompleted === levelLessonsTotal;
           if (levelComplete) {
             levelsCompleted += 1;
+            gradeLevelsCompleted += 1;
           } else if (!currentLevel) {
             currentLevel = {
               levelid: level.levelid,
@@ -444,7 +483,25 @@ WHERE
               lessonsTotal: levelLessonsTotal,
             };
           }
+
+          levelsOut.push({
+            levelid: level.levelid,
+            levelname: level.levelname,
+            lessonsCompleted: levelLessonsCompleted,
+            lessonsTotal: levelLessonsTotal,
+            completed: levelComplete,
+          });
         }
+
+        gradesOut.push({
+          gradeid: grade.gradeid,
+          gradename: grade.gradename,
+          lessonsCompleted: gradeLessonsCompleted,
+          lessonsTotal: gradeLessonsTotal,
+          levelsCompleted: gradeLevelsCompleted,
+          levelsTotal: gradeLevelsTotal,
+          levels: levelsOut,
+        });
       }
 
       totals.lessonsCompleted += lessonsCompleted;
@@ -460,6 +517,7 @@ WHERE
         levelsCompleted,
         levelsTotal,
         currentLevel,
+        grades: gradesOut,
       };
     });
 
