@@ -148,6 +148,51 @@ describe("StudentBusiness.getprogresssummary", () => {
       levelsCompleted: 2,
     });
 
+    // Additive `grades` array: same deterministic order as the grades
+    // query (gradeorder/gradename/gradeid), each grade carrying its own
+    // levels array in level order, so the Expo app's Courses/Units cards
+    // can show lessons-based % without a second call.
+    expect(curA!.grades.map((g) => g.gradeid)).toEqual(["grade-A1", "grade-A2"]);
+
+    const gradeA1Out = curA!.grades.find((g) => g.gradeid === "grade-A1")!;
+    expect(gradeA1Out).toMatchObject({
+      lessonsTotal: 3, // L1 (1) + L2 (2)
+      lessonsCompleted: 2, // L1 (1) + L2 (1)
+      levelsTotal: 2,
+      levelsCompleted: 1,
+    });
+    expect(gradeA1Out.levels.map((l) => l.levelid)).toEqual(["level-L1", "level-L2"]);
+    expect(gradeA1Out.levels).toEqual([
+      { levelid: "level-L1", levelname: "Level 1", lessonsCompleted: 1, lessonsTotal: 1, completed: true },
+      { levelid: "level-L2", levelname: "Level 2", lessonsCompleted: 1, lessonsTotal: 2, completed: false },
+    ]);
+
+    const gradeA2Out = curA!.grades.find((g) => g.gradeid === "grade-A2")!;
+    expect(gradeA2Out).toMatchObject({
+      lessonsTotal: 1, // L3 contributes 0, L4 contributes 1
+      lessonsCompleted: 0,
+      levelsTotal: 1, // L3 excluded (zero lessons)
+      levelsCompleted: 0,
+    });
+    // L3 has zero active lessons: still present in the levels array (so the
+    // app can render a "no lessons" state) with 0/0 and completed false,
+    // but it must not be the entry that inflates levelsTotal above.
+    expect(gradeA2Out.levels).toEqual([
+      { levelid: "level-L3", levelname: "Level 3 (no lessons)", lessonsCompleted: 0, lessonsTotal: 0, completed: false },
+      { levelid: "level-L4", levelname: "Level 4", lessonsCompleted: 0, lessonsTotal: 1, completed: false },
+    ]);
+
+    const gradeB1Out = curB!.grades.find((g) => g.gradeid === "grade-B1")!;
+    expect(gradeB1Out).toMatchObject({
+      lessonsTotal: 1,
+      lessonsCompleted: 1,
+      levelsTotal: 1,
+      levelsCompleted: 1,
+    });
+    expect(gradeB1Out.levels).toEqual([
+      { levelid: "level-LB1", levelname: "Level B1", lessonsCompleted: 1, lessonsTotal: 1, completed: true },
+    ]);
+
     // Fixed number of queries regardless of curricula/levels count: one
     // each for curricula, grades, levels, lessons, progress -- no
     // per-level query loop.
