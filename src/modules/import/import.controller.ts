@@ -28,8 +28,7 @@ import { SyncBusiness } from "src/business/sync.business";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
-import { AccessGuard } from "src/guards/access.guard";
-import { TokenType } from "src/models/enums";
+import { ServerSyncGuard } from "src/guards/server-sync.guard";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { ResponseBoolean } from "src/models/ResponseBoolean";
@@ -80,16 +79,11 @@ function assertEntryWithinLimit(entry: AdmZip.IZipEntry, maxBytes: number): void
 @ApiTags("Import")
 @Controller("import")
 @ApiBearerAuth()
-@UseGuards(
-  AccessGuard(
-    TokenType.ACCESS,
-    SchoolRole.ADMIN,
-    SchoolRole.SUPERADMIN,
-    SchoolRole.TEACHER
-  )
-)
 export class ImportController {
+  // Roster imports: central's server sync key only, online and on a Pi. No
+  // client sends these with a user token.
   @Put("students")
+  @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
     description: "students imported successfully",
@@ -202,6 +196,7 @@ export class ImportController {
   }
 
   @Put("teachers")
+  @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
     description: "teachers imported successfully",
@@ -273,7 +268,12 @@ export class ImportController {
     }
   }
 
+  // Content import: the server sync key, plus staff tokens on a classroom Pi
+  // only, where the Android teacher app carries central's content zip in.
   @Put("master")
+  @UseGuards(
+    ServerSyncGuard(SchoolRole.ADMIN, SchoolRole.SUPERADMIN, SchoolRole.TEACHER)
+  )
   @ApiResponse({
     status: 200,
     description: "Complete sync successfully",
