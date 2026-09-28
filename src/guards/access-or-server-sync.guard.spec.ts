@@ -47,38 +47,62 @@ jest.mock("src/business/token.business", () => ({
 // Allow-listed handlers run for real once the guard passes, so their
 // business-layer calls (which would otherwise hit a real database) are
 // stubbed. Nothing here changes what the guard itself does.
+//
+// Each mock function is declared once, by name, so section (b) below can
+// assert against the exact same reference the controller calls — not just
+// infer that the handler ran from the response status. Response status
+// alone is not enough: "not 401/403" also passes when the GUARD itself
+// crashes (a 500 looks identical to "the handler ran and its own logic
+// produced a 500"). See edtech4good/workspace#45, PR #90 second fix round —
+// proven by making `AccessOrServerSyncGuard` throw a plain `Error` on the
+// sync-key path, which left this describe block green before this fix.
+const mockGetStudentsScoresData = jest.fn().mockResolvedValue({ rows: [], count: 0 });
+const mockGetClassScoresData = jest.fn().mockResolvedValue({ rows: [], count: 0 });
+const mockGetStudentLastCompletedQuiz = jest
+  .fn()
+  .mockResolvedValue({ lastcompletedlessonquiz: [], count: 0 });
+const mockGetLevelQuizScoresData = jest.fn().mockResolvedValue({ rows: [], count: 0 });
+const mockGetClassLevelQuizScoresData = jest.fn().mockResolvedValue({ rows: [], count: 0 });
+const mockGetStudentStatus = jest.fn().mockResolvedValue({ rows: [], count: 0 });
+const mockGetStudentGradeProgress = jest.fn().mockResolvedValue({ rows: [], count: 0 });
+const mockGetStudentLevelProgress = jest
+  .fn()
+  .mockResolvedValue({ rows: [], count: 0, student: null });
+const mockGetStudentLessonProgress = jest
+  .fn()
+  .mockResolvedValue({ rows: [], count: 0, student: null });
+const mockGetStudentsOfflineOnline = jest.fn().mockResolvedValue([]);
+
 jest.mock("src/business/report.business", () => ({
   ReportBusiness: jest.fn().mockImplementation(() => ({
-    getStudentsScoresData: jest.fn().mockResolvedValue({ rows: [], count: 0 }),
-    getClassScoresData: jest.fn().mockResolvedValue({ rows: [], count: 0 }),
-    getStudentLastCompletedQuiz: jest
-      .fn()
-      .mockResolvedValue({ lastcompletedlessonquiz: [], count: 0 }),
-    getLevelQuizScoresData: jest.fn().mockResolvedValue({ rows: [], count: 0 }),
-    getClassLevelQuizScoresData: jest.fn().mockResolvedValue({ rows: [], count: 0 }),
-    getStudentStatus: jest.fn().mockResolvedValue({ rows: [], count: 0 }),
-    getStudentGradeProgress: jest.fn().mockResolvedValue({ rows: [], count: 0 }),
-    getStudentLevelProgress: jest
-      .fn()
-      .mockResolvedValue({ rows: [], count: 0, student: null }),
-    getStudentLessonProgress: jest
-      .fn()
-      .mockResolvedValue({ rows: [], count: 0, student: null }),
-    getStudentsOfflineOnline: jest.fn().mockResolvedValue([]),
+    getStudentsScoresData: mockGetStudentsScoresData,
+    getClassScoresData: mockGetClassScoresData,
+    getStudentLastCompletedQuiz: mockGetStudentLastCompletedQuiz,
+    getLevelQuizScoresData: mockGetLevelQuizScoresData,
+    getClassLevelQuizScoresData: mockGetClassLevelQuizScoresData,
+    getStudentStatus: mockGetStudentStatus,
+    getStudentGradeProgress: mockGetStudentGradeProgress,
+    getStudentLevelProgress: mockGetStudentLevelProgress,
+    getStudentLessonProgress: mockGetStudentLessonProgress,
+    getStudentsOfflineOnline: mockGetStudentsOfflineOnline,
   })),
 }));
 
+const mockGetStudentBaselineEndlineResults = jest.fn().mockResolvedValue({ data: [] });
+const mockGetCurriculumBaseline = jest.fn().mockResolvedValue(null);
+const mockGetStudentBaseline = jest.fn().mockResolvedValue(null);
 jest.mock("src/business/curriculumbaseline.business", () => ({
   CurriculumBaseLineBusiness: jest.fn().mockImplementation(() => ({
-    getStudentBaselineEndlineResults: jest.fn().mockResolvedValue({ data: [] }),
-    getCurriculumBaseline: jest.fn().mockResolvedValue(null),
-    GetStudentBaseline: jest.fn().mockResolvedValue(null),
+    getStudentBaselineEndlineResults: mockGetStudentBaselineEndlineResults,
+    getCurriculumBaseline: mockGetCurriculumBaseline,
+    GetStudentBaseline: mockGetStudentBaseline,
   })),
 }));
 
+const mockGetlogintime = jest.fn().mockResolvedValue([]);
 jest.mock("src/business/student.business", () => ({
   StudentBusiness: jest.fn().mockImplementation(() => ({
-    getlogintime: jest.fn().mockResolvedValue([]),
+    getlogintime: mockGetlogintime,
   })),
 }));
 
@@ -170,32 +194,46 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
     });
   });
 
-  describe("(b) the sync key on EVERY allow-listed route passes the guard", () => {
-    const ALLOWLISTED: Array<["get" | "post", string]> = [
-      ["post", "/report/studentprogress"],
-      ["post", "/report/studentprogress/class"],
-      ["post", "/report/studentlastcompletedquiz"],
-      ["post", "/report/studentlevelquiz"],
-      ["post", "/report/studentlevelquiz/class"],
-      ["post", "/report/studentstatus"],
-      ["post", "/report/student-grade-progress"],
-      ["post", "/report/student-level-progress"],
-      ["post", "/report/student-lesson-progress"],
-      ["post", "/report/studentprogress/download"],
-      ["post", "/report/studentlastcompletedquiz/download"],
-      ["post", "/report/studentlevelquiz/download"],
-      ["post", "/report/studentlevelquiz/class/download"],
-      ["post", "/report/studentstatus/download"],
-      ["post", "/report/studentprogress/class/download"],
-      ["get", "/curriculum/some-baseline-id/getstudentresult"],
-      ["post", "/student/logintime"],
+  describe("(b) the sync key on EVERY allow-listed route passes the guard and the handler actually runs", () => {
+    // Not just "not 401/403" — that alone also passes when the GUARD itself
+    // crashes on the sync-key path (a 500 is indistinguishable from a
+    // handler that ran and then failed on its own). Every allow-listed
+    // handler below has its business-layer call stubbed to resolve cleanly
+    // (see the jest.mock blocks above), so a guard that actually lets the
+    // request through always ends in a clean 200 — and the stubbed business
+    // method is only ever called if the handler body itself ran. Asserting
+    // both closes the gap: a crashing guard fails on the exact-status check
+    // (no longer a bare "not 401/403"), and a guard that returns 200 through
+    // some other route (e.g. short-circuiting before the handler) fails on
+    // the call-count check.
+    const ALLOWLISTED: Array<["get" | "post", string, jest.Mock]> = [
+      ["post", "/report/studentprogress", mockGetStudentsScoresData],
+      ["post", "/report/studentprogress/class", mockGetClassScoresData],
+      ["post", "/report/studentlastcompletedquiz", mockGetStudentLastCompletedQuiz],
+      ["post", "/report/studentlevelquiz", mockGetLevelQuizScoresData],
+      ["post", "/report/studentlevelquiz/class", mockGetClassLevelQuizScoresData],
+      ["post", "/report/studentstatus", mockGetStudentStatus],
+      ["post", "/report/student-grade-progress", mockGetStudentGradeProgress],
+      ["post", "/report/student-level-progress", mockGetStudentLevelProgress],
+      ["post", "/report/student-lesson-progress", mockGetStudentLessonProgress],
+      ["post", "/report/studentprogress/download", mockGetStudentsScoresData],
+      ["post", "/report/studentlastcompletedquiz/download", mockGetStudentLastCompletedQuiz],
+      ["post", "/report/studentlevelquiz/download", mockGetLevelQuizScoresData],
+      ["post", "/report/studentlevelquiz/class/download", mockGetClassLevelQuizScoresData],
+      ["post", "/report/studentstatus/download", mockGetStudentStatus],
+      ["post", "/report/studentprogress/class/download", mockGetClassScoresData],
+      ["get", "/curriculum/some-baseline-id/getstudentresult", mockGetStudentBaselineEndlineResults],
+      ["post", "/student/logintime", mockGetlogintime],
     ];
 
-    it.each(ALLOWLISTED)("%s %s: sync key reaches the handler (not 401/403)", async (method, path) => {
-      const res = await call(method, path, syncKey());
-      expect(res.status).not.toBe(401);
-      expect(res.status).not.toBe(403);
-    });
+    it.each(ALLOWLISTED)(
+      "%s %s: sync key reaches the handler (status 200, business call proven, not inferred from status alone)",
+      async (method, path, businessMock) => {
+        const res = await call(method, path, syncKey());
+        expect(res.status).toBe(200);
+        expect(businessMock).toHaveBeenCalledTimes(1);
+      }
+    );
 
     // `offlineonline` is central's one report route that is NOT proxied
     // (commented out in report.controller.ts there — see report.controller.ts
@@ -208,8 +246,8 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
   describe("(c) a valid user token still enforces the route's existing roles", () => {
     it("a TEACHER token passes report/studentprogress (allow-listed, role preserved)", async () => {
       const res = await call("post", "/report/studentprogress", tokenFor(SchoolRole.TEACHER));
-      expect(res.status).not.toBe(401);
-      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(200);
+      expect(mockGetStudentsScoresData).toHaveBeenCalledTimes(1);
     });
 
     it("a STUDENT token is refused on report/studentprogress with 403 (wrong role)", async () => {
@@ -222,8 +260,8 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
         "/curriculum/some-baseline-id/getstudentresult",
         tokenFor(SchoolRole.ADMIN)
       );
-      expect(res.status).not.toBe(401);
-      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(200);
+      expect(mockGetStudentBaselineEndlineResults).toHaveBeenCalledTimes(1);
     });
 
     it("a STUDENT token is refused on curriculum/:id/getstudentresult with 403 (wrong role)", async () => {
@@ -236,8 +274,8 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
 
     it("any authenticated token passes student/logintime (no role restriction, unchanged)", async () => {
       const res = await call("post", "/student/logintime", tokenFor(SchoolRole.STUDENT));
-      expect(res.status).not.toBe(401);
-      expect(res.status).not.toBe(403);
+      expect(res.status).toBe(200);
+      expect(mockGetlogintime).toHaveBeenCalledTimes(1);
     });
 
     it("a missing token still gives 401 on an allow-listed route", async () => {
