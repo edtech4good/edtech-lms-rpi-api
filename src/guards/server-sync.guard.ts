@@ -6,21 +6,13 @@ import {
   mixin,
   Type,
 } from "@nestjs/common";
-import { timingSafeEqual } from "crypto";
 import { Request } from "express";
 import { Config } from "src/config";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { TokenType } from "src/models/enums/tokentype.enum";
 import { Token } from "src/models/token.model";
 import { AccessGuard } from "./access.guard";
-
-const isServerSyncKey = (authorization: string | undefined): boolean => {
-  const key = Config.fortyk.api.serversynckey;
-  if (!authorization || !key) return false;
-  const given = Buffer.from(authorization);
-  const expected = Buffer.from(key);
-  return given.length === expected.length && timingSafeEqual(given, expected);
-};
+import { isServerSyncKey } from "./server-sync-key.util";
 
 /**
  * For endpoints that central pushes to server-to-server: the bulk imports

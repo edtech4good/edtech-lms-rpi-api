@@ -11,6 +11,7 @@ import {
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiBody, ApiQuery } from "@nestjs/swagger";
 import { ReportBusiness } from "src/business/report.business";
 import { AccessGuard } from "src/guards/access.guard";
+import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
 import { TokenType } from "src/models/enums";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { IMultiPaging } from "src/models/IPaging";
@@ -19,18 +20,25 @@ import { IMultiPaging } from "src/models/IPaging";
 // edtech-expo's src/ and app/: nothing hits /report/*, including under a
 // teacher session — TeacherTestScoreScreen goes through /teacher/studentprogress
 // instead), so every route here is restricted the same way import/export are.
+//
+// Central proxies every route below except `offlineonline` (its call is
+// commented out in report.controller.ts there) server-to-server with the
+// sync key, so those routes accept EITHER the sync key or a user token in
+// the roles below (AccessOrServerSyncGuard, per-route — see
+// edtech4good/workspace#45). `offlineonline` is not called by central and
+// keeps the plain AccessGuard: no sync key.
 @ApiTags("Report")
 @Controller("report")
 @ApiBearerAuth()
-@UseGuards(
-  AccessGuard(
-    TokenType.ACCESS,
+export class ReportController {
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
+    )
   )
-)
-export class ReportController {
   @Post('studentprogress')
   @ApiResponse({
     status: 200,
@@ -59,6 +67,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentprogress/class')
   @ApiResponse({
     status: 200,
@@ -87,6 +103,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentlastcompletedquiz')
   @ApiResponse({
     status: 200,
@@ -115,6 +139,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentlevelquiz')
   @ApiResponse({
     status: 200,
@@ -143,6 +175,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentlevelquiz/class')
   @ApiResponse({
     status: 200,
@@ -171,6 +211,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentstatus')
   @ApiResponse({
     status: 200,
@@ -203,6 +251,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('student-grade-progress')
   @ApiResponse({
     status: 200,
@@ -236,6 +292,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('student-level-progress')
   @ApiResponse({
     status: 200,
@@ -269,6 +333,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('student-lesson-progress')
   @ApiResponse({
     status: 200,
@@ -302,6 +374,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Get('offlineonline')
   @ApiResponse({
     status: 200,
@@ -329,6 +409,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentprogress/download')
   @ApiResponse({
     status: 200,
@@ -352,6 +440,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post("studentlastcompletedquiz/download")
   @ApiResponse({
     status: 200,
@@ -377,6 +473,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentlevelquiz/download')
   @ApiResponse({
     status: 200,
@@ -400,6 +504,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentlevelquiz/class/download')
   @ApiResponse({
     status: 200,
@@ -423,6 +535,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentstatus/download')
   @ApiResponse({
     status: 200,
@@ -446,6 +566,14 @@ export class ReportController {
     };
   }
 
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    )
+  )
   @Post('studentprogress/class/download')
   @ApiResponse({
     status: 200,

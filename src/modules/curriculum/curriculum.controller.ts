@@ -16,6 +16,7 @@ import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.busi
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
 import {
   BusinessValidationInterceptor,
   SchemaValidationInterceptor,
@@ -276,8 +277,11 @@ export class CurriculumController {
     description: "Server error",
   })
   @ApiParam({ name: `curriculumbaselineid`, type: "string", required: true })
+  // Central proxies this route server-to-server (`curriculum/:id/getstudentresult`
+  // in curriculumbaseline.controller.ts there) with the sync key — see
+  // edtech4good/workspace#45.
   @UseGuards(
-    AccessGuard(
+    AccessOrServerSyncGuard(
       TokenType.ACCESS,
       SchoolRole.ADMIN,
       SchoolRole.SUPERADMIN,
