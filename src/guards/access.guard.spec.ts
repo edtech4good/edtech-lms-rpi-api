@@ -65,21 +65,22 @@ describe("AccessGuard", () => {
       ).toThrow(UnauthorizedException);
     });
 
-    it("still grants the synthetic server identity for the sync key, reading the header from the passed context (#21)", () => {
+    it("no longer accepts the server sync key (edtech4good/workspace#45): 401, same as any other unauthenticated request", () => {
+      // AccessGuard used to grant the synthetic server identity for any
+      // request carrying the sync key, on every route it guards — a leaked
+      // key was then full access to curriculum, grade, lesson, level,
+      // question, report, result, student, teacher, access and export. The
+      // sync key now only works on the specific, allow-listed routes that
+      // use AccessOrServerSyncGuard instead (access-or-server-sync.guard.ts).
       const Guard = AccessGuard(TokenType.ACCESS, SchoolRole.ADMIN);
       const guard = new Guard();
       const context = makeContext({
         authorization: Config.fortyk.api.serversynckey,
       });
 
-      const result = guard.handleRequest(
-        new UnauthorizedException(),
-        null,
-        null,
-        context
-      );
-
-      expect(result).toEqual({ schooluserid: "server" });
+      expect(() =>
+        guard.handleRequest(new UnauthorizedException(), null, null, context)
+      ).toThrow(UnauthorizedException);
     });
   });
 
@@ -115,24 +116,26 @@ describe("AccessGuard", () => {
   });
 
   describe("per-request isolation (#21)", () => {
-    it("does not let one request's sync-key header answer for a request with no such header on the same guard instance", () => {
+    it("does not let one request's headers answer for a request with different headers on the same guard instance", () => {
       const Guard = AccessGuard(TokenType.ACCESS, SchoolRole.ADMIN);
       const guard = new Guard();
 
       const withSyncKey = makeContext({
         authorization: Config.fortyk.api.serversynckey,
       });
-      const withoutSyncKey = makeContext({});
+      const withoutHeader = makeContext({});
 
-      // Order matters: the sync-key request first, to prove a later,
-      // unrelated request on the SAME instance can't be waved through by
-      // state the first call might have left behind.
-      expect(
+      // Order matters: a request carrying the (now-irrelevant-to-this-guard)
+      // sync-key header first, to prove a later, unrelated request on the
+      // SAME instance can't be waved through by state the first call might
+      // have left behind. Both are unauthenticated as far as AccessGuard is
+      // concerned, so both throw.
+      expect(() =>
         guard.handleRequest(new UnauthorizedException(), null, null, withSyncKey)
-      ).toEqual({ schooluserid: "server" });
+      ).toThrow(UnauthorizedException);
 
       expect(() =>
-        guard.handleRequest(new UnauthorizedException(), null, null, withoutSyncKey)
+        guard.handleRequest(new UnauthorizedException(), null, null, withoutHeader)
       ).toThrow(UnauthorizedException);
     });
   });

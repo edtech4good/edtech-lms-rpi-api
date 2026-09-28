@@ -14,18 +14,21 @@ import AdmZip from "adm-zip";
 import { LogBusiness } from "src/business/log.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
-import { AccessGuard } from "src/guards/access.guard";
+import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
 import { TokenType } from "src/models/enums";
 import { LOGDIR, LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
 import { SyncReport } from 'src/business/sync.report';
 
+// Scoped alongside import (#88): the sync key is meant for import AND
+// export (edtech4good/workspace#45), so every route in this controller
+// accepts either the sync key or a user token in the roles below.
 @ApiTags("Export")
 @Controller("export")
 @ApiBearerAuth()
 @UseGuards(
-  AccessGuard(
+  AccessOrServerSyncGuard(
     TokenType.ACCESS,
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,

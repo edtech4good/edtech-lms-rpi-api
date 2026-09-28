@@ -13,6 +13,7 @@ import { ApiTags, ApiBearerAuth, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { StudentBusiness } from "src/business/student.business";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
 import {
   SchemaValidationInterceptor,
   BusinessValidationInterceptor,
@@ -159,7 +160,10 @@ export class StudentController {
     status: 500,
     description: "Server error",
   })
-  @UseGuards(AccessGuard(TokenType.ACCESS))
+  // Central proxies this route server-to-server (`student.business.ts`'s
+  // getStudentLoginTime call there) with the sync key — see
+  // edtech4good/workspace#45.
+  @UseGuards(AccessOrServerSyncGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
   async getlogintime(
     @Body() body: any,
