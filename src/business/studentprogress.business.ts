@@ -36,7 +36,7 @@ export class StudentProgressBusiness {
     stps: studentprogressAttributes[],
     transaction: Transaction
   ) => {
-    studentprogress.bulkCreate(stps, {
+    await studentprogress.bulkCreate(stps, {
       transaction,
       updateOnDuplicate: [
         "studentid",

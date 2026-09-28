@@ -21,6 +21,7 @@ import AdmZip from "adm-zip";
 import { parseISO } from "date-fns";
 import { chunk } from "lodash";
 import "multer";
+import { Transaction } from "sequelize";
 import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
@@ -28,10 +29,9 @@ import { SyncBusiness } from "src/business/sync.business";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
-import { AccessGuard } from "src/guards/access.guard";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
-import { TokenType } from "src/models/enums";
+import { ServerSyncGuard } from "src/guards/server-sync.guard";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { ResponseBoolean } from "src/models/ResponseBoolean";
@@ -73,19 +73,29 @@ function assertEntryWithinLimit(entry: AdmZip.IZipEntry, maxBytes: number): void
     });
   }
 }
+
+/**
+ * Rolls back an import transaction without letting a second failure mask the
+ * first. If `commit()` itself rejected, Sequelize has already marked the
+ * transaction finished and `rollback()` throws "has been finished with state:
+ * commit" — which would replace the handler's 400 with a raw 500.
+ */
+async function rollbackQuietly(tnx: Transaction): Promise<void> {
+  try {
+    await tnx.rollback();
+  } catch (e) {
+    Logger.error("import rollback failed", { error: e });
+  }
+}
+
 @ApiTags("Import")
 @Controller("import")
 @ApiBearerAuth()
-@UseGuards(
-  AccessGuard(
-    TokenType.ACCESS,
-    SchoolRole.ADMIN,
-    SchoolRole.SUPERADMIN,
-    SchoolRole.TEACHER
-  )
-)
 export class ImportController {
+  // Roster imports: central's server sync key only, online and on a Pi. No
+  // client sends these with a user token.
   @Put("students")
+  @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
     description: "students imported successfully",
@@ -170,9 +180,9 @@ export class ImportController {
             await stp.importStudentLevelsProgress(studentprogresses.studentlevelsprogress, tnx);
             await stp.importStudentLessonsProgress(studentprogresses.studentlessonsprogress, tnx);
           }
-          tnx.commit();
+          await tnx.commit();
         } catch(e) {
-          tnx.rollback();
+          await rollbackQuietly(tnx);
           throw new BadRequestException({
             error: true,
             errormessage: "Invalid file",
@@ -198,6 +208,7 @@ export class ImportController {
   }
 
   @Put("teachers")
+  @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
     description: "teachers imported successfully",
@@ -248,9 +259,9 @@ export class ImportController {
         let newteachers: Array<any> = [];
         newteachers = JSON.parse(teachersjson);
         await su.importschoolteachers(newteachers, tnx);
-        tnx.commit();
+        await tnx.commit();
       } catch {
-        tnx.rollback();
+        await rollbackQuietly(tnx);
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",
@@ -269,7 +280,12 @@ export class ImportController {
     }
   }
 
+  // Content import: the server sync key, plus staff tokens on a classroom Pi
+  // only, where the Android teacher app carries central's content zip in.
   @Put("master")
+  @UseGuards(
+    ServerSyncGuard(SchoolRole.ADMIN, SchoolRole.SUPERADMIN, SchoolRole.TEACHER)
+  )
   @ApiResponse({
     status: 200,
     description: "Complete sync successfully",
@@ -384,7 +400,7 @@ export class ImportController {
             .query("SET FOREIGN_KEY_CHECKS = 1", { transaction: tnx });
         }
 
-        tnx.commit();
+        await tnx.commit();
         Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
         return {
           error: false,
@@ -392,7 +408,7 @@ export class ImportController {
         };
       } catch (e: any) {
         Logger.info(e);
-        tnx.rollback();
+        await rollbackQuietly(tnx);
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",

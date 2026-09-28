@@ -122,6 +122,30 @@ export class StudentController {
     };
   }
 
+  @Get("progress/summary")
+  @ApiResponse({
+    status: 200,
+    description: "Fetched student progress summary successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Error fetching student progress summary",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @HttpCode(HttpStatus.OK)
+  async getStudentProgressSummary(
+    @User() user: Token
+  ): Promise<any> {
+    return {
+      data: await new StudentBusiness().getprogresssummary(user),
+      error: false,
+    };
+  }
+
   @Post("logintime")
   @ApiResponse({
     status: 200,

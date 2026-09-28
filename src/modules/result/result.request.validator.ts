@@ -9,7 +9,7 @@ export const resultpractice: RequestValidator = ({
       lessonpracticequestionid: joi.string().uuid().required(),
       questionid: joi.string().uuid().required(),
       tries: joi.number().required(),
-    })),
+    })).required(), // [] is valid: an all-wrong Expo practice submits no answers
     starttime: joi.date().label('Invalid Date'),
     endtime: joi.date().label('Invalid Date'),
   }),

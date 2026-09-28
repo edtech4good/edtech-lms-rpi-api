@@ -9,6 +9,7 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
+import { ActivityProgressBusiness } from "src/business/activityprogress.business";
 import { LessonBusiness } from "src/business/lesson.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
@@ -121,6 +122,36 @@ export class LessonController {
     };
   }
 
+  @Get("level/:levelid/steps")
+  @ApiResponse({
+    status: 200,
+    description: "Per-activity level steps fetch successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Error while fetching per-activity level steps",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseInterceptors(
+    new SchemaValidationInterceptor(showlevelid),
+    new BusinessValidationInterceptor([DeleteLevel])
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: `levelid`, type: "string", required: true })
+  async getlevelactivitiesprogress(
+    @Param("levelid") levelid: string,
+    @User() user: Token
+  ): Promise<any> {
+    Logger.info(`<${user.studentfirstname}> get level activities progress <${levelid}>`, {logaccesstype: LOGTYPE.GETLESSONSPROGRESS, userid: user.schooluserid});
+    return {
+      data: await new ActivityProgressBusiness().getlevelactivitiesprogress(levelid, user),
+      error: false,
+    };
+  }
+
   @Get(":lessonid/progress")
   @ApiResponse({
     status: 200,
@@ -148,6 +179,37 @@ export class LessonController {
     Logger.info(`<${user.studentfirstname}> get all lessons progress <${lessonid}>`, {logaccesstype: LOGTYPE.GETLESSONSPROGRESS, userid: user.schooluserid});
     return {
       data: await new LessonBusiness().getuserlessonprogress(lessonid, user),
+      error: false,
+    };
+  }
+
+  @Get(":lessonid/activities/progress")
+  @ApiResponse({
+    status: 200,
+    description: "Per-activity lesson progress fetch successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Error while fetching per-activity lesson progress",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseInterceptors(
+    new SchemaValidationInterceptor(lessonidparams),
+    new BusinessValidationInterceptor([DeleteLesson])
+  )
+  @HttpCode(HttpStatus.OK)
+  @ApiParam({ name: `lessonid`, type: "string", required: true })
+  @HttpCode(HttpStatus.OK)
+  async getlessonactivitiesprogress(
+    @Param("lessonid") lessonid: string,
+    @User() user: Token
+  ): Promise<any> {
+    Logger.info(`<${user.studentfirstname}> get lesson activities progress <${lessonid}>`, {logaccesstype: LOGTYPE.GETLESSONSPROGRESS, userid: user.schooluserid});
+    return {
+      data: await new ActivityProgressBusiness().getlessonactivitiesprogress(lessonid, user),
       error: false,
     };
   }

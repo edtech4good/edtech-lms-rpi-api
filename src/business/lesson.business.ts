@@ -526,14 +526,14 @@ export class LessonBusiness {
             curid: grade.curriculumid,
             points: points >= 0 ? points : 0,
             progress: points >= 0 ? (Number((points*100/lesson.level.points).toFixed(2)) ?? 0) : 0,
-            completed: points >= 0 && Number((points*100/lesson.level.points).toFixed(2)) > COMPLETED_PERCENTAGE ? true : false,
+            completed: points >= 0 && Number((points*100/lesson.level.points).toFixed(2)) >= COMPLETED_PERCENTAGE ? true : false,
             scores: 0,
             lastupdated: currentdate
           }, {transaction});
         } else {
           levelprogress.points += (points < 0 && levelprogress.points + points < 0) ? 0 : points;
           levelprogress.progress = Number((levelprogress.points*100/lesson.level.points).toFixed(2)) ?? 0;
-          levelprogress.completed = levelprogress.progress > COMPLETED_PERCENTAGE ? true : false;
+          levelprogress.completed = levelprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
           levelprogress.lastupdated = currentdate;
           await levelprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
         }
@@ -548,14 +548,14 @@ export class LessonBusiness {
             curriculumid: grade.curriculumid,
             points: points >= 0 ? points : 0,
             progress: points >= 0 ? (Number((points*100/grade.points).toFixed(2)) ?? 0) : 0,
-            completed: points >= 0 && Number((points*100/grade.points).toFixed(2)) > COMPLETED_PERCENTAGE ? true : false,
+            completed: points >= 0 && Number((points*100/grade.points).toFixed(2)) >= COMPLETED_PERCENTAGE ? true : false,
             scores: 0,
             lastupdated: currentdate
           }, {transaction});
         } else {
           gradeprogress.points += (points < 0 && gradeprogress.points + points < 0) ? 0 : points;
           gradeprogress.progress = Number((gradeprogress.points*100/grade.points).toFixed(2)) ?? 0;
-          gradeprogress.completed = gradeprogress.progress > COMPLETED_PERCENTAGE ? true : false;
+          gradeprogress.completed = gradeprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
           gradeprogress.lastupdated = currentdate;
           await gradeprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
         }
@@ -584,13 +584,13 @@ export class LessonBusiness {
           curid: grade.curriculumid,
           points: points > 0 ? points : 0,
           progress: points > 0 ? (Number((points*100/level.points).toFixed(2)) ?? 0) : 0,
-          completed: points > 0 && Number((points*100/level.points).toFixed(2)) > COMPLETED_PERCENTAGE ? true : false,
+          completed: points > 0 && Number((points*100/level.points).toFixed(2)) >= COMPLETED_PERCENTAGE ? true : false,
           lastupdated: currentdate
         }, {transaction});
       } else {
         levelprogress.points += (points < 0 && levelprogress.points + points < 0) ? 0 : points;
         levelprogress.progress = Number((levelprogress.points*100/level.points).toFixed(2)) ?? 0;
-        levelprogress.completed = levelprogress.progress > COMPLETED_PERCENTAGE ? true : false;
+        levelprogress.completed = levelprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
         levelprogress.lastupdated = currentdate;
         await levelprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
       }
@@ -605,13 +605,13 @@ export class LessonBusiness {
           curriculumid: grade.curriculumid,
           points: points > 0 ? points : 0,
           progress: points > 0 ? (Number((points*100/grade.points).toFixed(2)) ?? 0) : 0,
-          completed: points > 0 && Number((points*100/grade.points).toFixed(2)) > COMPLETED_PERCENTAGE ? true : false,
+          completed: points > 0 && Number((points*100/grade.points).toFixed(2)) >= COMPLETED_PERCENTAGE ? true : false,
           lastupdated: currentdate
         }, {transaction});
       } else {
         gradeprogress.points += (points < 0 && gradeprogress.points + points < 0) ? 0 : points;
         gradeprogress.progress = Number((gradeprogress.points*100/grade.points).toFixed(2)) ?? 0;
-        gradeprogress.completed = gradeprogress.progress > COMPLETED_PERCENTAGE ? true : false;
+        gradeprogress.completed = gradeprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
         gradeprogress.lastupdated = currentdate;
         await gradeprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
       }

@@ -10,6 +10,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { LevelBusiness } from "src/business/level.business";
+import { LibraryBusiness } from "src/business/library.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
@@ -28,6 +29,36 @@ import { showgradeid } from "../grade/grade.request.validator";
 @ApiBearerAuth()
 @UseGuards(AccessGuard(TokenType.ACCESS))
 export class LevelController {
+
+  // A literal top-level route. Nothing else in this controller takes an
+  // unparameterized top-level segment (the param routes are all nested,
+  // e.g. "grade/:gradeid"), so there is no route here "library" could be
+  // shadowed by regardless of declaration order.
+  @Get("library")
+  @ApiResponse({
+    status: 200,
+    description: "Library fetched successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Error while fetching library",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @HttpCode(HttpStatus.OK)
+  async getlibrary(@User() user: Token): Promise<any> {
+    Logger.info(`<${user.studentfirstname}> get library`, {
+      logaccesstype: LOGTYPE.GETLEVELS,
+      userid: user.schooluserid,
+    });
+    return {
+      data: await new LibraryBusiness().getLibrary(user),
+      error: false,
+    };
+  }
 
   @Get('all')
   @ApiResponse({
