@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { differenceInSeconds, startOfDay, startOfTomorrow } from "date-fns";
 import { Op } from "sequelize";
 import { studentappusages } from "src/models/data-models/studentappusage";
@@ -25,7 +26,7 @@ export class AccessBusiness {
                 }
             }
         });
-        if(!user.schooluserid) throw new BadRequestException('User does not exist.')
+        if(!user.schooluserid) throw new ApiError(ErrorCode.NOT_FOUND)
         if(!studentusage) {
             await studentappusages.create({
                 studentappusageid: uuidv4(),

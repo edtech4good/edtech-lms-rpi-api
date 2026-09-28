@@ -1,10 +1,11 @@
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Op, WhereOptions } from "sequelize";
 import { standards, standardsAttributes } from "src/models/data-models/standards";
 
 export class StandardBusiness {
   getStandardsWithFilter = async (schoolname: string, standardname: string) => {
-    if(!schoolname) throw new BadRequestException('No school name!');
+    if(!schoolname) throw new ApiError(ErrorCode.INVALID_INPUT, { message: 'A school name is required.' });
     const where: WhereOptions<standardsAttributes> = {
       isdeleted: false,
       standardname: {

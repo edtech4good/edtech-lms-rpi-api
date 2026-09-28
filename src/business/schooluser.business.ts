@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { hashPassword } from "src/services/password.service";
 import { Op, Transaction } from "sequelize";
 import { SchoolRole } from "src/models/enums/school.role.enum";
@@ -100,7 +101,7 @@ export class SchoolUserBusiness {
     if (_user) {
       return _user.get({ plain: true });
     }
-    throw new BadRequestException("Please authenticate");
+    throw new ApiError(ErrorCode.SIGN_IN_REQUIRED);
   };
 
   getuserbyid = (schooluserid: string) =>

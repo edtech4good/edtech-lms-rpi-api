@@ -4,6 +4,7 @@ import { pick } from 'lodash';
 import { Observable } from 'rxjs';
 import { RequestValidator } from 'src/models';
 import { ValidationException } from '../models/ValidationException';
+import { fieldForJoiDetail, humanizeJoiMessage } from '../utils/joi-message';
 
 @Injectable()
 export class SchemaValidationInterceptor implements NestInterceptor {
@@ -19,8 +20,11 @@ export class SchemaValidationInterceptor implements NestInterceptor {
       .validate(object);
 
     if (error) {
-      const errorMessage = error.details.map(details => details.message).join(', ');
-      throw new ValidationException(errorMessage);
+      const fields = error.details.map(details => {
+        const field = fieldForJoiDetail(details.path, details.type);
+        return { field, message: humanizeJoiMessage(field, details.type, details.message) };
+      });
+      throw new ValidationException(fields);
     }
     return next.handle();
   }

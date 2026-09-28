@@ -45,6 +45,9 @@ describe("resultpractice validator", () => {
   });
 
   it("rejects a body with no result key", () => {
-    expect(() => validate({})).toThrow(/result.*required/);
+    // #75's error contract humanizes Joi's raw "\"result\" is required"
+    // message via src/utils/joi-message.ts; every `any.required` failure
+    // now reads "Enter a value for <field>." regardless of the field name.
+    expect(() => validate({})).toThrow(/Enter a value for result/);
   });
 });

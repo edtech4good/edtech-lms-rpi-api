@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
 import { lessonpractices } from "src/models/data-models/lessonpractices";
 import { lessonquizzes } from "src/models/data-models/lessonquizzes";
@@ -86,7 +87,7 @@ export class LessonBusiness {
       },
     });
     if (!lessonpractice)
-      throw new BadRequestException("Lesson Practice Not Found");
+      throw new ApiError(ErrorCode.NOT_FOUND);
     return lessonpractice;
   };
 
@@ -96,7 +97,7 @@ export class LessonBusiness {
         lessonquizid,
       },
     });
-    if (!lessonquiz) throw new BadRequestException("Lesson Quiz Not Found");
+    if (!lessonquiz) throw new ApiError(ErrorCode.NOT_FOUND);
     return lessonquiz;
   };
 
@@ -106,7 +107,7 @@ export class LessonBusiness {
         levelid,
       },
     });
-    if (!level) throw new BadRequestException("level Not Found");
+    if (!level) throw new ApiError(ErrorCode.NOT_FOUND);
     return level;
   };
 
@@ -117,7 +118,7 @@ export class LessonBusiness {
       },
     });
     if (!lessonlearning)
-      throw new BadRequestException("Learning Lesson Not Found");
+      throw new ApiError(ErrorCode.NOT_FOUND);
     return lessonlearning;
   };
 
@@ -125,7 +126,7 @@ export class LessonBusiness {
     const student = await students.findOne({
       where: { schooluserid: user.schooluserid },
     });
-    if (!student) throw new BadRequestException("Student Not Found");
+    if (!student) throw new ApiError(ErrorCode.NOT_FOUND);
     return student;
   };
 
@@ -203,7 +204,7 @@ export class LessonBusiness {
     // on open. A still-in-progress report with no content_length is rejected,
     // since that combination has nothing to measure. See rpi-api#42.
     if (!progress.ended && progress.content_length <= 0)
-      throw new BadRequestException("Content Lenght can not equal 0");
+      throw new ApiError(ErrorCode.INVALID_INPUT, { message: "Content length can't be 0." });
     // A media-less item has nothing to divide by, so progress_percentage
     // can't be a real time/content_length ratio. `ended` is always true
     // here (the throw above rejects the only other case), so this is
@@ -276,10 +277,10 @@ export class LessonBusiness {
       await this.updateuserdailypoints(lessonlearning.lessonid, user, progress.date);
     } catch(err: any) {
       await transaction.rollback();
-      throw new BadRequestException({
-        error: true,
-        errormessage: err?.response?.errormessage || err.message,
-      });
+      // Rethrow the original error so a DB failure on this result save maps
+      // to 503 (retried by the client), not a 400 carrying SQL text that
+      // the app treats as bad data and eventually drops.
+      throw err;
     }
   };
 

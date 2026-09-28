@@ -1,5 +1,4 @@
 export * from './config.model';
-export * from './CustomForbiddenException';
 export * from './Ibusinessrule';
 export * from './IErrorResponse';
 export * from './IRequest';

@@ -1,4 +1,5 @@
-import { BadRequestException } from "@nestjs/common";
+import { ApiError } from "src/models/ApiError";
+import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { curriculumbaseline, curriculumbaselineAttributes } from "src/models/data-models/curriculumbaseline";
 import { schools, schoolsAttributes } from "src/models/data-models/school";
@@ -38,7 +39,7 @@ export class CurriculumBaseLineBusiness {
         curriculumbaselineid,
       },
     });
-    if (!baseline) throw new BadRequestException("level Not Found");
+    if (!baseline) throw new ApiError(ErrorCode.NOT_FOUND);
     return baseline;
   };
 
