@@ -145,15 +145,20 @@ export class ImportController {
         const payload: exportpayload = JSON.parse(studentsjson);
         newstudents = payload.studentusers;
         const studentprogresses = payload.studentprogresses;
-        newstudents = newstudents.map((x) => {
-          const dob = x.dateofjoin ? parseISO(x.student.dateofjoin) : null;
-          const doj = x.dateofbirth ? parseISO(x.student.dateofbirth) : null;
-          return {
-            ...x,
-            dateofbirth: dob,
-            dateofjoin: doj,
-          };
-        });
+        // Central sends each schooluser with its `students` row nested under
+        // `student`, dates as ISO strings. The dates live on that nested row
+        // and it is the one written to `students` below, so parse them there.
+        // (This used to read the top-level fields, which central never sends,
+        // swap birth and join, and put the result on the schooluser row, where
+        // it was dropped — so the parse never reached the `students` write.)
+        newstudents = newstudents.map((x) => ({
+          ...x,
+          student: x.student && {
+            ...x.student,
+            dateofbirth: x.student.dateofbirth ? parseISO(x.student.dateofbirth) : null,
+            dateofjoin: x.student.dateofjoin ? parseISO(x.student.dateofjoin) : null,
+          },
+        }));
         const su = new SchoolUserBusiness();
         const st = new StudentBusiness();
         const stp = new StudentProgressBusiness();
