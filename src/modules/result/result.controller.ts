@@ -69,7 +69,7 @@ export class ResultController {
   async savelessonpracticeresult(@Param('lessonpracticeid') lessonpracticeid: string, @Body() result: LessonPracticeResultBody, @User() user: Token): Promise<ResponseBoolean> {
     const rb = new ResultBusiness();
     const lessonbusiness = new LessonBusiness();
-    if (await rb.ispass(user.studentid || "", lessonpracticeid)) {
+    if (await rb.ispass(user.studentid || "", lessonpracticeid, false)) {
       const lessonpractice = await lessonbusiness.getlessonpractice(lessonpracticeid);
       const oldpoints = await rb.getoldpoints(user.studentid, lessonpractice.lessonpracticeid, lessonpractice.points) ?? null;
       const tnx = await dbinstance.getdbinstance().transaction();

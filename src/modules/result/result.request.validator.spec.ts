@@ -410,3 +410,45 @@ describe("agrees with isAnswerV1 on every #93 fixture shape", () => {
     expect(validateItem(answer)).toBe(false);
   });
 });
+
+describe("empty strings in answers (agrees with isAnswerV1)", () => {
+  const item = { iscorrect: true, lessonquizid: Q, lessonquizquestionid: Q, questionid: Q };
+  const run = (answer: unknown) => {
+    const context = {
+      switchToHttp: () => ({ getRequest: () => ({ body: { result: [{ ...item, answer }] } }) }),
+    } as unknown as ExecutionContext;
+    return () => new SchemaValidationInterceptor(resultquiz).intercept(context, { handle: () => of(null) });
+  };
+  const accepted: [string, unknown][] = [
+    ["text entry in entries", { v: 1, type: "text", entries: { a: "" } }],
+    ["selected id", { v: 1, type: "choice", selected: [""] }],
+    ["order id", { v: 1, type: "order", order: ["", "b"] }],
+    ["filled id", { v: 1, type: "blanks", filled: [""] }],
+    ["match pair value", { v: 1, type: "match", pairs: { a: "" } }],
+    ["match pair key", { v: 1, type: "match", pairs: { "": "b" } }],
+    ["fraction numerator", { v: 1, type: "fraction", parts: { a: { numerator: "", denominator: "2" } } }],
+    ["fraction denominator", { v: 1, type: "fraction", parts: { a: { numerator: "3", denominator: "" } } }],
+    ["unrecognised scalar field", { v: 1, type: "text", value: "" }],
+  ];
+  it.each(accepted)("%s: empty string is accepted", (_n, answer) => {
+    expect(run(answer)).not.toThrow();
+  });
+  it("201 characters is still rejected in each string position", () => {
+    const long = "a".repeat(201);
+    for (const a of [
+      { v: 1, type: "text", entries: { a: long } },
+      { v: 1, type: "choice", selected: [long] },
+      { v: 1, type: "fraction", parts: { a: { numerator: long, denominator: "1" } } },
+      { v: 1, type: "fraction", parts: { a: { numerator: "1", denominator: long } } },
+    ]) expect(run(a)).toThrow();
+  });
+  it("a non-string is still rejected in each string position", () => {
+    for (const a of [
+      { v: 1, type: "text", entries: { a: 5 } },
+      { v: 1, type: "choice", selected: [null] },
+      { v: 1, type: "choice", selected: [0] },
+      { v: 1, type: "fraction", parts: { a: { numerator: 1, denominator: "1" } } },
+      { v: 1, type: "fraction", parts: { a: { numerator: "1", denominator: null } } },
+    ]) expect(run(a)).toThrow();
+  });
+});

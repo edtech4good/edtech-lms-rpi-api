@@ -7,6 +7,22 @@ import { v4 as uuidv4 } from 'uuid';
 import { LessonBusiness } from "./lesson.business";
 import { Transaction, UniqueConstraintError } from "sequelize";
 import { dbinstance } from "src/services/dbservice";
+import { gradingMode, requireGradedAnswers } from "src/config";
+
+/**
+ * The one place that decides which past passes count.
+ *
+ * With GRADING_MODE=enforce and REQUIRE_GRADED_ANSWERS on, only a
+ * server-verified pass (`verified = 1`) counts, so an earlier unverified
+ * pass neither short-circuits a new attempt nor keeps a pass that the
+ * setting says should not count. In every other combination the rule is
+ * unchanged: any `ispass = 1` row counts.
+ *
+ * Applies to quizzes and level quizzes (the activities REQUIRE gates).
+ * Practice is never gated, so its callers do not use this.
+ */
+export const countedpassclause = (): { verified?: true } =>
+    gradingMode() === "enforce" && requireGradedAnswers() ? { verified: true } : {};
 
 const insertquestion = async (
     studentprogressid: string,
@@ -26,12 +42,18 @@ const insertquestion = async (
     ).toPromise();
 };
 export class ResultBusiness {
-    ispass = async (studentid: string, studentprogressreferenceid: string) => {
+    /**
+     * True when the learner has a counting pass for this activity. `gated`
+     * (default) applies the REQUIRE_GRADED_ANSWERS rule; practice passes
+     * `false` because practice is never gated.
+     */
+    ispass = async (studentid: string, studentprogressreferenceid: string, gated = true) => {
         const count = await studentprogress.count({
             where: {
                 studentid,
                 studentprogressreferenceid,
-                ispass: true
+                ispass: true,
+                ...(gated ? countedpassclause() : {})
             }
         });
         return count > 0;
@@ -313,7 +335,8 @@ export class ResultBusiness {
             where: {
                 studentid: user.studentid,
                 studentprogressreferenceid: lessonquiz.lessonquizid,
-                ispass: 1
+                ispass: 1,
+                ...countedpassclause()
             }
         });
         if(studentquizprogress){
@@ -344,7 +367,8 @@ export class ResultBusiness {
             where: {
                 studentid: user.studentid,
                 studentprogressreferenceid: level.levelid,
-                ispass: 1
+                ispass: 1,
+                ...countedpassclause()
             }
         });
         if(studentlevelquizprogress){
