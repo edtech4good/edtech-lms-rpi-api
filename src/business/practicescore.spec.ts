@@ -1,4 +1,6 @@
+import { Op } from "sequelize";
 import { lessonpracticequestions } from "../models/data-models/init-models";
+import { UNRENDERED_TEMPLATE_TYPES } from "../models/enums/constant.enum";
 import { practicePassResult, scorepractice } from "./practicescore";
 
 /**
@@ -37,6 +39,16 @@ describe("scorepractice (practice pass mark, 80% inclusive)", () => {
     expect(findAllSpy).toHaveBeenCalledTimes(1);
     const [options]: any = findAllSpy.mock.calls[0];
     expect(options.where).toEqual({ lessonpracticeid: PRACTICE, lessonpracticequestionstatus: true });
+    expect(options.include[0].where).toEqual({ templatetypeid: { [Op.notIn]: UNRENDERED_TEMPLATE_TYPES } });
+  });
+
+  it("a practice where one question has no tablet renderer (templatetype 9-17): an honest all-correct submission of the remaining renderable questions scores 100%", async () => {
+    // The active-question query already excludes template 9-17 (asserted
+    // above), so its result never includes the unrenderable question —
+    // simulated here by mocking the query's result to the 3 renderable ones.
+    activeQuestions(["q1", "q2", "q3"]);
+    const r = await scorepractice(PRACTICE, [correct("q1"), correct("q2"), correct("q3")]);
+    expect(r).toEqual({ marks: 3, percentage: 100, ispass: true });
   });
 
   it("4 of 5 correct is 80% and passes (inclusive)", async () => {

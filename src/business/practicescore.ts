@@ -1,5 +1,6 @@
+import { Op } from "sequelize";
 import { lessonpracticequestions } from "src/models/data-models/init-models";
-import { COMPLETED_PERCENTAGE } from "src/models/enums/constant.enum";
+import { COMPLETED_PERCENTAGE, UNRENDERED_TEMPLATE_TYPES } from "src/models/enums/constant.enum";
 
 /**
  * Score a lesson-practice attempt against the practice itself, not against
@@ -16,8 +17,13 @@ import { COMPLETED_PERCENTAGE } from "src/models/enums/constant.enum";
  *
  * Rule: distinct correct answers to this practice's active questions,
  * divided by the number of active questions (the same filter used when the
- * questions are served), capped at 100, 2 dp. Pass is COMPLETED_PERCENTAGE
- * (80), inclusive. A practice with no active questions cannot be failed.
+ * questions are served, plus the unrendered-template exclusion below),
+ * capped at 100, 2 dp. Pass is COMPLETED_PERCENTAGE (80), inclusive. A
+ * practice with no active (renderable) questions cannot be failed.
+ *
+ * A question whose templatetypeid has no tablet renderer (9-17, see
+ * UNRENDERED_TEMPLATE_TYPES) is excluded from the active set entirely: the
+ * learner never saw it, so it cannot appear in the denominator.
  */
 export interface PracticePassResult {
   marks: number;
@@ -40,6 +46,14 @@ export async function scorepractice(
   const active = await lessonpracticequestions.findAll({
     attributes: ["lessonpracticequestionid"],
     where: { lessonpracticeid, lessonpracticequestionstatus: true },
+    include: [
+      {
+        association: "question",
+        attributes: [],
+        required: true,
+        where: { templatetypeid: { [Op.notIn]: UNRENDERED_TEMPLATE_TYPES } },
+      },
+    ],
   });
   const activeids = new Set(active.map((q) => q.lessonpracticequestionid));
   const correct = new Set(

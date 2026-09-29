@@ -32,6 +32,7 @@ import { resultbaselinequestion, resultlevelquiz, resultpractice, resultquiz } f
 import { BaselineQuestionResultBody } from "./models/BaselineQuestionBody";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
 import { scorepractice } from "src/business/practicescore";
+import { scorelessonquiz, scorelevelquiz } from "src/business/quizscore";
 
 @ApiTags("Result")
 @Controller("result")
@@ -165,17 +166,19 @@ export class ResultController {
       question: undefined,
     }));
     const correct = data.filter((x) => x.iscorrect === true);
-    const passpercentage = correct ? ((correct.length * 100) / data.length).toFixed(2) : 0;
-    const { marks, userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
+    // Pass, percentage and marks are scored against this quiz's active
+    // questions (see quizscore.ts); points still come from calculateQuizScore.
+    const score = await scorelessonquiz(lessonquizid, data);
+    const { userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: +passpercentage >= 80,
-      passpercentage,
+      ispass: score.ispass,
+      passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: lessonquizid,
-      marks,
+      marks: score.marks,
       points: userpoints,
       fullpoints,
     };
@@ -237,17 +240,19 @@ export class ResultController {
       question: undefined,
     }));
     const correct = data.filter((x) => x.iscorrect === true);
-    const passpercentage = correct ? ((correct.length * 100) / data.length).toFixed(2) : 0;
-    const { marks, userpoints, fullpoints, level} = await lessonbusiness.calculateLevelQuizScore(levelid, correct);
+    // Pass, percentage and marks are scored against this level quiz's active
+    // questions (see quizscore.ts); points still come from calculateLevelQuizScore.
+    const score = await scorelevelquiz(levelid, data);
+    const { userpoints, fullpoints, level} = await lessonbusiness.calculateLevelQuizScore(levelid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: +passpercentage >= 80,
-      passpercentage,
+      ispass: score.ispass,
+      passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: levelid,
-      marks,
+      marks: score.marks,
       points: userpoints,
       fullpoints,
     };
