@@ -16,8 +16,14 @@ import { LogBusiness } from "./log.business";
 
 /**
  * workspace#79 step 2: the raw learner `answer` (studentprogressquestions.answer
- * — free-text JSON that can carry PII) must never leave this API in the
- * sync/export payloads sent to central, or in the `report/log` export zip.
+ * — free-text JSON that can carry PII) must never leave this API via
+ * `GET export/report-data` (SyncReport.getreportdata, the payload central
+ * actually pulls) or `GET export/log` (LogBusiness.exportlog, the log zip).
+ * `SyncBusiness.getreportdata`/`getstudentdata` are covered too, but that's
+ * unused-code hygiene, not a live payload: nothing in this codebase calls
+ * them (`SyncBusiness` is only ever constructed for the content-import
+ * transaction in import.controller.ts, whose methods are unrelated) — see
+ * the mirrored, actually-used code in sync.report.ts for the real route.
  * `clientiscorrect` and `servergrade` (also added by #94) are NOT privacy
  * sensitive and must still make the trip, same as `verified` on
  * studentprogress itself.
@@ -28,7 +34,8 @@ import { LogBusiness } from "./log.business";
  * `.get({ plain: true })`), rather than hard-coding an answer-free row. This
  * way, deleting the `exclude: ["answer"]` line from the business code is
  * exactly what turns this red — a mock that simply never included `answer`
- * would pass unconditionally and prove nothing.
+ * would pass unconditionally and prove nothing. No DB is opened — every
+ * Sequelize call below is a `jest.spyOn` mock, not a real query.
  */
 jest.mock("./schooluser.business");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -112,14 +119,14 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     expect(data.studentresult[0].verified).toBe(true);
   };
 
-  it("SyncReport.getreportdata() (the report/export route) strips answer", async () => {
+  it("SyncReport.getreportdata() (GET export/report-data, served to central) strips answer", async () => {
     const payload = await new SyncReport().getreportdata();
     assertPayloadIsClean(payload);
     const options = spqSpy.mock.calls[0][0];
     expect(options.attributes).toEqual({ exclude: ["answer"] });
   });
 
-  it("SyncBusiness.getreportdata() strips answer", async () => {
+  it("SyncBusiness.getreportdata() strips answer (unused-code hygiene: no caller uses this method today)", async () => {
     const payload = await new SyncBusiness(undefined as never).getreportdata();
     assertPayloadIsClean(payload);
     const options = spqSpy.mock.calls[0][0];
