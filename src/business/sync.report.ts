@@ -41,6 +41,9 @@ export class SyncReport {
       ...x.get({ plain: true }),
     }));
     const spqo = await studentprogressquestions.findAll({
+      // The raw learner `answer` never leaves this API for central or the
+      // reporting pipeline (privacy: free-text answers can contain PII).
+      attributes: { exclude: ["answer"] },
       where: {
         studentprogressid: {
           [Op.in]: sp.map((x) => x.studentprogressid),

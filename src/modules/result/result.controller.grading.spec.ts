@@ -597,3 +597,168 @@ describe("ResultController.savelessonpracticeresult: REQUIRE_GRADED_ANSWERS neve
     expect(progress.ispass).toBe(true); // ...but practice's pass is untouched
   });
 });
+
+describe("ResultController.savelessonpracticeresult shadow mode scores exactly like main did before this protocol shipped", () => {
+  let createlessonpracticeprogress: jest.Mock;
+  let findAllSpy: jest.SpyInstance;
+
+  const activeQuestionsWithJoin = (ids: string[]) =>
+    findAllSpy.mockResolvedValue(
+      ids.map((lessonpracticequestionid) => ({
+        lessonpracticequestionid,
+        question: { templatetypeid: 1, questionoptions: {}, questioncorrectvalue: undefined, questiondistractors: undefined },
+      })) as never,
+    );
+
+  const submit = (items: { iscorrect: boolean; lessonpracticequestionid: string; answer?: unknown }[]) =>
+    new ResultController().savelessonpracticeresult(
+      "lp1",
+      {
+        result: items.map((x) => ({ ...x, lessonpracticeid: "lp1", questionid: x.lessonpracticequestionid, tries: 1 })),
+        starttime: new Date(),
+        endtime: new Date(),
+      } as any,
+      { studentid: "s1", studentfirstname: "Test" } as any,
+    );
+
+  beforeEach(() => {
+    delete process.env.GRADING_MODE;
+    delete process.env.REQUIRE_GRADED_ANSWERS;
+    grading.gradeAnswer.mockReset();
+
+    createlessonpracticeprogress = jest.fn().mockResolvedValue(undefined);
+    (MockedResultBusiness.prototype as any).ispass = jest.fn().mockResolvedValue(false);
+    (MockedResultBusiness.prototype as any).createlessonpracticeprogress = createlessonpracticeprogress;
+    (MockedLessonBusiness.prototype as any).calculatePracticeScore = jest.fn().mockResolvedValue({
+      marks: 999,
+      userpoints: 40,
+      fullpoints: 40,
+      lesson: { lessonid: "l1" },
+    });
+    (MockedLessonBusiness.prototype as any).updateuserdailypoints = jest.fn().mockResolvedValue(undefined);
+
+    findAllSpy = jest.spyOn(lessonpracticequestions, "findAll");
+  });
+
+  afterEach(() => {
+    findAllSpy.mockRestore();
+    delete process.env.GRADING_MODE;
+    delete process.env.REQUIRE_GRADED_ANSWERS;
+  });
+
+  const QIDS = ["q1", "q2", "q3", "q4", "q5"];
+  // An old-format payload (no `answer` field at all): two conflicting items
+  // per question, [iscorrect:false, iscorrect:true] — this is exactly what
+  // main's scorer already dedups via "any submitted item correct"
+  // (practicescore.ts), so shadow mode (default, no grading involved at all
+  // here since there's no `answer`) MUST reproduce that: 100%, marks 5. Only
+  // enforce may restrict counting to the first item.
+  const conflictingDuplicates = () =>
+    QIDS.flatMap((id) => [
+      { iscorrect: false, lessonpracticequestionid: id },
+      { iscorrect: true, lessonpracticequestionid: id },
+    ]);
+
+  it("shadow (default): scores 100%, marks 5 — identical to main's own dedup rule", async () => {
+    activeQuestionsWithJoin(QIDS);
+    await submit(conflictingDuplicates());
+
+    const [progress] = createlessonpracticeprogress.mock.calls[0];
+    expect(progress.passpercentage).toBe(100);
+    expect(progress.marks).toBe(5);
+    expect(progress.ispass).toBe(true);
+    expect(progress.verified).toBe(false);
+  });
+
+  it("enforce: the same payload does NOT score 100% — only the first submitted item per question counts", async () => {
+    process.env.GRADING_MODE = "enforce";
+    activeQuestionsWithJoin(QIDS);
+    await submit(conflictingDuplicates());
+
+    const [progress] = createlessonpracticeprogress.mock.calls[0];
+    expect(progress.passpercentage).not.toBe(100);
+    expect(progress.passpercentage).toBe(0);
+    expect(progress.ispass).toBe(false);
+  });
+});
+
+describe("ResultController.savebaselineresult shadow mode scores exactly like main did before this protocol shipped", () => {
+  let createbaselinequestionprogress: jest.Mock;
+  let findAllSpy: jest.SpyInstance;
+
+  const activeQuestionsWithJoin = (ids: string[]) =>
+    findAllSpy.mockResolvedValue(
+      ids.map((baselinequestionid) => ({
+        baselinequestionid,
+        scorerquestion: { templatetypeid: 1, questionoptions: {}, questioncorrectvalue: undefined, questiondistractors: undefined },
+      })) as never,
+    );
+
+  const submit = (items: { iscorrect: boolean; baselinequestionid: string; answer?: unknown }[]) =>
+    new ResultController().savebaselineresult(
+      "cb1",
+      {
+        result: items.map((x) => ({ ...x, curriculumbaselineid: "cb1", questionid: x.baselinequestionid })),
+        starttime: new Date(),
+        endtime: new Date(),
+      } as any,
+      { studentid: "s1", studentfirstname: "Test" } as any,
+    );
+
+  beforeEach(() => {
+    delete process.env.GRADING_MODE;
+    delete process.env.REQUIRE_GRADED_ANSWERS;
+    grading.gradeAnswer.mockReset();
+
+    createbaselinequestionprogress = jest.fn().mockResolvedValue(undefined);
+    (MockedCurriculumBaseLineBusiness.prototype as any).calculateBaselineQuestionScore = jest.fn().mockResolvedValue({
+      marks: 999,
+      userpoints: 0,
+      fullpoints: 0,
+      baseline: { curriculumbaselineid: "cb1" },
+    });
+    (MockedResultBusiness.prototype as any).createbaselinequestionprogress = createbaselinequestionprogress;
+
+    findAllSpy = jest.spyOn(baselinequestion, "findAll");
+  });
+
+  afterEach(() => {
+    findAllSpy.mockRestore();
+    delete process.env.GRADING_MODE;
+    delete process.env.REQUIRE_GRADED_ANSWERS;
+  });
+
+  const QIDS = ["q1", "q2", "q3", "q4", "q5"];
+  // Same old-format conflicting-duplicates shape as the lesson-quiz and
+  // lesson-practice parity tests above — main's scorer (quizscore.ts's
+  // scorebaseline) dedups via "any submitted item correct", so shadow mode
+  // must reproduce that exactly; only enforce restricts counting to the
+  // first submitted item per question.
+  const conflictingDuplicates = () =>
+    QIDS.flatMap((id) => [
+      { iscorrect: false, baselinequestionid: id },
+      { iscorrect: true, baselinequestionid: id },
+    ]);
+
+  it("shadow (default): scores 100%, marks 5 — identical to main's own dedup rule", async () => {
+    activeQuestionsWithJoin(QIDS);
+    await submit(conflictingDuplicates());
+
+    const [progress] = createbaselinequestionprogress.mock.calls[0];
+    expect(progress.passpercentage).toBe(100);
+    expect(progress.marks).toBe(5);
+    expect(progress.ispass).toBe(true);
+    expect(progress.verified).toBe(false);
+  });
+
+  it("enforce: the same payload does NOT score 100% — only the first submitted item per question counts", async () => {
+    process.env.GRADING_MODE = "enforce";
+    activeQuestionsWithJoin(QIDS);
+    await submit(conflictingDuplicates());
+
+    const [progress] = createbaselinequestionprogress.mock.calls[0];
+    expect(progress.passpercentage).not.toBe(100);
+    expect(progress.passpercentage).toBe(0);
+    expect(progress.ispass).toBe(false);
+  });
+});

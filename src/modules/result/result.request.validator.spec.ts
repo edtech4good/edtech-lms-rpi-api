@@ -258,6 +258,78 @@ describe("answer: null and size caps", () => {
 });
 
 /**
+ * Guards the nested-object smuggling guard described in the schema's own
+ * comment (result.request.validator.ts): `selected`/`order`/`filled` are
+ * plain bounded strings only, never nested objects — a value like
+ * `selected: [{ x: "<huge>" }]` must not be able to dodge the 200-char
+ * string cap by wrapping the payload in an object one level down. The same
+ * guard applies to `pairs`/`entries` (string records) and to the wildcard
+ * fallback field for an as-yet-unknown key.
+ */
+describe("nested-object guard: selected/order/filled/pairs/wildcard reject an object, not just a bare string", () => {
+  const baseItem = {
+    iscorrect: true,
+    lessonquizid: Q,
+    lessonquizquestionid: Q,
+    questionid: Q,
+  };
+  const validateQuiz = (body: unknown) => {
+    const context = {
+      switchToHttp: () => ({ getRequest: () => ({ body }) }),
+    } as unknown as ExecutionContext;
+    return new SchemaValidationInterceptor(resultquiz).intercept(context, { handle: () => of(null) });
+  };
+
+  it("selected: [{x: \"…\"}] is rejected (a nested object, not a bounded string)", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "choice", selected: [{ x: "a".repeat(500) }] } }],
+      }),
+    ).toThrow();
+  });
+
+  it("order: [{x: \"…\"}] is rejected", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "order", order: [{ x: "a".repeat(500) }] } }],
+      }),
+    ).toThrow();
+  });
+
+  it("filled: [{x: \"…\"}] is rejected", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "blanks", filled: [{ x: "a".repeat(500) }] } }],
+      }),
+    ).toThrow();
+  });
+
+  it("pairs: a record whose value is a nested object (not a bounded string) is rejected", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "match", pairs: { a: { x: "a".repeat(500) } } } }],
+      }),
+    ).toThrow();
+  });
+
+  it("the wildcard fallback field for an unrecognized key rejects a nested object (not just an unbounded string)", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "text", somethingnew: { x: "a".repeat(500) } } }],
+      }),
+    ).toThrow();
+  });
+
+  it("the wildcard fallback field also rejects a nested object hidden inside an array item", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "text", somethingnew: [{ x: "a".repeat(500) }] } }],
+      }),
+    ).toThrow();
+  });
+});
+
+/**
  * Guards a real regression: `pairs`/`parts` were once schema'd as arrays
  * (`boundedArray`), but #93's `AnswerV1` defines them as records
  * (`Record<string, string>` / `Record<string, {numerator, denominator}>`).
