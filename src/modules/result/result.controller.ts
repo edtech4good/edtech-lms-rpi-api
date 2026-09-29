@@ -16,7 +16,7 @@ import {
 } from "@nestjs/swagger";
 import { LessonBusiness } from "src/business/lesson.business";
 import { ResultBusiness } from "src/business/result.business";
-import { Logger } from "src/config";
+import { Logger, gradingMode, requireGradedAnswers } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
 import { SchemaValidationInterceptor } from "src/interceptors";
@@ -31,8 +31,16 @@ import { LevelQuizResultBody } from "./models/LevelQuizResultBody";
 import { resultbaselinequestion, resultlevelquiz, resultpractice, resultquiz } from "./result.request.validator";
 import { BaselineQuestionResultBody } from "./models/BaselineQuestionBody";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
-import { scorepractice } from "src/business/practicescore";
-import { scorelessonquiz, scorelevelquiz, scorebaseline } from "src/business/quizscore";
+import { getpracticegradablequestions, scorepractice } from "src/business/practicescore";
+import {
+  getbaselinegradablequestions,
+  getlessonquizgradablequestions,
+  getlevelquizgradablequestions,
+  scorebaseline,
+  scorelessonquiz,
+  scorelevelquiz,
+} from "src/business/quizscore";
+import { gradeSubmissionItems, logGradingDisagreements } from "src/business/gradesubmission";
 
 @ApiTags("Result")
 @Controller("result")
@@ -85,11 +93,26 @@ export class ResultController {
         error: false,
       };
     }
-    const data = (result.result ?? []).map((x) => ({
+    const rawdata = (result.result ?? []).map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
+    // Server-grade each item against the practice's active questions
+    // (workspace#79 step 1b). In shadow mode (default) this only records
+    // answer/clientiscorrect/servergrade; `iscorrect` (used below for
+    // scoring) stays the client's claim. Practice's pass is never gated by
+    // REQUIRE_GRADED_ANSWERS — only quizzes, level quizzes and baseline are.
+    const practiceactivequestions = await getpracticegradablequestions(lessonpracticeid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, practiceactivequestions, "lessonpracticequestionid", mode);
+    logGradingDisagreements(
+      "lesson-practice",
+      graded.items,
+      practiceactivequestions,
+      rawdata.map((x) => x.lessonpracticequestionid),
+    );
+    const data = graded.items;
     const correct = data.filter((x) => x.iscorrect === true);
     // const lessonpractice = new LessonBusiness().getlessonpractice(lessonpracticeid);
     // Pass, percentage and marks are scored against this practice's active
@@ -107,6 +130,7 @@ export class ResultController {
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createlessonpracticeprogress(progress, lesson, user);
     Logger.info(`<${user.studentfirstname}> submits a practice <${lessonpracticeid}>`, {logaccesstype: LOGTYPE.SUBMITPRACTICE, userid: user.schooluserid});
@@ -160,27 +184,45 @@ export class ResultController {
         error: false,
       };
     }
-    const data = result.result.map((x) => ({
+    const rawdata = result.result.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
+    // Server-grade each item against the quiz's active questions
+    // (workspace#79 step 1b). In enforce mode, a gradable server grade
+    // replaces the client's `iscorrect` below for both scoring and points.
+    const quizactivequestions = await getlessonquizgradablequestions(lessonquizid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, quizactivequestions, "lessonquizquestionid", mode);
+    logGradingDisagreements(
+      "lesson-quiz",
+      graded.items,
+      quizactivequestions,
+      rawdata.map((x) => x.lessonquizquestionid),
+    );
+    const data = graded.items;
     const correct = data.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this quiz's active
     // questions (see quizscore.ts); points still come from calculateQuizScore.
     const score = await scorelessonquiz(lessonquizid, data);
+    // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
+    // count as a pass once this is on. Old-format results (no `answer` at
+    // all) are still accepted and stored — just unverified, never rejected.
+    const ispass = requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: score.ispass,
+      ispass,
       passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: lessonquizid,
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createlessonquizprogress(progress, lesson, user);
     Logger.info(`<${user.studentfirstname}> submits a quiz <${lessonquizid}>`, {logaccesstype: LOGTYPE.SUBMITQUIZ, userid: user.schooluserid});
@@ -234,27 +276,43 @@ export class ResultController {
         error: false,
       };
     }
-    const data = result.result.map((x) => ({
+    const rawdata = result.result.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
+    // Server-grade each item against the level quiz's active questions
+    // (workspace#79 step 1b) — same shadow/enforce behaviour as the lesson quiz.
+    const levelquizactivequestions = await getlevelquizgradablequestions(levelid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, levelquizactivequestions, "levelquizquestionid", mode);
+    logGradingDisagreements(
+      "level-quiz",
+      graded.items,
+      levelquizactivequestions,
+      rawdata.map((x) => x.levelquizquestionid),
+    );
+    const data = graded.items;
     const correct = data.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this level quiz's active
     // questions (see quizscore.ts); points still come from calculateLevelQuizScore.
     const score = await scorelevelquiz(levelid, data);
+    // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
+    // count as a pass once this is on.
+    const ispass = requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, level} = await lessonbusiness.calculateLevelQuizScore(levelid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: score.ispass,
+      ispass,
       passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: levelid,
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createlevelquizprogress(progress, level, user);
     Logger.info(`<${user.studentfirstname}> submits a level quiz <${levelid}>`, {logaccesstype: LOGTYPE.SUBMITLEVELQUIZ, userid: user.schooluserid});
@@ -290,28 +348,44 @@ export class ResultController {
     ): Promise<ResponseBoolean> {
     const rb = new ResultBusiness();
     const curriculumBaselineBusiness = new CurriculumBaseLineBusiness();
-    const data = result.result.map((x) => ({
+    const rawdata = result.result.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
+    // Server-grade each item against the baseline's active questions
+    // (workspace#79 step 1b) — same shadow/enforce behaviour as the quizzes.
+    const baselineactivequestions = await getbaselinegradablequestions(curriculumbaselineid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, baselineactivequestions, "baselinequestionid", mode);
+    logGradingDisagreements(
+      "baseline",
+      graded.items,
+      baselineactivequestions,
+      rawdata.map((x) => x.baselinequestionid),
+    );
+    const data = graded.items;
     const correct = data.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this baseline's active,
     // renderable questions (see quizscore.ts); points still come from
     // calculateBaselineQuestionScore (baseline carries no points today).
     const score = await scorebaseline(curriculumbaselineid, data);
+    // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
+    // count as a pass once this is on.
+    const ispass = requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, baseline} = await curriculumBaselineBusiness.calculateBaselineQuestionScore(curriculumbaselineid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: score.ispass,
+      ispass,
       passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: curriculumbaselineid,
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createbaselinequestionprogress(progress, baseline, user);
     Logger.info(`<${user.studentfirstname}> submits a baseline question <${curriculumbaselineid}>`, {logaccesstype: LOGTYPE.SUBMITLEVELQUIZ, userid: user.schooluserid});

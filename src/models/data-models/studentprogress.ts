@@ -18,13 +18,15 @@ export interface studentprogressAttributes {
   points: number;
   fullpoints: number;
   scores: number;
+  /** True only when every active, renderable question in the activity has a gradable server grade (workspace#79 step 1b). Default false; not backfilled for existing rows. */
+  verified?: boolean;
 
   totalquestions?: number;
 }
 
 export type studentprogressPk = "studentprogressid";
 export type studentprogressId = studentprogress[studentprogressPk];
-export type studentprogressOptionalAttributes = "starttime" | "endtime" | "studentprogressid";
+export type studentprogressOptionalAttributes = "starttime" | "endtime" | "studentprogressid" | "verified";
 export type studentprogressCreationAttributes = Optional<studentprogressAttributes, studentprogressOptionalAttributes>;
 
 export class studentprogress extends Model<studentprogressAttributes, studentprogressCreationAttributes> implements studentprogressAttributes {
@@ -40,6 +42,7 @@ export class studentprogress extends Model<studentprogressAttributes, studentpro
   points!: number;
   fullpoints!: number;
   scores!: number;
+  verified?: boolean;
 
   totalquestions?: number;
 
@@ -114,6 +117,11 @@ export class studentprogress extends Model<studentprogressAttributes, studentpro
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
       defaultValue: null,
+    },
+    verified: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
   }, {
     sequelize,

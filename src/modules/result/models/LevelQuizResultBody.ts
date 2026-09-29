@@ -9,6 +9,8 @@ export class LevelQuizResult {
     levelquizquestionid: string = "";
     @ApiProperty()
     questionid: number = 0;
+    @ApiProperty({ required: false, description: "Optional AnswerV1 payload (src/business/grading) for server-side grading; omitted by old clients." })
+    answer?: unknown;
 }
 export class LevelQuizResultBody {
     @ApiProperty({ type: [LevelQuizResult]})

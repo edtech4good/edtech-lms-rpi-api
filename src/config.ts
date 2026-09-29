@@ -133,3 +133,38 @@ const buildLogger = (): winston.Logger => {
 const Logger = buildLogger();
 export { Logger, Config };
 
+/**
+ * Grading protocol settings (workspace#79 step 1b). Read directly from
+ * process.env at call time (per request), like RPI_OFFLINE above but not
+ * folded into the static `Config` object: these two are meant to be
+ * flippable (env changed, process restarted, or overridden in tests) without
+ * touching FORTYKAPIRPICONFIG or its schema.
+ *
+ * GRADING_MODE:
+ *  - "shadow" (default, any value other than exactly "enforce"): scoring
+ *    keeps using the client's claimed `iscorrect` exactly as before; server
+ *    grades are computed and stored for later comparison only.
+ *  - "enforce": where a gradable server grade exists for a submitted item,
+ *    it replaces the client's `iscorrect` for scoring (marks, percentage,
+ *    pass and points). An ungradable item keeps the client's flag, and the
+ *    row is unverified regardless.
+ */
+export type GradingMode = "shadow" | "enforce";
+
+export function gradingMode(): GradingMode {
+  return process.env.GRADING_MODE === "enforce" ? "enforce" : "shadow";
+}
+
+/**
+ * REQUIRE_GRADED_ANSWERS (default off/false): when true, an unverified
+ * result (see studentprogress.verified) cannot count as a pass (`ispass`
+ * forced false) for quizzes, level quizzes and baseline. Practice is never
+ * affected. Old-format results with no `answer` at all are still accepted
+ * and stored (verified=false) — never rejected — per workspace#79 decision 1.
+ *
+ * Strict comparison, like RPI_OFFLINE: only exactly "true" or "1" turn it on.
+ */
+export function requireGradedAnswers(): boolean {
+  return process.env.REQUIRE_GRADED_ANSWERS === "true" || process.env.REQUIRE_GRADED_ANSWERS === "1";
+}
+

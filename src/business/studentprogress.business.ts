@@ -36,6 +36,12 @@ export class StudentProgressBusiness {
     stps: studentprogressAttributes[],
     transaction: Transaction
   ) => {
+    // `verified` (workspace#79 step 1b) is deliberately absent from both the
+    // inserted columns and updateOnDuplicate: central/Pi-imported rows carry
+    // no server-graded answers here, so they get the column default (false)
+    // on insert and are left untouched on a re-import, same as any other
+    // legacy row. If central ever starts sending its own server grades
+    // (step 2, not this PR), this is where that would need to change.
     await studentprogress.bulkCreate(stps, {
       transaction,
       updateOnDuplicate: [
