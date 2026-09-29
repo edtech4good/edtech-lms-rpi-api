@@ -104,6 +104,7 @@ import { lessonplans } from "./lessonplan";
 import { subjects } from "./subjects";
 
 export {
+  baselinequestion,
   curriculumbaseline,
   curriculums,
   documents,
@@ -302,6 +303,19 @@ export function initModels(sequelize: Sequelize) {
   });
   questions.hasMany(levelquizquestions, {
     as: "levelquizquestions",
+    foreignKey: "questionid",
+  });
+  // Distinct aliases ("scorerquestion"/"scorerbaselinequestions") rather than
+  // the "question"/"baselinequestions" convention used above: question.business.ts's
+  // getbaselinequestions() re-registers baselinequestion<->questions associations
+  // on every call with Sequelize's DEFAULT alias ("question"), which would
+  // otherwise silently replace whichever association was registered here first.
+  baselinequestion.belongsTo(questions, {
+    as: "scorerquestion",
+    foreignKey: "questionid",
+  });
+  questions.hasMany(baselinequestion, {
+    as: "scorerbaselinequestions",
     foreignKey: "questionid",
   });
   students.belongsTo(schoolusers, {
