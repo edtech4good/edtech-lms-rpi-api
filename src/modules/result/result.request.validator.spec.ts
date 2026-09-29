@@ -53,7 +53,7 @@ describe("resultpractice validator", () => {
 });
 
 /**
- * workspace#79 step 1b: each item may carry an optional `answer` object.
+ * the server-grading protocol: each item may carry an optional `answer` object.
  * The joi schema here only checks the AnswerV1 envelope (`v`, `type`) —
  * detailed per-template validation is isAnswerV1 in src/business/grading.
  *
@@ -63,7 +63,7 @@ describe("resultpractice validator", () => {
  * still reject a genuinely unknown key, so a typo or a future protocol
  * change is caught rather than silently ignored.
  */
-describe("answer field (workspace#79 step 1b)", () => {
+describe("answer field (the server-grading protocol)", () => {
   const baseItem = {
     iscorrect: true,
     lessonpracticeid: Q,
@@ -177,5 +177,81 @@ describe("resultquiz / resultlevelquiz / resultbaselinequestion accept the same 
         ],
       }),
     ).not.toThrow();
+  });
+});
+
+describe("answer: null and size caps", () => {
+  const baseItem = {
+    iscorrect: true,
+    lessonquizid: Q,
+    lessonquizquestionid: Q,
+    questionid: Q,
+  };
+  const validateQuiz = (body: unknown) => {
+    const context = {
+      switchToHttp: () => ({ getRequest: () => ({ body }) }),
+    } as unknown as ExecutionContext;
+    return new SchemaValidationInterceptor(resultquiz).intercept(context, { handle: () => of(null) });
+  };
+
+  it("answer: null is accepted, not a 400 (treated as absent)", () => {
+    expect(() => validateQuiz({ result: [{ ...baseItem, answer: null }] })).not.toThrow();
+  });
+
+  it("a string field over 200 characters is rejected", () => {
+    expect(() =>
+      validateQuiz({ result: [{ ...baseItem, answer: { v: 1, type: "text", value: "a".repeat(201) } }] }),
+    ).toThrow();
+  });
+
+  it("a string field at exactly 200 characters is accepted", () => {
+    expect(() =>
+      validateQuiz({ result: [{ ...baseItem, answer: { v: 1, type: "text", value: "a".repeat(200) } }] }),
+    ).not.toThrow();
+  });
+
+  it("an array field (selected) over 50 entries is rejected — guards a multi-megabyte answer payload", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "choice", selected: Array(51).fill("a") } }],
+      }),
+    ).toThrow();
+  });
+
+  it("an array field at exactly 50 entries is accepted", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "choice", selected: Array(50).fill("a") } }],
+      }),
+    ).not.toThrow();
+  });
+
+  it("a record field (counts) over 50 keys is rejected", () => {
+    const counts: Record<string, number> = {};
+    for (let i = 0; i < 51; i++) counts[`k${i}`] = i;
+    expect(() => validateQuiz({ result: [{ ...baseItem, answer: { v: 1, type: "counts", counts } }] })).toThrow();
+  });
+
+  it("an unknown field not in the explicit list is still bounded by the wildcard pattern", () => {
+    expect(() =>
+      validateQuiz({
+        result: [{ ...baseItem, answer: { v: 1, type: "text", somethingnew: "x".repeat(201) } }],
+      }),
+    ).toThrow();
+  });
+
+  it("a result array over 200 items is rejected", () => {
+    const items = Array.from({ length: 201 }, () => ({ ...baseItem }));
+    expect(() => validateQuiz({ result: items })).toThrow();
+  });
+
+  it("a result array at exactly 200 items is accepted", () => {
+    const items = Array.from({ length: 200 }, () => ({ ...baseItem }));
+    expect(() => validateQuiz({ result: items })).not.toThrow();
+  });
+
+  it("a huge single answer string (millions of characters, as a real attack would try) is rejected, not merely slow", () => {
+    const huge = { v: 1, type: "text", value: "េ".repeat(5_000_000) };
+    expect(() => validateQuiz({ result: [{ ...baseItem, answer: huge }] })).toThrow();
   });
 });

@@ -20,7 +20,7 @@ import { QuestionForGrading } from "./grading";
  * NOT a pass: it returns { marks: 0, percentage: 0, ispass: false }. A pass
  * is sticky (ResultBusiness.ispass short-circuits every later submission to
  * that activity) and feeds activity "done" state, calculatescore,
- * level_quiz_scores, reports and — per workspace#79 decision 2 — quiz
+ * level_quiz_scores, reports and — per the certificate design decision — quiz
  * certificates, so an empty POST to a quiz built only of unrenderable
  * questions (or with nothing active) must never silently pass. Practice
  * keeps its own convention (0 active questions passes at 100): practice

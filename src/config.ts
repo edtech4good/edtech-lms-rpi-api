@@ -134,7 +134,7 @@ const Logger = buildLogger();
 export { Logger, Config };
 
 /**
- * Grading protocol settings (workspace#79 step 1b). Read directly from
+ * Grading protocol settings. Read directly from
  * process.env at call time (per request), like RPI_OFFLINE above but not
  * folded into the static `Config` object: these two are meant to be
  * flippable (env changed, process restarted, or overridden in tests) without
@@ -160,7 +160,7 @@ export function gradingMode(): GradingMode {
  * result (see studentprogress.verified) cannot count as a pass (`ispass`
  * forced false) for quizzes, level quizzes and baseline. Practice is never
  * affected. Old-format results with no `answer` at all are still accepted
- * and stored (verified=false) — never rejected — per workspace#79 decision 1.
+ * and stored (verified=false) — never rejected — per the old-client acceptance decision.
  *
  * Strict comparison, like RPI_OFFLINE: only exactly "true" or "1" turn it on.
  */

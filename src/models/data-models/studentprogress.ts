@@ -18,7 +18,7 @@ export interface studentprogressAttributes {
   points: number;
   fullpoints: number;
   scores: number;
-  /** True only when every active, renderable question in the activity has a gradable server grade (workspace#79 step 1b). Default false; not backfilled for existing rows. */
+  /** True only when every active, renderable question in the activity has a gradable server grade (the server-grading protocol). Default false; not backfilled for existing rows. */
   verified?: boolean;
 
   totalquestions?: number;

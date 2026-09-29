@@ -1,7 +1,7 @@
 import { QuestionForGrading } from "./grading";
 
 /**
- * Guards gradeSubmissionItems (workspace#79 step 1b): storage of
+ * Guards gradeSubmissionItems (the server-grading protocol): storage of
  * answer/clientiscorrect/servergrade, the shadow-vs-enforce scoring switch,
  * and the "verified iff every active question got a gradable server grade"
  * rule.
@@ -69,7 +69,10 @@ describe("gradeSubmissionItems", () => {
     expect(r.items[0].clientiscorrect).toBe(false);
     // shadow: scoring (iscorrect) still follows the client's claim
     expect(r.items[0].iscorrect).toBe(false);
-    expect(r.verified).toBe(true);
+    // "verified" means "this was actually scored by the server" — shadow
+    // mode never scores from the server by definition, so it can never be
+    // true here even though a real, gradable server grade was recorded.
+    expect(r.verified).toBe(false);
   });
 
   it("gradable and correct: enforce mode overrides a forged client claim for scoring", () => {
@@ -114,23 +117,38 @@ describe("gradeSubmissionItems", () => {
     expect(r.verified).toBe(false);
   });
 
-  it("verified is true only when EVERY active question has a gradable grade, not just some", () => {
+  it("verified is true only when EVERY active question has a gradable grade, not just some (enforce)", () => {
     grading.gradeAnswer.mockReturnValue({ gradable: true, correct: true });
     const active = activeQuestions([Q1, Q2]);
     const r = gradeSubmissionItems(
       [{ iscorrect: true, lessonquizquestionid: Q1, answer: { v: 1, type: "choice" } }],
       active,
       "lessonquizquestionid",
-      "shadow",
+      "enforce",
     );
     // Q2 was never submitted at all
     expect(r.verified).toBe(false);
   });
 
-  it("verified is true (vacuously) when there are no active questions", () => {
+  it("verified is true (vacuously) when there are no active questions, but only in enforce", () => {
     const active = activeQuestions([]);
-    const r = gradeSubmissionItems([], active, "lessonquizquestionid", "shadow");
-    expect(r.verified).toBe(true);
+    expect(gradeSubmissionItems([], active, "lessonquizquestionid", "enforce").verified).toBe(true);
+    expect(gradeSubmissionItems([], active, "lessonquizquestionid", "shadow").verified).toBe(false);
+  });
+
+  it("shadow mode is never verified, even when every active question was fully gradable", () => {
+    grading.gradeAnswer.mockReturnValue({ gradable: true, correct: true });
+    const active = activeQuestions([Q1, Q2]);
+    const r = gradeSubmissionItems(
+      [
+        { iscorrect: true, lessonquizquestionid: Q1, answer: { v: 1, type: "choice" } },
+        { iscorrect: true, lessonquizquestionid: Q2, answer: { v: 1, type: "choice" } },
+      ],
+      active,
+      "lessonquizquestionid",
+      "shadow",
+    );
+    expect(r.verified).toBe(false);
   });
 
   it("a malformed answer (fails isAnswerV1) is treated as ungradable, not passed to gradeAnswer", () => {

@@ -36,13 +36,19 @@ export class StudentProgressBusiness {
     stps: studentprogressAttributes[],
     transaction: Transaction
   ) => {
-    // `verified` (workspace#79 step 1b) is deliberately absent from both the
-    // inserted columns and updateOnDuplicate: central/Pi-imported rows carry
-    // no server-graded answers here, so they get the column default (false)
-    // on insert and are left untouched on a re-import, same as any other
-    // legacy row. If central ever starts sending its own server grades
-    // (step 2, not this PR), this is where that would need to change.
-    await studentprogress.bulkCreate(stps, {
+    // `verified` must never come from an import. Central has no server
+    // grading of its own yet (that's step 2, separate from this work) and
+    // this route accepts payloads assembled elsewhere (central, another Pi),
+    // so it cannot be trusted to have left `verified` out — and
+    // bulkCreate(stps, ...) with no `fields` list inserts *every* attribute
+    // present on each object, `verified` included, exactly as given. Leaving
+    // this to "the column default" (as an earlier version of this comment
+    // claimed) is only true when the field is truly absent; forcing it here
+    // is the only way to guarantee an imported row can never arrive
+    // pre-verified. It's left out of updateOnDuplicate too, so a re-import
+    // can't flip an already-imported row's `verified` either.
+    const stpsuntrusted = stps.map((stp) => ({ ...stp, verified: false }));
+    await studentprogress.bulkCreate(stpsuntrusted, {
       transaction,
       updateOnDuplicate: [
         "studentid",

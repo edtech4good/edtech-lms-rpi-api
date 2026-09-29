@@ -10,7 +10,7 @@ export interface studentprogressquestionsAttributes {
   tries?: number;
   iscorrect: number;
   referencequestionid: string;
-  /** The raw AnswerV1 payload the client submitted, or null (workspace#79 step 1b). */
+  /** The raw AnswerV1 payload the client submitted, or null (the server-grading protocol). */
   answer?: object | null;
   /** The client's own claimed verdict, preserved regardless of GRADING_MODE. */
   clientiscorrect?: boolean | null;

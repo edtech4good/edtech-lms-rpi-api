@@ -99,7 +99,7 @@ export class ResultController {
       question: undefined,
     }));
     // Server-grade each item against the practice's active questions
-    // (workspace#79 step 1b). In shadow mode (default) this only records
+    // (the server-grading protocol). In shadow mode (default) this only records
     // answer/clientiscorrect/servergrade; `iscorrect` (used below for
     // scoring) stays the client's claim. Practice's pass is never gated by
     // REQUIRE_GRADED_ANSWERS — only quizzes, level quizzes and baseline are.
@@ -113,11 +113,15 @@ export class ResultController {
       rawdata.map((x) => x.lessonpracticequestionid),
     );
     const data = graded.items;
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Only the first submitted item per active question feeds scoring and
+    // points — a duplicate item (stored above regardless) can never inflate
+    // a question already counted from its first, honestly-submitted answer.
+    const scoringdata = graded.scoringItems;
+    const correct = scoringdata.filter((x) => x.iscorrect === true);
     // const lessonpractice = new LessonBusiness().getlessonpractice(lessonpracticeid);
     // Pass, percentage and marks are scored against this practice's active
     // questions (see practicescore.ts); points still come from calculatePracticeScore.
-    const score = await scorepractice(lessonpracticeid, data);
+    const score = await scorepractice(lessonpracticeid, scoringdata);
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculatePracticeScore(lessonpracticeid, correct);
     const progress = {
       studentid: user.studentid,
@@ -190,7 +194,7 @@ export class ResultController {
       question: undefined,
     }));
     // Server-grade each item against the quiz's active questions
-    // (workspace#79 step 1b). In enforce mode, a gradable server grade
+    // (the server-grading protocol). In enforce mode, a gradable server grade
     // replaces the client's `iscorrect` below for both scoring and points.
     const quizactivequestions = await getlessonquizgradablequestions(lessonquizid);
     const mode = gradingMode();
@@ -202,14 +206,21 @@ export class ResultController {
       rawdata.map((x) => x.lessonquizquestionid),
     );
     const data = graded.items;
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Only the first submitted item per active question feeds scoring and
+    // points — a duplicate item (stored above regardless) can never inflate
+    // a question already counted from its first, honestly-submitted answer.
+    const scoringdata = graded.scoringItems;
+    const correct = scoringdata.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this quiz's active
     // questions (see quizscore.ts); points still come from calculateQuizScore.
-    const score = await scorelessonquiz(lessonquizid, data);
+    const score = await scorelessonquiz(lessonquizid, scoringdata);
     // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
     // count as a pass once this is on. Old-format results (no `answer` at
     // all) are still accepted and stored — just unverified, never rejected.
-    const ispass = requireGradedAnswers() && !graded.verified ? false : score.ispass;
+    // Only meaningful in enforce mode: `verified` is false by definition in
+    // shadow (shadow never scores from the server), so gating on it there
+    // would force every shadow-mode result to fail regardless of this flag.
+    const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
     const progress = {
       studentid: user.studentid,
@@ -282,7 +293,7 @@ export class ResultController {
       question: undefined,
     }));
     // Server-grade each item against the level quiz's active questions
-    // (workspace#79 step 1b) — same shadow/enforce behaviour as the lesson quiz.
+    // (the server-grading protocol) — same shadow/enforce behaviour as the lesson quiz.
     const levelquizactivequestions = await getlevelquizgradablequestions(levelid);
     const mode = gradingMode();
     const graded = gradeSubmissionItems(rawdata, levelquizactivequestions, "levelquizquestionid", mode);
@@ -293,13 +304,18 @@ export class ResultController {
       rawdata.map((x) => x.levelquizquestionid),
     );
     const data = graded.items;
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Only the first submitted item per active question feeds scoring and
+    // points — a duplicate item (stored above regardless) can never inflate
+    // a question already counted from its first, honestly-submitted answer.
+    const scoringdata = graded.scoringItems;
+    const correct = scoringdata.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this level quiz's active
     // questions (see quizscore.ts); points still come from calculateLevelQuizScore.
-    const score = await scorelevelquiz(levelid, data);
+    const score = await scorelevelquiz(levelid, scoringdata);
     // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
-    // count as a pass once this is on.
-    const ispass = requireGradedAnswers() && !graded.verified ? false : score.ispass;
+    // count as a pass once this is on. Only meaningful in enforce (see the
+    // lesson-quiz route above for why shadow must not be gated on it).
+    const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, level} = await lessonbusiness.calculateLevelQuizScore(levelid, correct);
     const progress = {
       studentid: user.studentid,
@@ -354,7 +370,7 @@ export class ResultController {
       question: undefined,
     }));
     // Server-grade each item against the baseline's active questions
-    // (workspace#79 step 1b) — same shadow/enforce behaviour as the quizzes.
+    // (the server-grading protocol) — same shadow/enforce behaviour as the quizzes.
     const baselineactivequestions = await getbaselinegradablequestions(curriculumbaselineid);
     const mode = gradingMode();
     const graded = gradeSubmissionItems(rawdata, baselineactivequestions, "baselinequestionid", mode);
@@ -365,14 +381,19 @@ export class ResultController {
       rawdata.map((x) => x.baselinequestionid),
     );
     const data = graded.items;
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Only the first submitted item per active question feeds scoring and
+    // points — a duplicate item (stored above regardless) can never inflate
+    // a question already counted from its first, honestly-submitted answer.
+    const scoringdata = graded.scoringItems;
+    const correct = scoringdata.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this baseline's active,
     // renderable questions (see quizscore.ts); points still come from
     // calculateBaselineQuestionScore (baseline carries no points today).
-    const score = await scorebaseline(curriculumbaselineid, data);
+    const score = await scorebaseline(curriculumbaselineid, scoringdata);
     // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
-    // count as a pass once this is on.
-    const ispass = requireGradedAnswers() && !graded.verified ? false : score.ispass;
+    // count as a pass once this is on. Only meaningful in enforce (see the
+    // lesson-quiz route above for why shadow must not be gated on it).
+    const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, baseline} = await curriculumBaselineBusiness.calculateBaselineQuestionScore(curriculumbaselineid, correct);
     const progress = {
       studentid: user.studentid,

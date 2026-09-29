@@ -1,6 +1,6 @@
 /**
  * STUB — replaced whole-cloth when the parallel step 1a PR
- * (`feat/grading-library`, refs workspace#79) merges its real
+ * (`feat/grading-library`) merges its real
  * `src/business/grading/index.ts`.
  *
  * Until then, every question is reported as gradable: false, so shadow mode

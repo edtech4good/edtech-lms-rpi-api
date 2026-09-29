@@ -2,7 +2,7 @@ import { QueryInterface, DataTypes, Transaction } from "sequelize";
 import { addColumnIfMissing } from "../migration-helpers";
 
 /**
- * workspace#79 step 1b: storage for the server-grading protocol.
+ * Storage for the server-grading protocol.
  *
  * studentprogressquestions gets three new columns per submitted item:
  *  - answer: the raw AnswerV1 JSON the client sent (null if it sent none —

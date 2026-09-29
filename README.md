@@ -23,7 +23,7 @@ Students log in with `POST /auth/login`. One access token per user: a second log
 
 ### Server-grading protocol
 
-Practice, lesson-quiz, level-quiz and baseline submissions may carry an optional `answer: {v: 1, type, ...}` per item (workspace#79). The server grades it against the question (`src/business/grading`) and stores the raw answer, the client's own claimed verdict (`clientiscorrect`) and the server's grade (`servergrade`) alongside the existing `iscorrect`. A submission is `verified` only when every active, renderable question in the activity got a gradable server grade. A submission with no `answer` fields at all (an old client) is always accepted and stored unverified — never rejected.
+Practice, lesson-quiz, level-quiz and baseline submissions may carry an optional `answer: {v: 1, type, ...}` per item. The server grades it against the question (`src/business/grading`) and stores the raw answer, the client's own claimed verdict (`clientiscorrect`) and the server's grade (`servergrade`) alongside the existing `iscorrect`. A submission is `verified` only when every active, renderable question in the activity got a gradable server grade. A submission with no `answer` fields at all (an old client) is always accepted and stored unverified — never rejected.
 
 Two env vars control behaviour, both optional and off by default:
 
