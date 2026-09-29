@@ -2,17 +2,25 @@ import * as Sequelize from 'sequelize';
 import { DataTypes, Model, Optional } from 'sequelize';
 import type { studentprogress, studentprogressId } from './studentprogress';
 
+export type studentprogressquestionsServerGrade = "correct" | "incorrect" | "ungradable";
+
 export interface studentprogressquestionsAttributes {
   studentprogressid: string;
   studentprogressquestionid: string;
   tries?: number;
   iscorrect: number;
   referencequestionid: string;
+  /** The raw AnswerV1 payload the client submitted, or null (the server-grading protocol). */
+  answer?: object | null;
+  /** The client's own claimed verdict, preserved regardless of GRADING_MODE. */
+  clientiscorrect?: boolean | null;
+  /** Server grade for this item, null only when there was no active question to grade against. */
+  servergrade?: studentprogressquestionsServerGrade | null;
 }
 
 export type studentprogressquestionsPk = "studentprogressquestionid";
 export type studentprogressquestionsId = studentprogressquestions[studentprogressquestionsPk];
-export type studentprogressquestionsOptionalAttributes = "studentprogressquestionid" | "tries" | "iscorrect";
+export type studentprogressquestionsOptionalAttributes = "studentprogressquestionid" | "tries" | "iscorrect" | "answer" | "clientiscorrect" | "servergrade";
 export type studentprogressquestionsCreationAttributes = Optional<studentprogressquestionsAttributes, studentprogressquestionsOptionalAttributes>;
 
 export class studentprogressquestions extends Model<studentprogressquestionsAttributes, studentprogressquestionsCreationAttributes> implements studentprogressquestionsAttributes {
@@ -21,6 +29,9 @@ export class studentprogressquestions extends Model<studentprogressquestionsAttr
   tries?: number;
   iscorrect!: number;
   referencequestionid!: string;
+  answer?: object | null;
+  clientiscorrect?: boolean | null;
+  servergrade?: studentprogressquestionsServerGrade | null;
 
   // studentprogressquestions belongsTo studentprogress via studentprogressid
   studentprogress!: studentprogress;
@@ -56,6 +67,21 @@ export class studentprogressquestions extends Model<studentprogressquestionsAttr
     referencequestionid: {
       type: DataTypes.STRING(36),
       allowNull: false
+    },
+    answer: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: null
+    },
+    clientiscorrect: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+      defaultValue: null
+    },
+    servergrade: {
+      type: DataTypes.ENUM("correct", "incorrect", "ungradable"),
+      allowNull: true,
+      defaultValue: null
     }
   }, {
     sequelize,

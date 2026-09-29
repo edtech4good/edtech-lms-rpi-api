@@ -4,7 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
-import { Config, Logger, isLocalDev } from './config';
+import { Config, Logger, gradingMode, isLocalDev, requireGradedAnswers } from './config';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { initModels, setuprelationshipforreport } from './models/data-models/init-models';
 import { dbinstance } from "./services/dbservice"
@@ -19,6 +19,10 @@ async function bootstrap() {
 */
 
   Logger.info('Connected to DB');
+  // Both flippable without a code change (env only) and each changes what a
+  // submitted result actually scores as — worth a line at boot so a
+  // surprising pass rate can be checked against this before anything else.
+  Logger.info(`Grading protocol: GRADING_MODE=${gradingMode()}, REQUIRE_GRADED_ANSWERS=${requireGradedAnswers()}`);
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   // Trust proxy is a DEPLOYMENT fact, not a code default. Set TRUST_PROXY=1 only
   // where a reverse proxy (Caddy on UAT/prod) is the sole route in — it is what

@@ -16,7 +16,7 @@ import {
 } from "@nestjs/swagger";
 import { LessonBusiness } from "src/business/lesson.business";
 import { ResultBusiness } from "src/business/result.business";
-import { Logger } from "src/config";
+import { Logger, gradingMode, requireGradedAnswers } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
 import { SchemaValidationInterceptor } from "src/interceptors";
@@ -31,8 +31,16 @@ import { LevelQuizResultBody } from "./models/LevelQuizResultBody";
 import { resultbaselinequestion, resultlevelquiz, resultpractice, resultquiz } from "./result.request.validator";
 import { BaselineQuestionResultBody } from "./models/BaselineQuestionBody";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
-import { scorepractice } from "src/business/practicescore";
-import { scorelessonquiz, scorelevelquiz, scorebaseline } from "src/business/quizscore";
+import { getpracticegradablequestions, scorepractice } from "src/business/practicescore";
+import {
+  getbaselinegradablequestions,
+  getlessonquizgradablequestions,
+  getlevelquizgradablequestions,
+  scorebaseline,
+  scorelessonquiz,
+  scorelevelquiz,
+} from "src/business/quizscore";
+import { gradeSubmissionItems, logGradingDisagreements } from "src/business/gradesubmission";
 
 @ApiTags("Result")
 @Controller("result")
@@ -85,16 +93,41 @@ export class ResultController {
         error: false,
       };
     }
-    const data = (result.result ?? []).map((x) => ({
+    const rawdata = (result.result ?? []).map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Server-grade each item against the practice's active questions
+    // (the server-grading protocol). In shadow mode (default) this only records
+    // answer/clientiscorrect/servergrade; `iscorrect` (used below for
+    // scoring) stays the client's claim. Practice's pass is never gated by
+    // REQUIRE_GRADED_ANSWERS — only quizzes, level quizzes and baseline are.
+    const practiceactivequestions = await getpracticegradablequestions(lessonpracticeid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, practiceactivequestions, "lessonpracticequestionid", mode);
+    logGradingDisagreements(
+      "lesson-practice",
+      graded.items,
+      practiceactivequestions,
+      rawdata.map((x) => x.lessonpracticequestionid),
+    );
+    const data = graded.items;
+    // Shadow mode must score EXACTLY like main did before this protocol
+    // shipped: every submitted item goes to the scorer, which does its own
+    // active-id filter and "any item correct" dedup, same as always. Only
+    // in enforce does a duplicate item become dangerous (a bare or
+    // malformed claim riding along with a real, server-graded-wrong
+    // answer) — so only enforce restricts scoring to the first submitted
+    // item per active question (`scoringItems`). `verified` and the
+    // REQUIRE_GRADED_ANSWERS gate are already enforce-only, for the same
+    // reason.
+    const scoringinput = mode === "enforce" ? graded.scoringItems : data;
+    const correct = scoringinput.filter((x) => x.iscorrect === true);
     // const lessonpractice = new LessonBusiness().getlessonpractice(lessonpracticeid);
     // Pass, percentage and marks are scored against this practice's active
     // questions (see practicescore.ts); points still come from calculatePracticeScore.
-    const score = await scorepractice(lessonpracticeid, data);
+    const score = await scorepractice(lessonpracticeid, scoringinput);
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculatePracticeScore(lessonpracticeid, correct);
     const progress = {
       studentid: user.studentid,
@@ -107,6 +140,7 @@ export class ResultController {
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createlessonpracticeprogress(progress, lesson, user);
     Logger.info(`<${user.studentfirstname}> submits a practice <${lessonpracticeid}>`, {logaccesstype: LOGTYPE.SUBMITPRACTICE, userid: user.schooluserid});
@@ -160,27 +194,53 @@ export class ResultController {
         error: false,
       };
     }
-    const data = result.result.map((x) => ({
+    const rawdata = result.result.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Server-grade each item against the quiz's active questions
+    // (the server-grading protocol). In enforce mode, a gradable server grade
+    // replaces the client's `iscorrect` below for both scoring and points.
+    const quizactivequestions = await getlessonquizgradablequestions(lessonquizid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, quizactivequestions, "lessonquizquestionid", mode);
+    logGradingDisagreements(
+      "lesson-quiz",
+      graded.items,
+      quizactivequestions,
+      rawdata.map((x) => x.lessonquizquestionid),
+    );
+    const data = graded.items;
+    // Shadow mode must score EXACTLY like main did before this protocol
+    // shipped (see the lesson-practice route above for the full reasoning):
+    // only enforce restricts scoring to the first submitted item per active
+    // question.
+    const scoringinput = mode === "enforce" ? graded.scoringItems : data;
+    const correct = scoringinput.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this quiz's active
     // questions (see quizscore.ts); points still come from calculateQuizScore.
-    const score = await scorelessonquiz(lessonquizid, data);
+    const score = await scorelessonquiz(lessonquizid, scoringinput);
+    // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
+    // count as a pass once this is on. Old-format results (no `answer` at
+    // all) are still accepted and stored — just unverified, never rejected.
+    // Only meaningful in enforce mode: `verified` is false by definition in
+    // shadow (shadow never scores from the server), so gating on it there
+    // would force every shadow-mode result to fail regardless of this flag.
+    const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: score.ispass,
+      ispass,
       passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: lessonquizid,
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createlessonquizprogress(progress, lesson, user);
     Logger.info(`<${user.studentfirstname}> submits a quiz <${lessonquizid}>`, {logaccesstype: LOGTYPE.SUBMITQUIZ, userid: user.schooluserid});
@@ -234,27 +294,49 @@ export class ResultController {
         error: false,
       };
     }
-    const data = result.result.map((x) => ({
+    const rawdata = result.result.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Server-grade each item against the level quiz's active questions
+    // (the server-grading protocol) — same shadow/enforce behaviour as the lesson quiz.
+    const levelquizactivequestions = await getlevelquizgradablequestions(levelid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, levelquizactivequestions, "levelquizquestionid", mode);
+    logGradingDisagreements(
+      "level-quiz",
+      graded.items,
+      levelquizactivequestions,
+      rawdata.map((x) => x.levelquizquestionid),
+    );
+    const data = graded.items;
+    // Shadow mode must score EXACTLY like main did before this protocol
+    // shipped (see the lesson-practice route above for the full reasoning):
+    // only enforce restricts scoring to the first submitted item per active
+    // question.
+    const scoringinput = mode === "enforce" ? graded.scoringItems : data;
+    const correct = scoringinput.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this level quiz's active
     // questions (see quizscore.ts); points still come from calculateLevelQuizScore.
-    const score = await scorelevelquiz(levelid, data);
+    const score = await scorelevelquiz(levelid, scoringinput);
+    // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
+    // count as a pass once this is on. Only meaningful in enforce (see the
+    // lesson-quiz route above for why shadow must not be gated on it).
+    const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, level} = await lessonbusiness.calculateLevelQuizScore(levelid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: score.ispass,
+      ispass,
       passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: levelid,
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createlevelquizprogress(progress, level, user);
     Logger.info(`<${user.studentfirstname}> submits a level quiz <${levelid}>`, {logaccesstype: LOGTYPE.SUBMITLEVELQUIZ, userid: user.schooluserid});
@@ -290,28 +372,50 @@ export class ResultController {
     ): Promise<ResponseBoolean> {
     const rb = new ResultBusiness();
     const curriculumBaselineBusiness = new CurriculumBaseLineBusiness();
-    const data = result.result.map((x) => ({
+    const rawdata = result.result.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
     }));
-    const correct = data.filter((x) => x.iscorrect === true);
+    // Server-grade each item against the baseline's active questions
+    // (the server-grading protocol) — same shadow/enforce behaviour as the quizzes.
+    const baselineactivequestions = await getbaselinegradablequestions(curriculumbaselineid);
+    const mode = gradingMode();
+    const graded = gradeSubmissionItems(rawdata, baselineactivequestions, "baselinequestionid", mode);
+    logGradingDisagreements(
+      "baseline",
+      graded.items,
+      baselineactivequestions,
+      rawdata.map((x) => x.baselinequestionid),
+    );
+    const data = graded.items;
+    // Shadow mode must score EXACTLY like main did before this protocol
+    // shipped (see the lesson-practice route above for the full reasoning):
+    // only enforce restricts scoring to the first submitted item per active
+    // question.
+    const scoringinput = mode === "enforce" ? graded.scoringItems : data;
+    const correct = scoringinput.filter((x) => x.iscorrect === true);
     // Pass, percentage and marks are scored against this baseline's active,
     // renderable questions (see quizscore.ts); points still come from
     // calculateBaselineQuestionScore (baseline carries no points today).
-    const score = await scorebaseline(curriculumbaselineid, data);
+    const score = await scorebaseline(curriculumbaselineid, scoringinput);
+    // REQUIRE_GRADED_ANSWERS (default off): an unverified result can never
+    // count as a pass once this is on. Only meaningful in enforce (see the
+    // lesson-quiz route above for why shadow must not be gated on it).
+    const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, baseline} = await curriculumBaselineBusiness.calculateBaselineQuestionScore(curriculumbaselineid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: score.ispass,
+      ispass,
       passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: curriculumbaselineid,
       marks: score.marks,
       points: userpoints,
       fullpoints,
+      verified: graded.verified,
     };
     await rb.createbaselinequestionprogress(progress, baseline, user);
     Logger.info(`<${user.studentfirstname}> submits a baseline question <${curriculumbaselineid}>`, {logaccesstype: LOGTYPE.SUBMITLEVELQUIZ, userid: user.schooluserid});

@@ -21,6 +21,19 @@ The routes that matter for sync:
 
 Students log in with `POST /auth/login`. One access token per user: a second login, including one from `curl`, ends the first session.
 
+### Server-grading protocol
+
+Practice, lesson-quiz, level-quiz and baseline submissions may carry an optional `answer: {v: 1, type, ...}` per item. The server grades it against the question (`src/business/grading`) and stores the raw answer, the client's own claimed verdict (`clientiscorrect`) and the server's grade (`servergrade`) alongside the existing `iscorrect`. A submission is `verified` only when every active, renderable question in the activity got a gradable server grade. A submission with no `answer` fields at all (an old client) is always accepted and stored unverified — never rejected.
+
+Two env vars control behaviour, both optional and off by default:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `GRADING_MODE` | `shadow` | `shadow`: scoring uses the client's claimed `iscorrect` exactly as before; server grades are only recorded for comparison. `enforce`: a gradable server grade replaces the client's `iscorrect` for scoring (marks, percentage, pass, points). An ungradable item still falls back to the client's claim. |
+| `REQUIRE_GRADED_ANSWERS` | off (`false`) | When on, an unverified quiz/level-quiz/baseline result can never count as a pass (`ispass=false`). Practice is never affected. Old-format results are still accepted, just unverified. |
+
+Each submission logs one info-level line (no learner identifiers) with the count of client/server disagreements by template type, so the disagreement rate can be measured before flipping `GRADING_MODE` to `enforce`.
+
 ## What you need
 
 - Node 20. The deploy image is `node:20-alpine`. Node 20 reached end of life in April 2026, so expect this to move to Node 22.

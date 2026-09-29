@@ -1,6 +1,7 @@
 import { Op } from "sequelize";
 import { lessonpracticequestions } from "src/models/data-models/init-models";
 import { COMPLETED_PERCENTAGE, UNRENDERED_TEMPLATE_TYPES } from "src/models/enums/constant.enum";
+import { QuestionForGrading } from "./grading";
 
 /**
  * Score a lesson-practice attempt against the practice itself, not against
@@ -37,6 +38,44 @@ export function practicePassResult(marks: number, activecount: number): Practice
   }
   const percentage = Number(Math.min(100, (marks * 100) / activecount).toFixed(2));
   return { marks, percentage, ispass: percentage >= COMPLETED_PERCENTAGE };
+}
+
+/**
+ * See quizscore.ts's getlessonquizgradablequestions for why this is a
+ * second query alongside scorepractice's rather than a refactor of it.
+ */
+export async function getpracticegradablequestions(
+  lessonpracticeid: string,
+): Promise<Map<string, QuestionForGrading>> {
+  const active = await lessonpracticequestions.findAll({
+    attributes: ["lessonpracticequestionid"],
+    where: { lessonpracticeid, lessonpracticequestionstatus: true },
+    include: [
+      {
+        association: "question",
+        attributes: ["templatetypeid", "questionoptions", "questioncorrectvalue", "questiondistractors"],
+        required: true,
+        where: { templatetypeid: { [Op.notIn]: UNRENDERED_TEMPLATE_TYPES } },
+      },
+    ],
+  });
+  const out = new Map<string, QuestionForGrading>();
+  for (const row of active as unknown as { lessonpracticequestionid: string; question?: QuestionForGrading }[]) {
+    // A row missing its joined `question` shouldn't happen for real (the
+    // include is `required: true`) — this only guards a lighter-weight test
+    // double that mocks findAll to return bare `{ lessonpracticequestionid }`
+    // rows (see practicescore.spec.ts / result.controller.spec.ts).
+    if (!row.question) {
+      continue;
+    }
+    out.set(row.lessonpracticequestionid, {
+      templatetypeid: row.question.templatetypeid,
+      questionoptions: row.question.questionoptions,
+      questioncorrectvalue: row.question.questioncorrectvalue,
+      questiondistractors: row.question.questiondistractors,
+    });
+  }
+  return out;
 }
 
 export async function scorepractice(

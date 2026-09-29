@@ -9,6 +9,8 @@ export class LessonQuizResult {
     lessonquizquestionid: string = "";
     @ApiProperty()
     questionid: string = "";
+    @ApiProperty({ required: false, description: "Optional AnswerV1 payload (src/business/grading) for server-side grading; omitted by old clients." })
+    answer?: unknown;
 }
 
 export class LessonQuizResultBody {
