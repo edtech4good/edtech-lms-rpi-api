@@ -299,6 +299,43 @@ describe("ResultController.savelessonquizresult server grading (the server-gradi
       expect(progress.verified).toBe(true);
     });
   });
+
+  describe("shadow mode scores exactly like main did before this protocol shipped", () => {
+    const QIDS = ["q1", "q2", "q3", "q4", "q5"];
+    // An old-format payload (no `answer` field at all): two conflicting
+    // items per question, [iscorrect:false, iscorrect:true] — this is
+    // exactly what main's scorer already dedups via "any submitted item
+    // correct" (quizscore.ts), so shadow mode (default, no grading
+    // involved at all here since there's no `answer`) MUST reproduce that:
+    // 100%, marks 5. Only enforce may restrict counting to the first item.
+    const conflictingDuplicates = () =>
+      QIDS.flatMap((id) => [
+        { iscorrect: false, lessonquizquestionid: id },
+        { iscorrect: true, lessonquizquestionid: id },
+      ]);
+
+    it("shadow (default): scores 100%, marks 5 — identical to main's own dedup rule", async () => {
+      activeQuestionsWithJoin(QIDS);
+      await submit(conflictingDuplicates());
+
+      const [progress] = createlessonquizprogress.mock.calls[0];
+      expect(progress.passpercentage).toBe(100);
+      expect(progress.marks).toBe(5);
+      expect(progress.ispass).toBe(true);
+      expect(progress.verified).toBe(false);
+    });
+
+    it("enforce: the same payload does NOT score 100% — only the first submitted item per question counts", async () => {
+      process.env.GRADING_MODE = "enforce";
+      activeQuestionsWithJoin(QIDS);
+      await submit(conflictingDuplicates());
+
+      const [progress] = createlessonquizprogress.mock.calls[0];
+      expect(progress.passpercentage).not.toBe(100);
+      expect(progress.passpercentage).toBe(0);
+      expect(progress.ispass).toBe(false);
+    });
+  });
 });
 
 describe("ResultController.savelevelquizresult server grading", () => {

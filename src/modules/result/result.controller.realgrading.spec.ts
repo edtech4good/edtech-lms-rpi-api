@@ -96,7 +96,7 @@ describe("ResultController.savelessonquizresult with the REAL grading library (#
     expect(progress.verified).toBe(true);
   });
 
-  it("(b) enforce: a forged iscorrect:true with a genuinely wrong answer is scored incorrect and unverified for that question", async () => {
+  it("(b) enforce: a forged iscorrect:true with a genuinely wrong answer is scored incorrect (and the submission stays verified)", async () => {
     process.env.GRADING_MODE = "enforce";
     process.env.REQUIRE_GRADED_ANSWERS = "true";
     await submit([

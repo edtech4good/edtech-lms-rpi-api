@@ -1,6 +1,7 @@
 import { ExecutionContext } from "@nestjs/common";
 import { of } from "rxjs";
 import { SchemaValidationInterceptor } from "src/interceptors/schemavalidation.interceptor";
+import { isAnswerV1 } from "src/business/grading";
 import { resultbaselinequestion, resultlevelquiz, resultpractice, resultquiz } from "./result.request.validator";
 
 /**
@@ -172,7 +173,7 @@ describe("resultquiz / resultlevelquiz / resultbaselinequestion accept the same 
             curriculumbaselineid: Q,
             baselinequestionid: Q,
             questionid: Q,
-            answer: { v: 1, type: "order", sequence: [1, 2, 3] },
+            answer: { v: 1, type: "order", order: ["opt-1", "opt-2", "opt-3"] },
           },
         ],
       }),
@@ -253,5 +254,87 @@ describe("answer: null and size caps", () => {
   it("a huge single answer string (millions of characters, as a real attack would try) is rejected, not merely slow", () => {
     const huge = { v: 1, type: "text", value: "េ".repeat(5_000_000) };
     expect(() => validateQuiz({ result: [{ ...baseItem, answer: huge }] })).toThrow();
+  });
+});
+
+/**
+ * Guards a real regression: `pairs`/`parts` were once schema'd as arrays
+ * (`boundedArray`), but #93's `AnswerV1` defines them as records
+ * (`Record<string, string>` / `Record<string, {numerator, denominator}>`).
+ * A well-formed `match` (drag-drop, template 7 — graded) or `fraction`
+ * answer got a 400 here even though `isAnswerV1` accepted it; once the app
+ * sends `answer`, a whole quiz result containing one such question would be
+ * rejected outright and dropped after 24h (pendingResultsQueue).
+ *
+ * These fixtures are the canonical AnswerV1 shapes from #93's own tests
+ * (src/business/grading/index.spec.ts's "accepts a well-formed answer of
+ * every kind" and "rejects a wrong version..." fixtures, plus a few more
+ * real shapes drawn from the same file's individual template tests) run
+ * through BOTH the validator and `isAnswerV1` — for every shape, the two
+ * must agree: both accept, or both reject. `null` is the one deliberate,
+ * documented exception (the validator treats it as "absent"; `isAnswerV1`
+ * correctly says it's not a valid answer) and is excluded here.
+ */
+describe("agrees with isAnswerV1 on every #93 fixture shape", () => {
+  const validateItem = (answer: unknown) => {
+    const base = {
+      iscorrect: true,
+      lessonquizid: Q,
+      lessonquizquestionid: Q,
+      questionid: Q,
+      answer,
+    };
+    const context = {
+      switchToHttp: () => ({ getRequest: () => ({ body: { result: [base] } }) }),
+    } as unknown as ExecutionContext;
+    try {
+      new SchemaValidationInterceptor(resultquiz).intercept(context, { handle: () => of(null) });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // From index.spec.ts's "accepts a well-formed answer of every kind" — one canonical shape per type.
+  const validShapes: unknown[] = [
+    { v: 1, type: "choice", selected: ["a"] },
+    { v: 1, type: "order", order: ["a", "b"] },
+    { v: 1, type: "match", pairs: { a: "a" } },
+    { v: 1, type: "blanks", filled: ["a"] },
+    { v: 1, type: "counts", counts: { a: 2 } },
+    { v: 1, type: "text", entries: { a: "hi" } },
+    { v: 1, type: "fraction", parts: { a: { numerator: "1", denominator: "2" } } },
+    // Further real shapes exercised elsewhere in index.spec.ts's individual template tests.
+    { v: 1, type: "choice", selected: ["opt-1", "opt-2", "opt-3"] }, // multi-select MCQ
+    { v: 1, type: "choice", selected: [] }, // nothing selected — still a valid (if ungradeable-as-correct) shape
+    { v: 1, type: "order", order: ["opt-1", "opt-2", "opt-3"] },
+    { v: 1, type: "match", pairs: { cat: "cat", dog: "dog" } }, // drag-drop / template 7
+    { v: 1, type: "blanks", filled: ["opt-1", "opt-2"] },
+    { v: 1, type: "counts", counts: { a: 0 } }, // zero taps is valid (non-negative integer)
+  ];
+
+  // From index.spec.ts's "rejects a wrong version, an unknown type, and
+  // wrongly-typed payloads" and "never throws on primitives..." (minus
+  // `null`/`undefined`, the validator's own documented "absent" cases).
+  const invalidShapes: unknown[] = [
+    { v: 2, type: "choice", selected: ["a"] }, // wrong version
+    { v: 1, type: "nonsense", foo: "bar" }, // unknown type
+    { v: 1, type: "choice", selected: [1, 2] }, // wrong element type
+    { v: 1, type: "counts", counts: { a: "2" } }, // counts must be numbers, not numeric strings
+    { v: 1, type: "counts", counts: { a: -1 } }, // counts must be non-negative
+    { v: 1, type: "counts", counts: { a: 1.5 } }, // counts must be integers
+    "string",
+    42,
+    [1, 2, 3],
+  ];
+
+  it.each(validShapes)("accepts (both validator and isAnswerV1): %j", (answer) => {
+    expect(isAnswerV1(answer)).toBe(true);
+    expect(validateItem(answer)).toBe(true);
+  });
+
+  it.each(invalidShapes)("rejects (both validator and isAnswerV1): %j", (answer) => {
+    expect(isAnswerV1(answer)).toBe(false);
+    expect(validateItem(answer)).toBe(false);
   });
 });
