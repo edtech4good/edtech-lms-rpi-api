@@ -63,9 +63,12 @@ function isStringRecord(x: unknown): x is Record<string, string> {
   return Object.values(x as Record<string, unknown>).every((v) => typeof v === "string");
 }
 
-function isNumberRecord(x: unknown): x is Record<string, number> {
+/** `counts` values are tap counts: never negative, never fractional. */
+function isCountsRecord(x: unknown): x is Record<string, number> {
   if (!x || typeof x !== "object" || Array.isArray(x)) return false;
-  return Object.values(x as Record<string, unknown>).every((v) => typeof v === "number" && Number.isFinite(v));
+  return Object.values(x as Record<string, unknown>).every(
+    (v) => typeof v === "number" && Number.isInteger(v) && v >= 0,
+  );
 }
 
 function isFractionPartRecord(x: unknown): x is Record<string, { numerator: string; denominator: string }> {
@@ -97,7 +100,7 @@ export function isAnswerV1(x: unknown): x is AnswerV1 {
     case "blanks":
       return isStringArray(a.filled);
     case "counts":
-      return isNumberRecord(a.counts);
+      return isCountsRecord(a.counts);
     case "text":
       return isStringRecord(a.entries);
     case "fraction":

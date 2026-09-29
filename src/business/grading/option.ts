@@ -28,6 +28,17 @@ function asBool(v: unknown): boolean {
   return v === true;
 }
 
+/**
+ * `questionoptioniscorrect` specifically gets a more forgiving read than
+ * asBool: it has been seen (and could plausibly round-trip through a
+ * loosely-typed API layer) as the number 1 or the strings "true"/"1"
+ * rather than the boolean `true`. Defence in depth — everything else
+ * (0, "false", "0", undefined, null, ...) reads as false.
+ */
+function asCorrectFlag(v: unknown): boolean {
+  return v === true || v === 1 || v === "true" || v === "1";
+}
+
 /** Numbers have been seen stored as JSON strings; read either. */
 function asNumber(v: unknown): number | undefined {
   if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
@@ -50,8 +61,11 @@ function asNumericString(v: unknown): string | undefined {
 
 /**
  * Parses one raw option object into a GradingOption, or returns undefined
- * if it has no usable id (such an entry cannot be an answer target and is
- * dropped rather than failing the whole question).
+ * if it has no usable id. A dropped entry means the question's own stored
+ * data is malformed (every real option needs an id to be an answer
+ * target), so the caller (parseOptions) treats *any* dropped entry as the
+ * whole `questionoptions` blob being unparseable, rather than silently
+ * grading against a partial option list.
  */
 function parseOption(raw: unknown): GradingOption | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -61,7 +75,7 @@ function parseOption(raw: unknown): GradingOption | undefined {
   return {
     questionoptionid: id,
     questionoptiontext: asString(o.questionoptiontext),
-    questionoptioniscorrect: asBool(o.questionoptioniscorrect),
+    questionoptioniscorrect: asCorrectFlag(o.questionoptioniscorrect),
     questionoptionsequence: asNumber(o.questionoptionsequence),
     questionoptionvalue: asNumber(o.questionoptionvalue),
     questionoptionnumeratorvalue: asNumericString(o.questionoptionnumeratorvalue),
@@ -75,9 +89,14 @@ function parseOption(raw: unknown): GradingOption | undefined {
 
 /**
  * Parses `questions.questionoptions` (a JSON column: an array, or a JSON
- * string of one depending on caller). Returns undefined when the shape is
- * not a parseable array at all — a question data problem, not an answer
- * problem, so callers surface it as `malformed`.
+ * string of one depending on caller). Returns undefined — a question data
+ * problem, not an answer problem, so callers surface it as `malformed` —
+ * when: the shape isn't a parseable array at all; any entry in that array
+ * couldn't be parsed (see parseOption); or the array is empty. A question
+ * with zero usable options can never be legitimately gradable (every
+ * template 1-8 rule is vacuously "true" over an empty option list, which
+ * would otherwise grade *any* answer, including no answer at all, as
+ * correct).
  */
 export function parseOptions(raw: unknown): GradingOption[] | undefined {
   let value = raw;
@@ -92,7 +111,9 @@ export function parseOptions(raw: unknown): GradingOption[] | undefined {
   const options: GradingOption[] = [];
   for (const entry of value) {
     const parsed = parseOption(entry);
-    if (parsed) options.push(parsed);
+    if (!parsed) return undefined; // any dropped entry -> the whole blob is malformed
+    options.push(parsed);
   }
+  if (options.length === 0) return undefined;
   return options;
 }

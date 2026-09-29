@@ -36,8 +36,29 @@ describe("parseOptions", () => {
     expect(parseOptions(undefined)).toBeUndefined();
   });
 
-  it("drops entries with no usable id instead of failing the whole list", () => {
+  it("returns undefined (malformed) when any entry has no usable id, rather than silently dropping it", () => {
     const raw = [{ questionoptiontext: "no id here" }, { questionoptionid: "b", questionoptioniscorrect: true }];
-    expect(parseOptions(raw)).toEqual([expect.objectContaining({ questionoptionid: "b" })]);
+    expect(parseOptions(raw)).toBeUndefined();
+  });
+
+  it("returns undefined (malformed) for an empty options array", () => {
+    expect(parseOptions([])).toBeUndefined();
+    expect(parseOptions("[]")).toBeUndefined();
+  });
+
+  it("returns undefined when every entry in a non-empty array is unusable", () => {
+    expect(parseOptions([{}, { foo: "bar" }])).toBeUndefined();
+  });
+});
+
+describe("parseOptions: questionoptioniscorrect defence in depth", () => {
+  it.each([true, 1, "true", "1"])("reads %p as correct", (v) => {
+    const parsed = parseOptions([{ questionoptionid: "a", questionoptioniscorrect: v }]);
+    expect(parsed).toEqual([expect.objectContaining({ questionoptioniscorrect: true })]);
+  });
+
+  it.each([false, 0, "false", "0", undefined, null, "yes", 2])("reads %p as not correct", (v) => {
+    const parsed = parseOptions([{ questionoptionid: "a", questionoptioniscorrect: v }]);
+    expect(parsed).toEqual([expect.objectContaining({ questionoptioniscorrect: false })]);
   });
 });

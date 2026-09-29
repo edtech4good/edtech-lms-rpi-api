@@ -123,6 +123,61 @@ describe("gradeAnswer: choice (templates 1-4)", () => {
     const answer: AnswerV1 = { v: 1, type: "choice", selected: ["opt-2"] };
     expect(gradeAnswer(asString, answer)).toEqual({ gradable: true, correct: true });
   });
+
+  it("a duplicated selection is not a legitimate single choice, even if the id is correct", () => {
+    // Single-choice question, only opt-2 is correct: selecting it twice
+    // must not be treated the same as selecting it once.
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: ["opt-2", "opt-2"] };
+    expect(gradeAnswer(mcqQuestion(1), answer)).toEqual({ gradable: true, correct: false });
+  });
+
+  it("a duplicated correct selection does not fill in for a missing second correct option (multi-choice)", () => {
+    // opt-1 and opt-3 are both correct; submitting opt-1 twice must not
+    // count as having also selected opt-3.
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: ["opt-1", "opt-1"] };
+    expect(gradeAnswer(mcqMultiQuestion(3), answer)).toEqual({ gradable: true, correct: false });
+  });
+
+  it("a foreign option id (not part of this question) is incorrect, not a crash", () => {
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: ["not-a-real-option"] };
+    expect(gradeAnswer(mcqQuestion(1), answer)).toEqual({ gradable: true, correct: false });
+  });
+
+  it("empty questionoptions is malformed, not vacuously correct", () => {
+    const q: QuestionForGrading = { templatetypeid: 1, questionoptions: [] };
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: [] };
+    expect(gradeAnswer(q, answer)).toEqual({ gradable: false, reason: "malformed" });
+  });
+
+  it("questionoptions with every entry missing an id is malformed", () => {
+    const q: QuestionForGrading = { templatetypeid: 1, questionoptions: [{ questionoptiontext: "no id" }] };
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: [] };
+    expect(gradeAnswer(q, answer)).toEqual({ gradable: false, reason: "malformed" });
+  });
+
+  it("questionoptions where even one entry is missing an id is malformed (not partially graded)", () => {
+    const q: QuestionForGrading = {
+      templatetypeid: 1,
+      questionoptions: [
+        { questionoptionid: "opt-1", questionoptioniscorrect: true },
+        { questionoptiontext: "dropped, no id" },
+      ],
+    };
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: ["opt-1"] };
+    expect(gradeAnswer(q, answer)).toEqual({ gradable: false, reason: "malformed" });
+  });
+
+  it("questionoptioniscorrect is read forgivingly (1 and \"true\" count as correct)", () => {
+    const q: QuestionForGrading = {
+      templatetypeid: 1,
+      questionoptions: [
+        { questionoptionid: "opt-1", questionoptioniscorrect: 1 },
+        { questionoptionid: "opt-2", questionoptioniscorrect: "false" },
+      ],
+    };
+    const answer: AnswerV1 = { v: 1, type: "choice", selected: ["opt-1"] };
+    expect(gradeAnswer(q, answer)).toEqual({ gradable: true, correct: true });
+  });
 });
 
 describe("gradeAnswer: order (templates 5-6)", () => {
@@ -167,6 +222,18 @@ describe("gradeAnswer: order (templates 5-6)", () => {
       gradable: false,
       reason: "malformed",
     });
+  });
+
+  it("a duplicated id padding out the right length is incorrect, not a shortcut past the real third item", () => {
+    // opt-1 twice plus opt-2 has the right length (3) but never places
+    // opt-3 at all; must not be treated as equivalent to the real order.
+    const answer: AnswerV1 = { v: 1, type: "order", order: ["opt-1", "opt-1", "opt-2"] };
+    expect(gradeAnswer(orderQuestion(5), answer)).toEqual({ gradable: true, correct: false });
+  });
+
+  it("a foreign id in place of a real option is incorrect, not a crash", () => {
+    const answer: AnswerV1 = { v: 1, type: "order", order: ["opt-1", "not-a-real-option", "opt-3"] };
+    expect(gradeAnswer(orderQuestion(5), answer)).toEqual({ gradable: true, correct: false });
   });
 });
 
@@ -238,6 +305,18 @@ describe("gradeAnswer: blanks (template 8, FillInBlank)", () => {
     const answer: AnswerV1 = { v: 1, type: "choice", selected: ["opt-1"] };
     expect(gradeAnswer(blanksQuestion(2), answer)).toEqual({ gradable: false, reason: "type-mismatch" });
   });
+
+  it("filling the same blank twice does not substitute for the missing second blank", () => {
+    // Right length (2), but opt-1 is repeated instead of also placing
+    // opt-2 — must not be accepted just because the count matches.
+    const answer: AnswerV1 = { v: 1, type: "blanks", filled: ["opt-1", "opt-1"] };
+    expect(gradeAnswer(blanksQuestion(2), answer)).toEqual({ gradable: true, correct: false });
+  });
+
+  it("a foreign id among otherwise-correct blanks is incorrect, not a crash", () => {
+    const answer: AnswerV1 = { v: 1, type: "blanks", filled: ["opt-1", "not-a-real-option"] };
+    expect(gradeAnswer(blanksQuestion(2), answer)).toEqual({ gradable: true, correct: false });
+  });
 });
 
 describe("gradeAnswer: unsupported templates 9-17", () => {
@@ -295,5 +374,14 @@ describe("isAnswerV1", () => {
     expect(isAnswerV1("string")).toBe(false);
     expect(isAnswerV1(42)).toBe(false);
     expect(isAnswerV1([1, 2, 3])).toBe(false);
+  });
+
+  it("counts must be non-negative integers", () => {
+    expect(isAnswerV1({ v: 1, type: "counts", counts: { a: 3 } })).toBe(true);
+    expect(isAnswerV1({ v: 1, type: "counts", counts: { a: 0 } })).toBe(true);
+    expect(isAnswerV1({ v: 1, type: "counts", counts: { a: -1 } })).toBe(false);
+    expect(isAnswerV1({ v: 1, type: "counts", counts: { a: 1.5 } })).toBe(false);
+    expect(isAnswerV1({ v: 1, type: "counts", counts: { a: NaN } })).toBe(false);
+    expect(isAnswerV1({ v: 1, type: "counts", counts: { a: Infinity } })).toBe(false);
   });
 });

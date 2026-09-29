@@ -109,6 +109,17 @@ describe("gradeFOption1 (template 21: typed text per option)", () => {
   it("a missing entry is incorrect", () => {
     expect(gradeFOption1(options, { "blank-1": "ឆ្កែ" })).toBe(false);
   });
+
+  it("an option with no questionoptiontext to compare against is ungradable, not a blank-matches-blank pass", () => {
+    const withMissingExpected = [
+      opt({ questionoptionid: "blank-1", questionoptiontext: undefined }),
+      opt({ questionoptionid: "blank-2", questionoptiontext: "ឆ្មា" }),
+    ];
+    // Leaving blank-1's typed entry out too: the old behaviour would
+    // compare "" (no entry) against "" (no expected text) and wrongly call
+    // that a match.
+    expect(gradeFOption1(withMissingExpected, { "blank-2": "ឆ្មា" })).toBeUndefined();
+  });
 });
 
 describe("gradeFOption4 (template 23: typed digits per option)", () => {
@@ -125,8 +136,24 @@ describe("gradeFOption4 (template 23: typed digits per option)", () => {
     expect(gradeFOption4(options, { "blank-1": "៧", "blank-2": "១២" })).toBe(true);
   });
 
+  it("a wrong answer differing only past float precision is still caught", () => {
+    // questionoptionvalue is typed `number`, so a genuinely 20-digit target
+    // isn't representable here, but the comparison path (typedAnswerEquals)
+    // is the same one used for large values elsewhere; regression-guarded
+    // directly in normalise.spec.ts.
+    expect(gradeFOption4(options, { "blank-1": "7.0", "blank-2": "12" })).toBe(true);
+  });
+
   it("wrong digits are incorrect", () => {
     expect(gradeFOption4(options, { "blank-1": "8", "blank-2": "12" })).toBe(false);
+  });
+
+  it("an option with no numeric questionoptionvalue is ungradable, not a blank-matches-blank pass", () => {
+    const withMissingExpected = [
+      opt({ questionoptionid: "blank-1", questionoptionvalue: undefined }),
+      opt({ questionoptionid: "blank-2", questionoptionvalue: 12 }),
+    ];
+    expect(gradeFOption4(withMissingExpected, { "blank-2": "12" })).toBeUndefined();
   });
 });
 
@@ -150,6 +177,11 @@ describe("gradeFOption2 (template 22: hard-coded index-4 answer field)", () => {
   it("reproduces the app's bug: fewer than 5 options means no answer field is ever found", () => {
     const threeOptions = fiveOptions.slice(0, 3);
     expect(gradeFOption2(threeOptions, { o2: "3" })).toBeUndefined();
+  });
+
+  it("an option at index 4 with no numeric questionoptionvalue is ungradable, not a blank-matches-blank pass", () => {
+    const badTarget = [...fiveOptions.slice(0, 4), opt({ questionoptionid: "o4", questionoptionvalue: undefined })];
+    expect(gradeFOption2(badTarget, {})).toBeUndefined();
   });
 });
 
@@ -197,5 +229,22 @@ describe("gradeFraction (template 24)", () => {
   it("Khmer-digit numerator input matches an ASCII numerator value", () => {
     const options = [opt({ questionoptionid: "f1", questionoptionnumeratorvalue: "9" })];
     expect(gradeFraction(options, { f1: { numerator: "៩", denominator: "" } })).toBe(true);
+  });
+
+  it("a non-static part with no expected value stored is ungradable, not a blank-matches-blank pass", () => {
+    const options = [opt({ questionoptionid: "f1", questionoptionnumeratorvalue: undefined })];
+    expect(gradeFraction(options, {})).toBeUndefined();
+  });
+
+  it("a non-static denominator with no expected value stored is ungradable", () => {
+    const options = [
+      opt({
+        questionoptionid: "f1",
+        questionoptionnumeratorvalue: "1",
+        questionoptionisfraction: true,
+        questionoptiondenominatorvalue: undefined,
+      }),
+    ];
+    expect(gradeFraction(options, { f1: { numerator: "1", denominator: "" } })).toBeUndefined();
   });
 });

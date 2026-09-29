@@ -32,6 +32,27 @@ describe("normaliseTyped", () => {
     expect(normaliseTyped(undefined as unknown as string)).toBe("");
     expect(normaliseTyped(null as unknown as string)).toBe("");
   });
+
+  it("strips a zero-width joiner BEFORE composing, so a joiner sitting inside a base+combining-mark pair doesn't block composition", () => {
+    // "e" + ZWJ (U+200D) + combining acute (U+0301): the joiner sits between
+    // the base letter and its combining mark. Composing first (the old
+    // order) leaves it as three separate code points forever, since NFC
+    // never crosses a non-combining character; stripping the joiner first
+    // lets "e" + combining-acute compose to "é" as intended.
+    const zwjInsideCombiningSequence = "cafe‍́";
+    expect(normaliseTyped(zwjInsideCombiningSequence)).toBe(normaliseTyped("café"));
+  });
+
+  it("strips word joiner, soft hyphen and Mongolian vowel separator", () => {
+    expect(normaliseTyped("wo⁠rd")).toBe("word");
+    expect(normaliseTyped("wo­rd")).toBe("word");
+    expect(normaliseTyped("wo᠎rd")).toBe("word");
+  });
+
+  it("case-folds Greek and Cyrillic too, not just Latin", () => {
+    expect(normaliseTyped("ΑΒΓ")).toBe("αβγ");
+    expect(normaliseTyped("МОСКВА")).toBe("москва");
+  });
 });
 
 describe("typedAnswerEquals (forgiving match)", () => {
@@ -60,5 +81,25 @@ describe("typedAnswerEquals (forgiving match)", () => {
   it("rejects non-string input without throwing", () => {
     expect(typedAnswerEquals(undefined, "7")).toBe(false);
     expect(typedAnswerEquals(7 as unknown as string, "7")).toBe(false);
+  });
+
+  it("compares long (20-digit) integers exactly, without float precision loss", () => {
+    // 12345678901234567890 and ...891 differ only in the last digit but are
+    // both well beyond Number.MAX_SAFE_INTEGER (2^53-1); parsed through
+    // `Number(...)` they silently round to the same float and would
+    // wrongly compare equal.
+    const a = "12345678901234567890";
+    const b = "12345678901234567891";
+    expect(Number(a)).toBe(Number(b)); // sanity: float parsing really does lose this distinction
+    expect(typedAnswerEquals(a, a)).toBe(true);
+    expect(typedAnswerEquals(a, b)).toBe(false);
+  });
+
+  it("matches equal long integers written with different leading zeros/whitespace", () => {
+    expect(typedAnswerEquals(" 012345678901234567890 ", "12345678901234567890")).toBe(true);
+  });
+
+  it("still compares ordinary small numbers numerically (07 matches 7)", () => {
+    expect(typedAnswerEquals("07", "7")).toBe(true);
   });
 });

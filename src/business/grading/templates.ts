@@ -76,19 +76,26 @@ export function gradeMatch(options: GradingOption[], pairs: Record<string, strin
  * carry no `questionoptionsequence` and so always fail the sequence check
  * below — the same effect as excluding them explicitly).
  *
- * The app has a single-option quirk worth mirroring exactly: its
+ * The app has a single-option quirk worth mirroring precisely: its
  * correctness check only enforces `questionoptioniscorrect === true` on
  * each filled item when there is more than one real option
  * (`questionOptions.length > 1`). When a blank has exactly one real
- * option, that check is skipped entirely and only the sequence/identity
- * check applies — so a mis-authored single-option blank whose sole real
- * option has `questionoptioniscorrect: false` would still be accepted by
- * the app. We reproduce that rather than "fix" it, since step 1b must
- * agree with the client's own verdict.
+ * option, that check is skipped — but the id must still be *that exact*
+ * real option (the sequence/identity check still runs), and with only one
+ * real option to place, the single slot is correct by construction, so
+ * skipping the flag doesn't grade anything more leniently in the normal
+ * case. It only matters if a FillBlank question is ever authored with its
+ * one real option's `questionoptioniscorrect` set to false — a data
+ * problem, not a grading one. That's a worthwhile follow-up: an admin-side
+ * check flagging single-option FillBlank rows whose real option isn't
+ * marked correct, so mis-authored data like that gets caught before it
+ * reaches a learner. We reproduce the app's check as-is here rather than
+ * "fix" it, since step 1b must agree with the client's own verdict.
  */
 export function gradeBlanks(options: GradingOption[], filled: string[]): boolean {
   const requiredCount = options.length;
   if (filled.length !== requiredCount) return false;
+  if (new Set(filled).size !== filled.length) return false;
   const byId = new Map(options.map((o) => [o.questionoptionid, o]));
   let currentSequence = 0;
   for (const id of filled) {

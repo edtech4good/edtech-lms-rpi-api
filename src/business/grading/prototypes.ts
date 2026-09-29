@@ -69,13 +69,23 @@ export function gradeDOption4(
  * The app compares raw strings; we apply the forgiving-match rule
  * (workspace#79 decision 4) on top, since this is exactly the kind of
  * typed free-text answer that rule exists for.
+ *
+ * Returns undefined (ungradable) rather than `false` when any option has
+ * no `questionoptiontext` to compare against — falling back to an empty
+ * expected string would let a blank (or missing) typed answer wrongly
+ * "match" a blank expected value instead of surfacing the bad data.
  */
-export function gradeFOption1(options: GradingOption[], entries: Record<string, string>): boolean {
+export function gradeFOption1(options: GradingOption[], entries: Record<string, string>): boolean | undefined {
+  let ungradable = false;
   for (const o of options) {
+    if (typeof o.questionoptiontext !== "string" || o.questionoptiontext === "") {
+      ungradable = true;
+      continue;
+    }
     const typed = entries[o.questionoptionid] ?? "";
-    if (!typedAnswerEquals(typed, o.questionoptiontext ?? "")) return false;
+    if (!typedAnswerEquals(typed, o.questionoptiontext)) return false;
   }
-  return true;
+  return ungradable ? undefined : true;
 }
 
 /**
@@ -84,15 +94,23 @@ export function gradeFOption1(options: GradingOption[], entries: Record<string, 
  * than `questionoptiontext`; mirrors FOption4.tsx handleSubmit
  * (`value.answer !== \`${value.option.questionoptionvalue}\``). Forgiving
  * match applies, and since the target is numeric, equal values are
- * compared numerically (so Khmer-digit input matches ASCII).
+ * compared numerically (so Khmer-digit input matches ASCII, and a 20-digit
+ * typed answer is compared exactly — see normalise.ts).
+ *
+ * Returns undefined (ungradable) rather than `false` when any option has
+ * no numeric `questionoptionvalue`, for the same reason as gradeFOption1.
  */
-export function gradeFOption4(options: GradingOption[], entries: Record<string, string>): boolean {
+export function gradeFOption4(options: GradingOption[], entries: Record<string, string>): boolean | undefined {
+  let ungradable = false;
   for (const o of options) {
+    if (typeof o.questionoptionvalue !== "number") {
+      ungradable = true;
+      continue;
+    }
     const typed = entries[o.questionoptionid] ?? "";
-    const expected = typeof o.questionoptionvalue === "number" ? String(o.questionoptionvalue) : "";
-    if (!typedAnswerEquals(typed, expected)) return false;
+    if (!typedAnswerEquals(typed, String(o.questionoptionvalue))) return false;
   }
-  return true;
+  return ungradable ? undefined : true;
 }
 
 /**
@@ -106,13 +124,16 @@ export function gradeFOption4(options: GradingOption[], entries: Record<string, 
  * data model change (a way to mark which option is the answer) that is out
  * of scope here; the answer is keyed by whatever option id sits at index 4
  * in `questionoptions`, exactly as the app renders it.
+ *
+ * Returns undefined (ungradable), not `false`, both when there's no option
+ * at index 4 at all and when that option has no numeric
+ * `questionoptionvalue` to compare against.
  */
 export function gradeFOption2(options: GradingOption[], entries: Record<string, string>): boolean | undefined {
   const target = options[4];
-  if (!target) return undefined;
+  if (!target || typeof target.questionoptionvalue !== "number") return undefined;
   const typed = entries[target.questionoptionid] ?? "";
-  const expected = typeof target.questionoptionvalue === "number" ? String(target.questionoptionvalue) : "";
-  return typedAnswerEquals(typed, expected);
+  return typedAnswerEquals(typed, String(target.questionoptionvalue));
 }
 
 /**
@@ -121,22 +142,37 @@ export function gradeFOption2(options: GradingOption[], entries: Record<string, 
  * numerator must match `questionoptionnumeratorvalue` unless it's marked
  * static (pre-filled, nothing to type); the denominator is checked the
  * same way, but only when the option `questionoptionisfraction`.
+ *
+ * Returns undefined (ungradable) rather than `false` when a non-static
+ * part that should be compared has no expected value stored — the same
+ * "don't let a blank match a blank" reasoning as the FOption graders
+ * above, applied here for consistency even though the reviewer didn't
+ * call this one out by name.
  */
 export function gradeFraction(
   options: GradingOption[],
   parts: Record<string, { numerator: string; denominator: string }>,
-): boolean {
+): boolean | undefined {
+  let ungradable = false;
   for (const o of options) {
     if (o.questionoptionistext) continue;
     const part = parts[o.questionoptionid] ?? { numerator: "", denominator: "" };
     if (!o.questionoptionnumeratorisstatic) {
-      if (!typedAnswerEquals(part.numerator, o.questionoptionnumeratorvalue ?? "")) return false;
+      if (typeof o.questionoptionnumeratorvalue !== "string" || o.questionoptionnumeratorvalue === "") {
+        ungradable = true;
+      } else if (!typedAnswerEquals(part.numerator, o.questionoptionnumeratorvalue)) {
+        return false;
+      }
     }
     if (o.questionoptionisfraction && !o.questionoptiondenominatorisstatic) {
-      if (!typedAnswerEquals(part.denominator, o.questionoptiondenominatorvalue ?? "")) return false;
+      if (typeof o.questionoptiondenominatorvalue !== "string" || o.questionoptiondenominatorvalue === "") {
+        ungradable = true;
+      } else if (!typedAnswerEquals(part.denominator, o.questionoptiondenominatorvalue)) {
+        return false;
+      }
     }
   }
-  return true;
+  return ungradable ? undefined : true;
 }
 
 export const prototypeGraders = {
