@@ -35,19 +35,21 @@ import { RequestValidator } from '../../models/RequestValidator';
 // rejects it outright (counts must be an actual number, not a numeric
 // string) — a disagreement result.request.validator.spec.ts's
 // "agrees with isAnswerV1" suite caught directly.
-const boundedString = joi.string().max(200).strict();
+// "" is allowed: isAnswerV1 and the graders accept a blank typed entry, a
+// whole-number fraction with an empty denominator, and so on.
+const boundedString = joi.string().allow('').max(200).strict();
 /** selected/order/filled (AnswerV1: string[]) — plain strings only, never nested objects. */
 const stringArray = joi.array().max(50).items(boundedString);
 /** pairs/entries (AnswerV1: Record<string, string>). */
-const stringRecord = joi.object().max(50).pattern(joi.string().max(200), boundedString);
+const stringRecord = joi.object().max(50).pattern(joi.string().allow('').max(200), boundedString);
 /** counts (AnswerV1: Record<string, number>) — tap counts: non-negative integers only, never a numeric string. */
-const countsRecord = joi.object().max(50).pattern(joi.string().max(200), joi.number().integer().min(0).strict());
+const countsRecord = joi.object().max(50).pattern(joi.string().allow('').max(200), joi.number().integer().min(0).strict());
 /** parts (AnswerV1: Record<string, {numerator, denominator}>), each a bounded string pair. */
 const fractionPart = joi.object({
   numerator: boundedString.required(),
   denominator: boundedString.required(),
 });
-const partsRecord = joi.object().max(50).pattern(joi.string().max(200), fractionPart);
+const partsRecord = joi.object().max(50).pattern(joi.string().allow('').max(200), fractionPart);
 /**
  * A future/unrecognized field (not yet part of AnswerV1) still gets a
  * bound, never trusted unbounded — but never a nested object either, and
