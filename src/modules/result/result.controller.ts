@@ -32,7 +32,7 @@ import { resultbaselinequestion, resultlevelquiz, resultpractice, resultquiz } f
 import { BaselineQuestionResultBody } from "./models/BaselineQuestionBody";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
 import { scorepractice } from "src/business/practicescore";
-import { scorelessonquiz, scorelevelquiz } from "src/business/quizscore";
+import { scorelessonquiz, scorelevelquiz, scorebaseline } from "src/business/quizscore";
 
 @ApiTags("Result")
 @Controller("result")
@@ -296,17 +296,20 @@ export class ResultController {
       question: undefined,
     }));
     const correct = data.filter((x) => x.iscorrect === true);
-    const passpercentage = correct ? ((correct.length * 100) / data.length).toFixed(2) : 0;
-    const { marks, userpoints, fullpoints, baseline} = await curriculumBaselineBusiness.calculateBaselineQuestionScore(curriculumbaselineid, correct);
+    // Pass, percentage and marks are scored against this baseline's active,
+    // renderable questions (see quizscore.ts); points still come from
+    // calculateBaselineQuestionScore (baseline carries no points today).
+    const score = await scorebaseline(curriculumbaselineid, data);
+    const { userpoints, fullpoints, baseline} = await curriculumBaselineBusiness.calculateBaselineQuestionScore(curriculumbaselineid, correct);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
       endtime: result.endtime,
-      ispass: +passpercentage >= 80,
-      passpercentage,
+      ispass: score.ispass,
+      passpercentage: score.percentage,
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: curriculumbaselineid,
-      marks,
+      marks: score.marks,
       points: userpoints,
       fullpoints,
     };
