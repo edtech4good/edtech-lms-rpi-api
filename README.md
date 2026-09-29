@@ -16,7 +16,7 @@ The routes that matter for sync:
 
 - `PUT /import/master` takes the curriculum zip that the central API builds at `/sync/content`. Online it accepts only the server sync key, which central's Sync Content sends as the raw `Authorization` header. On a classroom Pi (`RPI_OFFLINE=true`, or `"offline": true` in `FORTYKAPIRPICONFIG`) it also accepts an admin, superadmin or teacher token, so a teacher can carry the zip in on a tablet.
 - `PUT /import/students` and `PUT /import/teachers` accept only the server sync key, online or on a Pi.
-- `GET /export/log` returns a zip of the student log plus this server's log files, for upload to the central API at `/log/import`. That central route is off by default; it only runs when the central API is deployed with `LOG_IMPORT_ENABLED` set.
+- `GET /export/log` returns a zip of the student log plus this server's log files, for upload to the central API at `/log/import`. That central route is off by default; it only runs when the central API is deployed with `LOG_IMPORT_ENABLED` set to `true` or `1`.
 - `GET /export/report-data` does the same for the reporting API.
 
 Students log in with `POST /auth/login`. One access token per user: a second login, including one from `curl`, ends the first session.
