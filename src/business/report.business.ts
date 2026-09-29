@@ -148,7 +148,7 @@ export class ReportBusiness {
                             studentid: student?.studentid,
                             ispass: 1
                         },
-                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime'],
+                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime', 'verified'],
                         include: [
                             {
                                 model: lessonquizzes,
@@ -165,7 +165,7 @@ export class ReportBusiness {
                                 studentid: student?.studentid,
                                 ispass: 0
                             },
-                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime'],
+                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime', 'verified'],
                             include: [
                                 {
                                     model: lessonquizzes,
@@ -375,7 +375,7 @@ export class ReportBusiness {
                             studentid: std?.studentid,
                             ispass: 1
                         },
-                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass'],
+                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'verified'],
                         include: [
                             {
                                 model: lessonquizzes,
@@ -392,7 +392,7 @@ export class ReportBusiness {
                                 studentid: std?.studentid,
                                 ispass: 0
                             },
-                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass'],
+                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'verified'],
                             include: [
                                 {
                                     model: lessonquizzes,
@@ -1163,7 +1163,7 @@ export class ReportBusiness {
                             studentid: student?.studentid,
                             ispass: 1
                         },
-                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime'],
+                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime', 'verified'],
                         include: [
                             {
                                 model: levels,
@@ -1180,7 +1180,7 @@ export class ReportBusiness {
                                 studentid: student?.studentid,
                                 ispass: 0
                             },
-                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime'],
+                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime', 'verified'],
                             include: [
                                 {
                                     model: levels,
@@ -1372,7 +1372,7 @@ export class ReportBusiness {
                             studentid: std?.studentid,
                             ispass: 1
                         },
-                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime'],
+                        attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime', 'verified'],
                         include: [
                             {
                                 model: levels,
@@ -1389,7 +1389,7 @@ export class ReportBusiness {
                                 studentid: std?.studentid,
                                 ispass: 0
                             },
-                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime'],
+                            attributes: ['studentprogressreferenceid', 'scores', 'resultpercentage', 'marks', 'ispass', 'starttime', 'verified'],
                             include: [
                                 {
                                     model: levels,

@@ -87,6 +87,23 @@ export class studentprogressquestions extends Model<studentprogressquestionsAttr
     sequelize,
     tableName: 'studentprogressquestions',
     timestamps: false,
+    // The raw learner `answer` (free-text JSON, can carry PII) is excluded
+    // by default from every query against this model — belt-and-braces
+    // alongside the explicit per-query `attributes: { exclude: ["answer"] }`
+    // in sync.business.ts/sync.report.ts/log.business.ts, so a future
+    // caller that forgets the per-query exclude still doesn't leak it.
+    // Nothing in this codebase reads `answer` back off a model instance
+    // today (workspace#79 step 2) — the server-grading protocol
+    // (gradesubmission.ts) grades the raw request-body payload directly,
+    // never a value read back from the DB. A caller that genuinely needs
+    // the column (there is none today) must ask for it explicitly via
+    // `studentprogressquestions.scope('withAnswer')`.
+    defaultScope: {
+      attributes: { exclude: ['answer'] },
+    },
+    scopes: {
+      withAnswer: {},
+    },
     indexes: [
       {
         name: "PRIMARY",
