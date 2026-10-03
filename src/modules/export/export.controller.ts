@@ -19,6 +19,7 @@ import { TokenType } from "src/models/enums";
 import { LOGDIR, LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
+import { attachmentDisposition } from "src/services/content-disposition";
 import { SyncReport } from 'src/business/sync.report';
 
 @ApiTags("Export")
@@ -56,7 +57,7 @@ export class ExportController {
     });
     res.set({
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="log-${new Date().toLocaleDateString()}-${new Date().toLocaleTimeString()}.zip"`,
+      "Content-Disposition": attachmentDisposition(`log-${new Date().toLocaleDateString()}-${new Date().toLocaleTimeString()}.zip`),
     });
     Logger.info(`<${user.schoolusername ?? user.schooluserid}> export log`, {logaccesstype: LOGTYPE.EXPORTLOG, userid: user.schooluserid});
     return new StreamableFile(zip.toBuffer());
@@ -83,7 +84,7 @@ export class ExportController {
     Logger.info(`<${user.schoolusername ?? user.schooluserid}> export log-files`, {logaccesstype: LOGTYPE.EXPORTLOGFILES, userid: user.schooluserid});
     res.set({
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="logfiles-${user.schoolname ?? ''}-${new Date().toLocaleDateString()}-${new Date().toLocaleTimeString()}.zip"`,
+      "Content-Disposition": attachmentDisposition(`logfiles-${user.schoolname ?? ''}-${new Date().toLocaleDateString()}-${new Date().toLocaleTimeString()}.zip`),
     });
     return new StreamableFile(zip.toBuffer());
   }
