@@ -12,6 +12,7 @@ import type {
   levelquizquestions,
   levelquizquestionsId,
 } from "./levelquizquestions";
+import { ownershipDefaultScope } from "./ownership-scope";
 
 export interface questionsAttributes {
   questionid: string;
@@ -29,6 +30,7 @@ export interface questionsAttributes {
   lastupdated: Date;
   questionobject?: any;
   questioncorrectvalue?: number;
+  organisationid?: string | null;
 }
 
 export type questionsPk = "questionid";
@@ -44,7 +46,8 @@ export type questionsOptionalAttributes =
   | "isdeleted"
   | "questionstatus"
   | "questiontags"
-  | "lastupdated";
+  | "lastupdated"
+  | "organisationid";
 export type questionsCreationAttributes = Optional<
   questionsAttributes,
   questionsOptionalAttributes
@@ -69,6 +72,7 @@ export class questions
   lastupdated!: Date;
   questionobject?: any;
   questioncorrectvalue?: number;
+  organisationid!: string | null;
 
   // questions hasMany lessonpracticequestions via questionid
   lessonpracticequestions!: lessonpracticequestions[];
@@ -282,12 +286,20 @@ export class questions
         questioncorrectvalue: {
           type: DataTypes.INTEGER,
           allowNull: false,
+        },
+        // See ownership-scope.ts; no `references` (the migration owns the key).
+        organisationid: {
+          type: DataTypes.STRING(36),
+          allowNull: true,
+          defaultValue: null,
         }
       },
       {
         sequelize,
         tableName: "questions",
         timestamps: false,
+        defaultScope: ownershipDefaultScope('organisationid'),
+        scopes: { withOwnership: {} },
         indexes: [
           {
             name: "PRIMARY",

@@ -3,6 +3,7 @@ import { DataTypes, Model, Optional } from 'sequelize';
 import { rpiuseraccess } from './rpiuseraccess';
 import { studentappusages } from './studentappusage';
 import type { students, studentsId } from './students';
+import { ownershipDefaultScope } from './ownership-scope';
 
 export interface schoolusersAttributes {
   schooluserid: string;
@@ -11,6 +12,8 @@ export interface schoolusersAttributes {
   schooluserrole: number;
   schooluserstatus: number;
   schoolname: string;
+  // The school by id. Left out of every query by default: see ownership-scope.ts.
+  schoolid?: string | null;
   isdisabled: boolean;
   isdeleted?: boolean;
 
@@ -20,7 +23,7 @@ export interface schoolusersAttributes {
 
 export type schoolusersPk = "schooluserid";
 export type schoolusersId = schoolusers[schoolusersPk];
-export type schoolusersOptionalAttributes = "schooluserid" | "schooluserstatus" | "schoolname" | "isdisabled" | "isdeleted";
+export type schoolusersOptionalAttributes = "schooluserid" | "schooluserstatus" | "schoolname" | "schoolid" | "isdisabled" | "isdeleted";
 export type schoolusersCreationAttributes = Optional<schoolusersAttributes, schoolusersOptionalAttributes>;
 
 export class schoolusers extends Model<schoolusersAttributes, schoolusersCreationAttributes> implements schoolusersAttributes {
@@ -30,6 +33,7 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
   schooluserrole!: number;
   schooluserstatus!: number;
   schoolname!: string;
+  schoolid!: string | null;
   isdisabled!: boolean;
   isdeleted!: boolean;
   studentappusages?: studentappusages[];
@@ -76,6 +80,12 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
       type: DataTypes.STRING(250),
       allowNull: false
     },
+    // No `references`: the migration owns the foreign key.
+    schoolid: {
+      type: DataTypes.STRING(36),
+      allowNull: true,
+      defaultValue: null
+    },
     isdisabled: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
@@ -90,6 +100,8 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
     sequelize,
     tableName: 'schoolusers',
     timestamps: false,
+    defaultScope: ownershipDefaultScope('schoolid'),
+    scopes: { withOwnership: {} },
     indexes: [
       {
         name: "PRIMARY",

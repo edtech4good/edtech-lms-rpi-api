@@ -1,5 +1,6 @@
 import * as Sequelize from 'sequelize';
 import { DataTypes, Model, Optional } from 'sequelize';
+import { ownershipDefaultScope } from './ownership-scope';
 
 export interface documentsAttributes {
   documentid: string;
@@ -9,11 +10,12 @@ export interface documentsAttributes {
   isdeleted: boolean;
   documenttags?: object;
   lastupdated: Date;
+  organisationid?: string | null;
 }
 
 export type documentsPk = "documentid";
 export type documentsId = documents[documentsPk];
-export type documentsOptionalAttributes = "documentid" | "documents3meta" | "isdeleted" | "documenttags" | "lastupdated";
+export type documentsOptionalAttributes = "documentid" | "documents3meta" | "isdeleted" | "documenttags" | "lastupdated" | "organisationid";
 export type documentsCreationAttributes = Optional<documentsAttributes, documentsOptionalAttributes>;
 
 export class documents extends Model<documentsAttributes, documentsCreationAttributes> implements documentsAttributes {
@@ -24,7 +26,7 @@ export class documents extends Model<documentsAttributes, documentsCreationAttri
   isdeleted!: boolean;
   documenttags?: object;
   lastupdated!: Date;
-
+  organisationid!: string | null;
 
   static initModel(sequelize: Sequelize.Sequelize): typeof documents {
     documents.init({
@@ -58,11 +60,19 @@ export class documents extends Model<documentsAttributes, documentsCreationAttri
         type: DataTypes.DATE,
         allowNull: false,
         defaultValue: Sequelize.Sequelize.literal('CURRENT_TIMESTAMP')
+      },
+      // See ownership-scope.ts; no `references` (the migration owns the key).
+      organisationid: {
+        type: DataTypes.STRING(36),
+        allowNull: true,
+        defaultValue: null
       }
     }, {
       sequelize,
       tableName: 'documents',
       timestamps: false,
+      defaultScope: ownershipDefaultScope('organisationid'),
+      scopes: { withOwnership: {} },
       indexes: [
         {
           name: "PRIMARY",

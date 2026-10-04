@@ -1,4 +1,4 @@
-import { meanBy } from "lodash";
+import { meanBy, omit } from "lodash";
 import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { Transaction } from "sequelize/types";
 import { Token } from "src/models/token.model";
@@ -163,8 +163,8 @@ export class StudentBusiness {
     }
   }
 
-  getstudentstats = (studentid: string) =>
-    dbinstance.getdbinstance().query(
+  getstudentstats = async (studentid: string) => {
+    const rows = await dbinstance.getdbinstance().query(
       `SELECT 
       ss.*,
       studentprogress.starttime AS lastlogin,
@@ -206,6 +206,11 @@ WHERE
     ss.studentid = ? LIMIT 1`,
       { type: QueryTypes.SELECT, raw: true, replacements: [studentid] }
     );
+    // `ss.*` selects every column of students, and a model's default scope does
+    // not apply to raw SQL: leave out the school id, which is not part of this
+    // payload yet (see models/data-models/ownership-scope.ts).
+    return rows.map((row) => omit(row, "schoolid"));
+  };
 
   getstudentquizstats = (studentid: string) =>
     dbinstance.getdbinstance().query(
