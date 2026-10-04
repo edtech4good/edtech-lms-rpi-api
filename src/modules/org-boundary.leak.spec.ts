@@ -433,7 +433,8 @@ const seedData = () => {
   ]);
   put(students, [
     learner(ST_X1, SU_X1, SCH_X, "School X", CLS_X, [T_X1.curriculum]),
-    learner(ST_X2, SU_X2, SCH_X, "School X", CLS_X, [T_X1.curriculum, T_X2.curriculum]),
+    // enrolled in X's two curricula, and (by mistake) in one of Y's and the legacy one: those must not count
+    learner(ST_X2, SU_X2, SCH_X, "School X", CLS_X, [T_X1.curriculum, T_X2.curriculum, T_Y1.curriculum, T_L.curriculum]),
     learner(ST_Y1, SU_Y1, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
     learner(ST_Y2, SU_Y2, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
     learner(ST_Y3, SU_Y3, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
@@ -616,6 +617,8 @@ const runContent = async (c: ContentCase) => {
     ["X learner, Y's content (its token claims Y's curriculum)", X_LEARNER, foreign],
     ["X learner, a legacy unowned curriculum's content", X_LEARNER, legacy],
     ["X learner, X's own curriculum it is not enrolled in", X_LEARNER, notEnrolled],
+    ["X learner 2 (enrolled in Y's curriculum by mistake), Y's content", X_LEARNER2, foreign],
+    ["X learner 2 (enrolled in the legacy curriculum by mistake), the legacy content", X_LEARNER2, legacy],
     ["X teacher, Y's content", X_TEACHER, foreign],
     ["X teacher, X's curriculum that the school does not list", X_TEACHER, notEnrolled],
     ["X teacher, a legacy unowned curriculum's content", X_TEACHER, legacy],
