@@ -27,19 +27,21 @@ import { OwnershipBusiness, OwnershipResult } from "src/business/ownership.busin
 import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
+import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
 import { SyncBusiness } from "src/business/sync.business";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
-import { ServerSyncGuard } from "src/guards/server-sync.guard";
+import { SERVER_SYNC_USER_ID, ServerSyncGuard } from "src/guards/server-sync.guard";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { ResponseBoolean } from "src/models/ResponseBoolean";
 import { Sync } from "src/models/Sync";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
+import { looksLikeOrganisationContent, validateOrganisationContent } from "./organisation-content.validator";
 import { validateOwnershipBody } from "./ownership.request.validator";
 
 /**
@@ -88,6 +90,22 @@ async function rollbackQuietly(tnx: Transaction): Promise<void> {
     await tnx.rollback();
   } catch (e) {
     Logger.error("import rollback failed", { error: e });
+  }
+}
+
+/**
+ * Who may import ONE organisation's content (format 3): central, with the server
+ * sync key; or, on a classroom Pi, a staff token whose `organisationid` claim is
+ * that organisation. A token with no claim (issued before the claim existed, or a
+ * school with no organisation yet) may not.
+ */
+function assertMayImportOrganisation(user: Token | undefined, organisationid: unknown): void {
+  if (user?.schooluserid === SERVER_SYNC_USER_ID) {
+    return;
+  }
+  const claim = user?.organisationid;
+  if (typeof claim !== "string" || typeof organisationid !== "string" || claim.toLowerCase() !== organisationid.toLowerCase()) {
+    throw new ApiError(ErrorCode.NOT_ALLOWED);
   }
 }
 
@@ -355,16 +373,33 @@ export class ImportController {
   async completesync(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
-  ): Promise<ResponseBoolean> {
+  ): Promise<ResponseBoolean | OrganisationContentResult> {
     const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
       assertEntryWithinLimit(zipEntries[0], UploadLimits.MASTER_ZIP_DECOMPRESSED_MAX_BYTES);
       const tnx = await dbinstance.getdbinstance().transaction();
+      let ofOneOrganisation = false;
       try {
         const data = zipEntries[0].getData().toString("utf8");
+        const parsed = JSON.parse(data);
+        // One organisation's content (format 3): a scoped replace, and a refusal says why.
+        if (looksLikeOrganisationContent(parsed)) {
+          ofOneOrganisation = true;
+          assertMayImportOrganisation(user, parsed.organisationid);
+          const content = validateOrganisationContent(parsed);
+          const counts = await new OrganisationContentImport(tnx).run(content);
+          await tnx.commit();
+          Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
+          return {
+            error: false,
+            data: true,
+            organisationid: content.organisationid,
+            counts,
+          };
+        }
         let newsync: Sync = new Sync();
-        newsync = JSON.parse(data);
+        newsync = parsed;
         const syncb = new SyncBusiness(tnx);
 
         // Sync is a full-replace of content by id: cleanup() wipes every
@@ -443,6 +478,9 @@ export class ImportController {
       } catch (e: any) {
         Logger.info(e);
         await rollbackQuietly(tnx);
+        if (ofOneOrganisation && e instanceof ApiError) {
+          throw e;
+        }
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",
