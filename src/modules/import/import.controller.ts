@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   HttpCode,
   HttpStatus,
@@ -22,6 +23,7 @@ import { parseISO } from "date-fns";
 import { chunk } from "lodash";
 import "multer";
 import { Transaction } from "sequelize";
+import { OwnershipBusiness, OwnershipResult } from "src/business/ownership.business";
 import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
@@ -38,6 +40,7 @@ import { ResponseBoolean } from "src/models/ResponseBoolean";
 import { Sync } from "src/models/Sync";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
+import { validateOwnershipBody } from "./ownership.request.validator";
 
 /**
  * `new AdmZip(file.buffer)` throws synchronously on a malformed archive, and
@@ -283,6 +286,29 @@ export class ImportController {
         errormessage: "Invalid file",
       });
     }
+  }
+
+  // Ownership import: which organisation owns each school and each piece of
+  // content. Central's server sync key only, online and on a Pi: no user token
+  // of any role, because it assigns ownership. It writes `organisationid` and
+  // the `organisations` rows and nothing else (no deletes, no logins).
+  @Put("ownership")
+  @UseGuards(ServerSyncGuard())
+  @ApiResponse({
+    status: 200,
+    description: "ownership applied; the body lists what was applied, refused and not found",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "The body is not a format-3 ownership payload",
+  })
+  @ApiResponse({
+    status: 503,
+    description: "The database has not been migrated for organisations",
+  })
+  @HttpCode(HttpStatus.OK)
+  async ownership(@Body() body: unknown): Promise<OwnershipResult> {
+    return new OwnershipBusiness().apply(validateOwnershipBody(body));
   }
 
   // Content import: the server sync key, plus staff tokens on a classroom Pi
