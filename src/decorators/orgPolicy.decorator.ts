@@ -28,7 +28,8 @@ import { SetMetadata } from "@nestjs/common";
  *                that school's curriculum list that the token's organisation
  *                owns. A route that central also calls with the server sync key
  *                is marked as such and is scoped by the organisation header
- *                central sends; no header is the platform's unscoped view.
+ *                central sends; the header `platform` is the unscoped view and
+ *                no header is refused.
  *  - `server`    Authenticated only by central's server sync key. Carries no
  *                user; the organisation comes from the payload header, and a
  *                payload for another organisation's rows is refused.
@@ -72,7 +73,7 @@ export const ORG_POLICY_DEFINITIONS: Record<(typeof ORG_POLICIES)[number], strin
   learner:
     "Needs a signed-in school login. Acts only on the caller's own rows and on content in the learner's current enrolments that the token's organisation owns; other content answers as absent (404) and a submission writes nothing. A staff token that reaches the route is held to the school's curriculum list instead.",
   teacher:
-    "Needs a school staff token (teacher, admin or super admin). Returns only learners of the token's school and content in that school's curriculum list that the token's organisation owns. A route that central also calls with the server sync key is marked as such and is scoped by the organisation header central sends; no header is the platform's unscoped view.",
+    "Needs a school staff token (teacher, admin or super admin). Returns only learners of the token's school and content in that school's curriculum list that the token's organisation owns. A route that central also calls with the server sync key is marked as such and is scoped by the organisation header central sends; the header `platform` is the unscoped view and no header is refused.",
   server:
     "Authenticated only by central's server sync key. Carries no user; the organisation comes from the payload header, and a payload for another organisation's rows is refused.",
   "pi-import":

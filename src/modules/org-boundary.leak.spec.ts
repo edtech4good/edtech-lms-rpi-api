@@ -488,7 +488,8 @@ const CLAIMLESS_TEACHER: Auth = { bearer: bearer({ sub: SU_TX, schooluserid: SU_
 const NULL_CLAIMS: Auth = { bearer: bearer({ ...pupil(SU_X1, ST_X1, SCH_X, ORG_X, []), schoolid: null, organisationid: null }) };
 const SUSPENDED: Auth = { bearer: bearer({ ...pupil(SU_Z, ST_X1, SCH_Z, ORG_Z, []) }) };
 const SERVER_X: Auth = { key: true, org: ORG_X };
-const SERVER_PLATFORM: Auth = { key: true };
+const SERVER_PLATFORM: Auth = { key: true, org: "platform" }; // central acting for a platform user who is not acting as an organisation
+const SERVER_NOHEADER: Auth = { key: true }; // no X-Organisation-Id at all
 const REFUSED_TOKENS: Array<[string, Auth]> = [
   ["a token with no claims (learner)", CLAIMLESS_LEARNER],
   ["a token with no claims (teacher)", CLAIMLESS_TEACHER],
@@ -1274,7 +1275,11 @@ describe("the baseline routes", () => {
 
     reset();
     r = await send("get", path(T_Y1.baseline), SERVER_PLATFORM);
-    check(`server key, no header (the platform view), Y's baseline -> ${rowsFor(r).join()} (wanted Y's learner: no header is unscoped)`, r.status === 200 && sameSet(rowsFor(r), [ST_Y1]));
+    check(`server key + header platform, Y's baseline -> ${rowsFor(r).join()} (wanted Y's learner: platform is unscoped)`, r.status === 200 && sameSet(rowsFor(r), [ST_Y1]));
+    reset();
+    r = await send("get", path(T_Y1.baseline), SERVER_NOHEADER);
+    check(`server key, no header, Y's baseline -> ${r.status} (wanted 400: silence is not the platform)`, r.status === 400);
+    check("server key, no header: no result was read", progressRead().length === 0);
 
     for (const [name, auth, id, wanted] of [
       ["X teacher, X's baseline", X_TEACHER, T_X1.baseline, [ST_X2]],
@@ -1288,7 +1293,7 @@ describe("the baseline routes", () => {
     }
     r = await send("get", path(T_X1.baseline), X_LEARNER);
     check(`X learner -> ${r.status} (wanted 403: staff only)`, r.status === 403);
-    for (const bad of ["", "not an id!", "a".repeat(40)]) {
+    for (const bad of ["", "not an id!", "a".repeat(40), "PLATFORM", "Platform", "platforms", "platform;"]) {
       r = await send("get", path(T_X1.baseline), { key: true, org: bad });
       check(`server key + header "${bad}" -> ${r.status} (wanted 400)`, r.status === 400);
     }
@@ -1304,7 +1309,8 @@ describe("the baseline routes", () => {
 // what central proxies: the organisation header, and a token's own school
 // ---------------------------------------------------------------------------------------------------------
 describe("report-style routes: the scope is X's header (central), or the token's school", () => {
-  const BAD_HEADERS = ["", "   ", "not an id!", "a".repeat(40), "1; DROP TABLE students"];
+  // (the marker is exact: another case of it, or something after it, is not the marker)
+  const BAD_HEADERS = ["", "   ", "not an id!", "a".repeat(40), "1; DROP TABLE students", "PLATFORM", "Platform", "platforms", "platform;"];
 
   it("POST /student/logintime answers only for logins in the scope; a learner token is only about itself", async () => {
     const { failures, check } = scenario();
@@ -1317,7 +1323,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
       ["server key + X's header, a mixed list", SERVER_X, [SU_X1, SU_Y1, SU_L1, SU_TY], [SU_X1]],
       ["server key + X's header, only Y's logins", SERVER_X, [SU_Y1, SU_Y2], []],
       ["server key + X's header, X's own two", SERVER_X, [SU_X1, SU_X2], [SU_X1, SU_X2]],
-      ["server key, no header (the platform view: unscoped)", SERVER_PLATFORM, [SU_X1, SU_Y1], [SU_X1, SU_Y1]],
+      ["server key + header platform (unscoped)", SERVER_PLATFORM, [SU_X1, SU_Y1], [SU_X1, SU_Y1]],
       ["server key + a header for an organisation that is not here", { key: true, org: uid("99", 1) } as Auth, [SU_X1, SU_Y1], []],
       ["X teacher, a mixed list", X_TEACHER, [SU_X1, SU_Y1, SU_TY, SU_TX], [SU_X1, SU_TX]],
       ["X teacher with a header naming Y (ignored: the token decides)", X_TEACHER, [SU_X1, SU_Y1], [SU_X1]],
@@ -1333,6 +1339,9 @@ describe("report-style routes: the scope is X's header (central), or the token's
       check(`${name}: logins asked of the database ${JSON.stringify(asked)} (wanted ${JSON.stringify(wanted)})`, sameSet(asked, wanted));
       if (wanted.length === 0) check(`${name}: no query was made at all`, rawQueries.length === 0);
     }
+    const silent = await ask(SERVER_NOHEADER, [SU_X1, SU_Y1]);
+    check(`server key, no header -> ${silent.status} (wanted 400: silence is not the platform)`, silent.status === 400);
+    check("server key, no header: nothing was asked of the database", silent.queries === 0);
     for (const bad of BAD_HEADERS) {
       const r = await ask({ key: true, org: bad }, [SU_X1]);
       check(`server key + header "${bad}" -> ${r.status} (wanted 400)`, r.status === 400);
@@ -1410,7 +1419,11 @@ describe("report-style routes: the scope is X's header (central), or the token's
       r = await run(SERVER_X, bodyOf(key, key === "studentid" ? [ST_X1, ST_Y1] : [OWN[key].value, OTHER[key].value as string]));
       check(`[${key}] server key + X's header, both X's and Y's ${key}: read ${JSON.stringify([...r.seen])} (wanted X's learners only)`, r.status === 200 && subset(r.seen, X_LEARNERS));
       r = await run(SERVER_PLATFORM, other);
-      check(`[${key}] server key, no header (the platform view), Y's ${key}: read ${JSON.stringify([...r.seen])} (pinned: unscoped, so Y's learners)`, r.status === 200 && r.seen.size > 0 && subset(r.seen, OTHER[key].learners));
+      check(`[${key}] server key + header platform, Y's ${key}: read ${JSON.stringify([...r.seen])} (pinned: unscoped, so Y's learners)`, r.status === 200 && r.seen.size > 0 && subset(r.seen, OTHER[key].learners));
+      r = await run(SERVER_NOHEADER, other);
+      check(`[${key}] server key, no header, Y's ${key} -> ${r.status}, read ${JSON.stringify([...r.seen])} (wanted 400 and nothing read: silence is not the platform)`, r.status === 400 && r.seen.size === 0);
+      r = await run(SERVER_NOHEADER, own);
+      check(`[${key}] server key, no header, X's ${key} -> ${r.status} (wanted 400)`, r.status === 400);
       r = await run(X_TEACHER, own);
       check(`[${key}] X teacher, X's ${key}: read ${JSON.stringify([...r.seen])} (wanted X's learners, some)`, r.status === 200 && r.seen.size > 0 && subset(r.seen, X_LEARNERS));
       r = await run(X_TEACHER, other);
@@ -1443,7 +1456,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
       r = await run(X_TEACHER, { ...base, filter: [...base.filter, { key, value }] });
       check(`X teacher, X's ${c.reads[0]} with ${what}: read ${JSON.stringify([...r.seen])} (wanted nothing)`, r.status === 200 && r.seen.size === 0);
     }
-    // a malformed header is refused, not read as "no header" (which would be the platform's view)
+    // a malformed header is refused, not read as the platform (the marker is exact)
     for (const bad of BAD_HEADERS) {
       r = await run({ key: true, org: bad }, bodyOf(c.reads[0], OTHER[c.reads[0]].value));
       check(`server key + header "${bad}" -> ${r.status} (wanted 400)`, r.status === 400);
@@ -1534,7 +1547,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
       ["server key + X's header, Y's school", SERVER_X, bodyOf("schoolid", SCH_Y), []],
       ["server key + X's header, both schools", SERVER_X, both, [ST_X1, ST_X2]],
       ["server key + X's header, no filter", SERVER_X, { pageindex: 1, pagesize: 50 }, [ST_X1, ST_X2]],
-      ["server key, no header: both schools (the platform view)", SERVER_PLATFORM, both, [ST_X1, ST_X2, ST_Y1, ST_Y2, ST_Y3, ST_R]],
+      ["server key + header platform: both schools (unscoped)", SERVER_PLATFORM, both, [ST_X1, ST_X2, ST_Y1, ST_Y2, ST_Y3, ST_R]],
       ["X teacher, both schools", X_TEACHER, both, [ST_X1, ST_X2]],
       ["Y teacher, both schools", Y_TEACHER, both, [ST_Y1, ST_Y2, ST_Y3, ST_R]],
       ["Y teacher, no filter", Y_TEACHER, { pageindex: 1, pagesize: 50 }, [ST_Y1, ST_Y2, ST_Y3, ST_R]],
@@ -1548,7 +1561,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
     for (const [name, auth, cls, wanted] of [
       ["server key + X's header, Y's class", SERVER_X, CLS_Y, []],
       ["server key + X's header, X's class", SERVER_X, CLS_X, [ST_X1, ST_X2]],
-      ["server key, no header: Y's class (the platform view)", SERVER_PLATFORM, CLS_Y, [ST_Y1, ST_Y2, ST_Y3]],
+      ["server key + header platform: Y's class (unscoped)", SERVER_PLATFORM, CLS_Y, [ST_Y1, ST_Y2, ST_Y3]],
       ["X teacher, Y's class", X_TEACHER, CLS_Y, []],
     ] as Array<[string, Auth, string, string[]]>) {
       for (const path of ["/report/studentprogress/class", "/report/studentlevelquiz/class", "/report/studentprogress/class/download"]) {
