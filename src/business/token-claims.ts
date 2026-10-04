@@ -37,9 +37,9 @@ const refuse = (): never => {
 };
 
 /**
- * On a classroom Pi, the id of the school this token names (by id, else by name) when it is a school here with no
- * organisation and the token itself has no organisation (null or absent: an empty or odd claim is not "none").
- * Null in every other case, and always online.
+ * On a classroom Pi, the id of the school this token names (by id, else by name) when it is a school here that is not
+ * deleted, has no organisation, and the token itself has no organisation (null or absent: an empty or odd claim is not
+ * "none"). Null in every other case, and always online.
  */
 export async function unownedPiSchoolOf(claims: TokenClaims): Promise<string | null> {
   if (!Config.fortyk.api.rpi.offline || (claims.organisationid !== undefined && claims.organisationid !== null)) {
@@ -55,10 +55,14 @@ export async function unownedPiSchoolOf(claims: TokenClaims): Promise<string | n
     return null;
   }
   const row = (await schools.scope("withOwnership").findOne({
-    attributes: ["schoolid", "organisationid"],
+    attributes: ["schoolid", "organisationid", "isdeleted"],
     where: { schoolid: own },
     raw: true,
-  })) as unknown as { organisationid: string | null } | null;
+  })) as unknown as { organisationid: string | null; isdeleted?: unknown } | null;
+  // a school that is deleted is gone: it is nobody's window
+  if (row && Boolean(row.isdeleted)) {
+    return null;
+  }
   return row && (row.organisationid === null || row.organisationid === undefined || row.organisationid === "") ? own : null;
 }
 
@@ -73,11 +77,11 @@ export async function organisationIsActive(organisationid: string): Promise<bool
 
 /**
  * Sign-in is refused (401, one neutral message) for a login whose school or organisation cannot be resolved,
- * or whose organisation is suspended or deleted. The one exception is a classroom Pi (`RPI_OFFLINE`) whose
+ * whose school is deleted, or whose organisation is suspended or deleted. The one exception is a classroom Pi (`RPI_OFFLINE`) whose
  * school is here but has no organisation yet: staff sign in there with no `organisationid` so that the
  * content import can give the school its organisation (see the note above).
  */
-export async function assertCanSignIn(claims: { schoolid: string | null; organisationid: string | null }): Promise<void> {
+export async function assertCanSignIn(claims: { schoolid: string | null; organisationid: string | null; isdeleted?: boolean }): Promise<void> {
   // One message for every reason: it must not say whether the school, the organisation or its status is the cause.
   const refused = (): never => {
     throw new ApiError(ErrorCode.SIGN_IN_REQUIRED, {
@@ -85,7 +89,8 @@ export async function assertCanSignIn(claims: { schoolid: string | null; organis
       hint: "Ask your school.",
     });
   };
-  if (!claims.schoolid) {
+  if (!claims.schoolid || claims.isdeleted) {
+    // no school, or one that is deleted (the same answer as a school that is not here)
     return refused();
   }
   if (!claims.organisationid) {

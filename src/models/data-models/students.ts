@@ -77,7 +77,7 @@ export interface studentsAttributes {
 
   // Runtime-only, attached by AuthBusiness.login for JWT claim generation —
   // not a column, never persisted.
-  schoolTheme?: { uitheme: string; schoolid: string | null; organisationid?: string | null };
+  schoolTheme?: { uitheme: string; schoolid: string | null; organisationid?: string | null; isdeleted?: boolean };
 }
 
 export type studentsPk = "studentid";

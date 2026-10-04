@@ -112,7 +112,7 @@ export class SchoolBusiness {
   getTheme = async (
     schoolname?: string,
     resolveSchoolId?: () => Promise<string | null>
-  ): Promise<{ uitheme: string; schoolid: string | null; organisationid: string | null }> => {
+  ): Promise<{ uitheme: string; schoolid: string | null; organisationid: string | null; isdeleted: boolean }> => {
     let school: schools | null = null;
     let organisationColumn = true;
     try {
@@ -135,6 +135,8 @@ export class SchoolBusiness {
       uitheme: school?.uitheme ?? "kids",
       schoolid: school?.schoolid ?? null,
       organisationid: organisationColumn ? school?.organisationid ?? null : null,
+      // sign-in refuses a school that is deleted (assertCanSignIn); the token does not carry this
+      isdeleted: Boolean(school?.isdeleted),
     };
   };
 }
