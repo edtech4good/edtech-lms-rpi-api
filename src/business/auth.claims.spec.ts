@@ -224,7 +224,7 @@ describe("a database the organisations migration has not reached (MySQL 1054 on 
 
   it("getTheme: falls back to the plain by-name read, with organisationid null", async () => {
     jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
-    const plain = jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL_X.schoolid, uitheme: "corporate" } as never);
+    const plain = jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL_X.schoolid, uitheme: "corporate", organisationid: SCHOOL_X.organisationid } as never);
     await expect(new SchoolBusiness().getTheme("School X")).resolves.toEqual({
       uitheme: "corporate",
       schoolid: SCHOOL_X.schoolid,
