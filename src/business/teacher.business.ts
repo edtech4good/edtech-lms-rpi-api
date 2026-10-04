@@ -9,7 +9,7 @@ import { studentappusages } from "src/models/data-models/studentappusage";
 import { IMultiPaging } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
 import { buildCustomWhere } from "src/services/util.service";
-import { NO_SCHOOL_NAME, SchoolScope, schoolScopeFromToken, schoolScopeOfLogin, studentsOfSchool } from "./school-identity";
+import { NO_SCHOOL_NAME, SchoolScope, schoolPredicate, schoolScopeFromToken, schoolScopeOfLogin, studentsOfSchool } from "./school-identity";
 import {
   curriculums,
   grades,
@@ -47,6 +47,12 @@ export class TeacherBusiness {
     });
   };
 
+  // Is this class one of the given school's? (A class of another school answers as a class that does not exist.)
+  classIsInSchool = async (standardid: unknown, school: SchoolScope) => {
+    if (typeof standardid !== "string" || standardid.length === 0) return false;
+    return (await standards.count({ where: { standardid, ...schoolPredicate(school) } })) > 0;
+  };
+
   getTeacherProfile = async (user: Token, standardid: string) => {
     const teacher = await schoolusers.findOne({
       where: {
@@ -64,9 +70,9 @@ export class TeacherBusiness {
       ],
     });
     if (!teacher) throw new ApiError(ErrorCode.NOT_FOUND);
-    // The teacher's school: the id stored on the login (or learner) row, else the
-    // login's name resolved. `teacher` itself is returned as it always was.
-    const school = await schoolScopeOfLogin(user.schooluserid ?? "", teacher.schoolname);
+    // The teacher's school is the token's (its id claim). Only a token that names no school at all falls back to
+    // the school stored on the login (or learner) row. `teacher` itself is returned as it always was.
+    const school = (await schoolScopeFromToken(user)) ?? (await schoolScopeOfLogin(user.schooluserid ?? "", teacher.schoolname));
     const teacheraccess = teacher.getDataValue('rpiuseraccesses') ?? null;
     const timeZone = teacheraccess && teacheraccess.length > 1 ? new Date(teacheraccess[1].logintime) : undefined;
     const calender = timeZone ? new Intl.DateTimeFormat("en-US", {
@@ -79,8 +85,10 @@ export class TeacherBusiness {
       hour12: true,
     }).format(timeZone) : null;
     teacher.setDataValue('logintime', calender ?? '');
+    // a class that is not one of the school's has no learners here
+    const classInSchool = !standardid || (await this.classIsInSchool(standardid, school));
     const allstudents = await students.findAndCountAll({
-      where: { ...studentsOfSchool(school), standard: standardid, isactive: 1 },
+      where: { ...studentsOfSchool(school), standard: classInSchool ? standardid : { [Op.in]: [] }, isactive: 1 },
       attributes: ['studentid','standard','schooluserid'],
       include: [
         {
@@ -143,7 +151,10 @@ export class TeacherBusiness {
     if ((paging.pageindex || 1) > 1) {
       offset = limit * ((paging.pageindex || 1) - 1);
     }
-    const where: any = {};
+    // The learners listed are the token's school's, whatever class is asked for: a class that is not in the
+    // school answers as a class that does not exist (an empty list). The class is read inside the school, and a
+    // learner of it gives the default curriculum, which is what a class filter with no curriculum filter needs.
+    const where: any = { ...studentsOfSchool(school) };
     const wherecurriculum: any = {};
     const lessonwhere: any = {};
     buildCustomWhere(paging.filter ?? [], {fields: 'curriculum', where: wherecurriculum});
@@ -156,6 +167,13 @@ export class TeacherBusiness {
       });
       if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
       where.standard = student?.standard;
+    } else {
+      // The class must be one of the school's: any other class (another school's, or none) is an unknown class.
+      if(!(await this.classIsInSchool(where.standard, school))) return { rows: [], count: 0 };
+      student = await students.findOne({
+        where: { ...studentsOfSchool(school), standard: where.standard }
+      });
+      if(!student) return { rows: [], count: 0 };
     }
     if(!lessonwhere.lessonid) {
       const curriculum = await curriculums.findOne({
@@ -375,6 +393,7 @@ export class TeacherBusiness {
   getAllStudentsWithProgress = async (
     studentid: string,
     type: number,
+    school: SchoolScope,
   ) => {
     lessonquizzes.hasMany(studentprogress, {
       foreignKey: "studentprogressreferenceid",
@@ -391,7 +410,8 @@ export class TeacherBusiness {
       foreignKey: "studentid",
     });
     const where: any = {
-      studentid
+      studentid,
+      ...studentsOfSchool(school),
     };
     const progress = await students.findOne({
       where,
@@ -459,8 +479,9 @@ export class TeacherBusiness {
     return progress;
   };
 
-  getStudentLastCompletedQuiz = async (studentid: string, type: number) => {
-    const student = await this.getAllStudentsWithProgress(studentid, type);
+  // The learner must be one of the given school's; any other answers as no learner (null).
+  getStudentLastCompletedQuiz = async (studentid: string, type: number, school: SchoolScope) => {
+    const student = await this.getAllStudentsWithProgress(studentid, type, school);
     let lastcompletedlessonquiz: students | null = null;
     if(student) {
       const groupUserProgress = student.getDataValue("studentprogresses");

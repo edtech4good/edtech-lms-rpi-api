@@ -10,6 +10,7 @@ import { SchoolRole } from "src/models/enums/school.role.enum";
 import { TokenType } from "src/models/enums/tokentype.enum";
 import { Token } from "src/models/token.model";
 import { AccessGuard } from "./access.guard";
+import { withGuardInfo } from "./guard-info";
 import { isServerSyncKey } from "./server-sync-key.util";
 
 /**
@@ -50,5 +51,12 @@ export const AccessOrServerSyncGuard = (
       return (await new RoleGuard().canActivate(context)) as boolean;
     }
   }
-  return mixin(AccessOrServerSyncGuardMixin);
+  return withGuardInfo(mixin(AccessOrServerSyncGuardMixin), {
+    label: `AccessOrServerSyncGuard(${[
+      Object.entries(TokenType).find(([, v]) => v === tokentype)?.[0] ?? String(tokentype),
+      ...schoolrole.map((r) => `Role.${SchoolRole[r] ?? r}`),
+    ].join(", ")})`,
+    admitsServerKey: true,
+    roles: schoolrole.map(Number),
+  });
 };

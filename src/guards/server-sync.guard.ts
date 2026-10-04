@@ -12,6 +12,7 @@ import { SchoolRole } from "src/models/enums/school.role.enum";
 import { TokenType } from "src/models/enums/tokentype.enum";
 import { Token } from "src/models/token.model";
 import { AccessGuard } from "./access.guard";
+import { withGuardInfo } from "./guard-info";
 import { isServerSyncKey } from "./server-sync-key.util";
 
 /** The `schooluserid` the guard gives a request that carried central's server sync key. */
@@ -59,5 +60,9 @@ export const ServerSyncGuard = (
       throw new ForbiddenException();
     }
   }
-  return mixin(ServerSyncGuardMixin);
+  return withGuardInfo(mixin(ServerSyncGuardMixin), {
+    label: `ServerSyncGuard(${offlineRoles.map((r) => `Role.${SchoolRole[r] ?? r}`).join(", ")})`,
+    admitsServerKey: true,
+    roles: offlineRoles.map(Number),
+  });
 };

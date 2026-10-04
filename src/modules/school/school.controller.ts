@@ -1,4 +1,5 @@
 import { Controller, Get, HttpCode, HttpStatus, Query } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { SchoolBusiness } from "src/business/school.business";
 
@@ -8,6 +9,7 @@ export class SchoolController {
   // Intentionally unguarded: the app needs the school's branding before a
   // student has authenticated (login screen theming).
   @Get("branding")
+  @OrgPolicy("public", { note: "Resolves by school id: the school's own setting, else its organisation's, else the default." })
   @ApiResponse({
     status: 200,
     description: "Fetched school branding successfully",

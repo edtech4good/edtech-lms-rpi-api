@@ -40,6 +40,20 @@ import { AccessController } from "src/modules/access/access.controller";
  */
 
 const tokenExists = jest.fn();
+// Who may call what is this spec's subject; the organisation boundary (claims, scope, content access) has its
+// own specs (src/modules/org-boundary.leak.spec.ts), so it is stood aside here.
+jest.mock("src/business/token-claims", () => ({
+  ...jest.requireActual("src/business/token-claims"),
+  checkTokenClaims: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("src/business/report-scope", () => ({
+  ...jest.requireActual("src/business/report-scope"),
+  resolveReportScope: jest.fn().mockResolvedValue(null),
+}));
+jest.mock("src/business/content-access", () => ({
+  ...jest.requireActual("src/business/content-access"),
+  canAccessContent: jest.fn().mockResolvedValue(true),
+}));
 jest.mock("src/business/token.business", () => ({
   TokenBusiness: jest.fn().mockImplementation(() => ({ tokenExists })),
 }));

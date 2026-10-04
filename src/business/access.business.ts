@@ -3,6 +3,9 @@ import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { differenceInSeconds, startOfDay, startOfTomorrow } from "date-fns";
 import { Op } from "sequelize";
 import { studentappusages } from "src/models/data-models/studentappusage";
+import { students } from "src/models/data-models/students";
+import { callerKindOf } from "./content-access";
+import { schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 import { Token } from "src/models/token.model";
 import { AccessBody } from "src/modules/access/models/AccessRequest";
 import { v4 as uuidv4 } from "uuid";
@@ -43,7 +46,16 @@ export class AccessBusiness {
         return {seconds, studentusage};
     }
 
-    getStudentsAccess = async () => {
-        return await studentappusages.findAll();
+    // The usage rows of the caller's own login (a learner), or of the learners of the caller's school (staff).
+    getStudentsAccess = async (user?: Token) => {
+        if (callerKindOf(user) === "learner") {
+            return await studentappusages.findAll({ where: { schooluserid: user?.schooluserid ?? "" } });
+        }
+        const school = await schoolScopeFromToken(user);
+        if (school === undefined) return [];
+        const learners = await students.findAll({ where: studentsOfSchool(school), attributes: ["schooluserid"], raw: true });
+        const ids = learners.map((l) => String((l as unknown as { schooluserid: string }).schooluserid));
+        if (ids.length === 0) return [];
+        return await studentappusages.findAll({ where: { schooluserid: { [Op.in]: ids } } });
     }
 }

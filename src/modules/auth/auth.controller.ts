@@ -9,6 +9,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   ApiBearerAuth,
   ApiExtraModels,
@@ -36,6 +37,7 @@ import { LogoutResponse } from "./models/LogoutResponse";
 @Controller("auth")
 export class AuthController {
   @Post("login")
+  @OrgPolicy("public", { note: "Refuses (401) a login whose school or organisation cannot be resolved or is suspended, except on a classroom Pi whose school has no organisation yet." })
   @ApiExtraModels(LoginTokens)
   @ApiExtraModels(LoginResponseModel)
   @ApiResponse({
@@ -86,6 +88,7 @@ export class AuthController {
     };
   }
   @Post("logout")
+  @OrgPolicy("public", { note: "Reads the bearer token in the handler and ends only that token's own session." })
   @ApiResponse({
     status: 200,
     description: "user logged successfully",

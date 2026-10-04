@@ -8,6 +8,7 @@ import { studentlearningprogress } from "src/models/data-models/studentlearningp
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { students } from "src/models/data-models/students";
 import { Token } from "src/models/token.model";
+import { levelIdsInScope } from "./content-access";
 import { v4 as uuidv4 } from "uuid";
 import { col, fn, Op, Transaction, WhereOptions } from "sequelize";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
@@ -1635,7 +1636,9 @@ export class LessonBusiness {
     }
   };
 
-  getLessonsWithFilter = async (levelid: string, lessonname: string) => {
+  // Only the lessons of levels of curricula in the caller's scope; the level named in the query can only narrow that.
+  getLessonsWithFilter = async (levelid: string, lessonname: string, user?: Token) => {
+    let allowed = await levelIdsInScope(user);
     const where: WhereOptions<lessonsAttributes> = {
       isdeleted: false,
       lessonname: {
@@ -1643,8 +1646,9 @@ export class LessonBusiness {
       }
     };
     if(levelid){
-      where.levelid = levelid;
-    }  
+      allowed = allowed.filter((id) => id.toLowerCase() === levelid.toLowerCase());
+    }
+    where.levelid = { [Op.in]: allowed };
     const order = ["lessonname"];
 
     return await lessons.findAll({ where, order });

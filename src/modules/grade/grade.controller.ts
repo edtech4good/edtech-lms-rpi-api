@@ -8,11 +8,13 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { GradeBusiness } from "src/business/grade.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
 import {
   SchemaValidationInterceptor,
   BusinessValidationInterceptor,
@@ -32,6 +34,7 @@ import { showgradeid } from "./grade.request.validator";
 export class GradeController {
 
   @Get('all')
+  @OrgPolicy("learner", { note: "The curriculum, class and school in the query can only narrow inside the token's scope.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched grades successfully",
@@ -57,8 +60,9 @@ export class GradeController {
     @Query("standardid") standardid: string = '',
     @Query("schoolname") schoolname: string = '',
     @Query("schoolid") schoolid: string = '',
+    @User() user?: Token,
   ): Promise<any> {
-    const data = await new GradeBusiness().getGradesWithFilter(gradename, curid, standardid, schoolname, schoolid);
+    const data = await new GradeBusiness().getGradesWithFilter(gradename, curid, standardid, schoolname, schoolid, user);
     return {
         data: data,
         error: false,
@@ -66,6 +70,9 @@ export class GradeController {
   }
   
   @Get("/curriculum/:curriculumid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  
+  @UseGuards(ContentAccessGuard("curriculum", "curriculumid"))
   @ApiResponse({
     status: 200,
     description: "Grades fetch successfully",
@@ -97,6 +104,8 @@ export class GradeController {
   }
 
   @Get("progress/curriculum/:curriculumid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("curriculum", "curriculumid"))
   @ApiResponse({
     status: 200,
     description: "Grades fetch successfully",
@@ -128,6 +137,8 @@ export class GradeController {
   }
 
   @Get("totalgradeprogress/:gradeid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("grade", "gradeid"))
   @ApiResponse({
     status: 200,
     description: "Fetched student progress successfully",

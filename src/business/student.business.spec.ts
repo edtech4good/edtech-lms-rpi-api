@@ -102,7 +102,7 @@ describe("StudentBusiness.getStudentsWithFilter SQL parameterization (#16)", () 
       .mockResolvedValue([] as never);
 
     try {
-      await new StudentBusiness().getStudentsWithFilter(HOSTILE, "");
+      await new StudentBusiness().getStudentsWithFilter(HOSTILE, "", "", { schoolid: "school-1" });
 
       expect(findAllSpy).toHaveBeenCalledTimes(1);
       const options: any = findAllSpy.mock.calls[0][0];

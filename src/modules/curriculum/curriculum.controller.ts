@@ -10,12 +10,16 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiBearerAuth, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { CurriculumBusiness } from "src/business/curriculum.business";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
+import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
+import { ReportScope } from "src/business/report-scope";
 import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
 import {
   BusinessValidationInterceptor,
@@ -26,7 +30,9 @@ import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { Token } from "src/models/token.model";
 import { DeleteCurriculum, DeleteCurriculumBaseline } from "./curriculum.business.validator";
 import { showcurriculum, showschoolname } from "./curriculum.request.validator";
-import { findSchoolIdByName } from "src/business/school-identity";
+import { schoolScopeFromToken } from "src/business/school-identity";
+import { callerKindOf } from "src/business/content-access";
+import { StudentBusiness } from "src/business/student.business";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { CurriculumBaselineDate } from "./models/CurriculumBaseline";
 @ApiTags("Curriculum")
@@ -34,16 +40,18 @@ import { CurriculumBaselineDate } from "./models/CurriculumBaseline";
 @ApiBearerAuth()
 export class CurriculumController {
   @Get()
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @HttpCode(HttpStatus.OK)
   @UseGuards(AccessGuard(TokenType.ACCESS))
-  async getall(): Promise<any> {
+  async getall(@User() user: Token): Promise<any> {
     return {
-      data: await new CurriculumBusiness().findallcurriculum(),
+      data: await new CurriculumBusiness().findallcurriculum(user),
       error: false,
     };
   }
 
   @Get('all')
+  @OrgPolicy("learner", { note: "Learner, school and organisation come from the token; the query can only narrow inside them.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched curriculums successfully",
@@ -69,8 +77,10 @@ export class CurriculumController {
     @Query("standardid") standardid: string = '',
     @Query("schoolname") schoolname: string = '',
     @Query("schoolid") schoolid: string = '',
+    @User() user?: Token,
   ): Promise<any> {
-    const data = await new CurriculumBusiness().getCurriculumsWithFilter(cur, studentid, standardid, schoolname, schoolid);
+    // The learner, school and organisation are the token's; what the query names can only narrow inside them.
+    const data = await new CurriculumBusiness().getCurriculumsWithFilter(cur, studentid, standardid, schoolname, schoolid, user);
     return {
         data: data,
         error: false,
@@ -78,6 +88,7 @@ export class CurriculumController {
   }
 
   @Get('subjects')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched curriculums successfully",
@@ -104,6 +115,7 @@ export class CurriculumController {
   }
 
   @Get(":curriculumid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Curriculum fetch successfully",
@@ -121,7 +133,7 @@ export class CurriculumController {
     new BusinessValidationInterceptor([DeleteCurriculum])
   )
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @UseGuards(AccessGuard(TokenType.ACCESS), ContentAccessGuard("curriculum", "curriculumid"))
   @ApiParam({ name: `curriculumid`, type: "string", required: true })
   @HttpCode(HttpStatus.OK)
   async get(@Param("curriculumid") curriculumid: string): Promise<any> {
@@ -132,6 +144,7 @@ export class CurriculumController {
   }
   
   @Get(":curriculumid/map")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Curriculum map fetch successfully",
@@ -149,7 +162,7 @@ export class CurriculumController {
     new BusinessValidationInterceptor([DeleteCurriculum])
   )
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @UseGuards(AccessGuard(TokenType.ACCESS), ContentAccessGuard("curriculum", "curriculumid"))
   @ApiParam({ name: `curriculumid`, type: "string", required: true })
   @HttpCode(HttpStatus.OK)
   async getmap(
@@ -208,6 +221,7 @@ export class CurriculumController {
   // }
 
   @Post("baseline/:curriculumid/:schoolname/:studentid")
+  @OrgPolicy("learner", { note: "The school and learner in the path are not read: the token's are.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Curriculum baseline fetch successfully",
@@ -227,27 +241,32 @@ export class CurriculumController {
   @HttpCode(HttpStatus.OK)
   @ApiParam({ name: `schoolname`, type: "string", required: true })
   @ApiParam({ name: `studentid`, type: "string", required: true })
-  @UseGuards(
-    AccessGuard(
-      TokenType.ACCESS,
-    )
-  )
+  @UseGuards(AccessGuard(TokenType.ACCESS), ContentAccessGuard("curriculum", "curriculumid"))
   @HttpCode(HttpStatus.OK)
   async getCurriculumBaseline(
     @Param("curriculumid") curriculumid: string,
-    @Param("schoolname") schoolname: string,
+    @Param("schoolname") _schoolname: string,
     @Param("studentid") studentid: string,
     @User() user: Token,
     @Body() body?: CurriculumBaselineDate,
   ): Promise<any> {
-    // The school the app names is resolved to its id once; the baseline is matched by id.
-    const schoolid = await findSchoolIdByName(schoolname, { liveOnly: true });
+    // The learner, the school and the organisation are the token's. The school and learner named in the path are
+    // not read (a school named there is never looked up, so it cannot be used to widen the answer): a learner
+    // asks about itself; a staff token may name a learner, but only one of its own school.
+    const schoolscope = await schoolScopeFromToken(user);
+    const schoolid = schoolscope && "schoolid" in schoolscope ? schoolscope.schoolid : null;
+    let learnerid: string | undefined = user.studentid;
+    if (callerKindOf(user) === "staff") {
+      learnerid = schoolscope && (await new StudentBusiness().studentIsInSchool(studentid, schoolscope)) ? studentid : undefined;
+    }
     const baseline = await new CurriculumBaseLineBusiness().getCurriculumBaseline(curriculumid,schoolid);
-    const data = await new CurriculumBaseLineBusiness().GetStudentBaseline(
-      curriculumid,studentid,
-      schoolid,
-      body && body.date ? parseInt(body.date) : (new Date(new Date().toUTCString())).getTime()
-    );
+    const data = learnerid
+      ? await new CurriculumBaseLineBusiness().GetStudentBaseline(
+          curriculumid,learnerid,
+          schoolid,
+          body && body.date ? parseInt(body.date) : (new Date(new Date().toUTCString())).getTime()
+        )
+      : undefined;
     let curriculumbaselineid = null;
     let baselinepass = false;
     if(data){
@@ -269,6 +288,7 @@ export class CurriculumController {
   }
 
   @Get(":curriculumbaselineid/getstudentresult")
+  @OrgPolicy("teacher", { note: "Central calls it with the server key; scoped by the organisation header, and by the school for a token.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Student result exported sucesfully",
@@ -291,13 +311,15 @@ export class CurriculumController {
       SchoolRole.ADMIN,
       SchoolRole.SUPERADMIN,
       SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @HttpCode(HttpStatus.OK)
   async getStudentBaselineEndlineResults(
     @Param("curriculumbaselineid") curriculumbaselineid: string,
+    @ReportScopeOf() scope: ReportScope | null,
   ): Promise<any> {
-    const studentresults = await new CurriculumBaseLineBusiness().getStudentBaselineEndlineResults(curriculumbaselineid)
+    const studentresults = await new CurriculumBaseLineBusiness().getStudentBaselineEndlineResults(curriculumbaselineid, scope)
     return studentresults;
   }
 

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   Controller,
   Get,
@@ -35,6 +36,7 @@ import { SyncReport } from 'src/business/sync.report';
 )
 export class ExportController {
   @Get("log")
+  @OrgPolicy("teacher", { note: "Organisation scoping in a later step." })
   @HttpCode(HttpStatus.OK)
   async exportlog(
     @Response({ passthrough: true }) res: any,
@@ -64,6 +66,7 @@ export class ExportController {
   }
 
   @Get("system-log/files")
+  @OrgPolicy("teacher", { note: "Organisation scoping in a later step." })
   @HttpCode(HttpStatus.OK)
   async exportfiles(
     @Response({ passthrough: true }) res: any,
@@ -90,6 +93,7 @@ export class ExportController {
   }
 
   @Get("report-data")
+  @OrgPolicy("teacher", { note: "Organisation scoping in a later step." })
   @ApiResponse({
     status: 200,
     description: "Sync exported sucesfully",

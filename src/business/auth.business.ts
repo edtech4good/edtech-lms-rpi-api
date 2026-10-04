@@ -7,6 +7,7 @@ import { Logger } from "src/config";
 import { SchoolBusiness } from "./school.business";
 import { SchoolUserBusiness } from "./schooluser.business";
 import { StudentBusiness } from "./student.business";
+import { assertCanSignIn } from "./token-claims";
 import { TokenBusiness } from "./token.business";
 
 // Computed once at module load so the "unknown user" branch still pays the
@@ -52,6 +53,10 @@ export class AuthBusiness {
     const schoolTheme = await schoolBusiness.getTheme(user.schoolname, () =>
       schoolBusiness.getLinkedSchoolId(user.schooluserid)
     );
+    // The login must belong to a school of an organisation that is here and active, else it cannot sign in (a
+    // classroom Pi whose own school has no organisation yet is the one exception; see business/token-claims.ts).
+    // Only reached after a correct password, so the neutral refusal reveals nothing to a guesser.
+    await assertCanSignIn(schoolTheme);
     if (schooluser) {
       // if(schooluser.type !== 'all' && schooluser.type !== studenttype) throw new BadRequestException("User/Password not matching");
       schooluser.schooluser = user;

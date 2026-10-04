@@ -1,5 +1,6 @@
 import { Op, WhereOptions } from "sequelize";
 import { lessonPassMark } from "src/business/lesson.business";
+import { gradeIdsInScope } from "src/business/content-access";
 import { lessons } from "src/models/data-models/lessons";
 import { levels, levelsAttributes } from "src/models/data-models/levels";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
@@ -152,7 +153,9 @@ export class LevelBusiness {
     return { levelsresult, total_points };
   };
 
-  getLevelsWithFilter = async (gradeid: string, levelname: string) => {
+  // Only the levels of grades of curricula in the caller's scope; the grade named in the query can only narrow that.
+  getLevelsWithFilter = async (gradeid: string, levelname: string, user?: Token) => {
+    let allowed = await gradeIdsInScope(user);
     const where: WhereOptions<levelsAttributes> = {
       isdeleted: false,
       levelname: {
@@ -160,8 +163,9 @@ export class LevelBusiness {
       }
     };
     if(gradeid){
-      where.gradeid = gradeid;
-    }  
+      allowed = allowed.filter((id) => id.toLowerCase() === gradeid.toLowerCase());
+    }
+    where.gradeid = { [Op.in]: allowed };
     const order = ["levelname"];
 
     return await levels.findAll({ where, order });

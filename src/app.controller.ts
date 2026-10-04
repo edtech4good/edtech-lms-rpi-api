@@ -1,4 +1,5 @@
 // import { TokenType, Claim as claimenum } from '@armax_cloud/fortyk-entities/build/models/enums';
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { Controller, Get } from '@nestjs/common';
 import { ApiExtraModels, ApiTags } from '@nestjs/swagger';
 import { IErrorResponse } from './models/IErrorResponse';
@@ -21,11 +22,13 @@ export class AppController {
   // @UseGuards(AccessGuard(TokenType.ACCESS))
   // @Claim(claimenum.access, claimenum.activateuser)
   @Get()
+  @OrgPolicy("public")
   getbase(): string {
     return 'FORTYK API !!!';
   }
 
   @Get('version')
+  @OrgPolicy("public")
   getversion(): string {
     return "1.0.0";
   }

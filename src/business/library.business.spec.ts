@@ -7,6 +7,7 @@ import { students } from "src/models/data-models/students";
 import { studentgradesprogress } from "src/models/data-models/studentgradesprogress";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
+import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
 import { LibraryBusiness } from "./library.business";
 
@@ -18,7 +19,14 @@ import { LibraryBusiness } from "./library.business";
  * sends).
  */
 describe("LibraryBusiness.getLibrary", () => {
-  const user: Token = { studentid: "student-1", schooluserid: "su-1" };
+  // A learner of an organisation's school (the claims a sign-in puts in the token).
+  const user: Token = {
+    studentid: "student-1",
+    schooluserid: "su-1",
+    schooluserrole: SchoolRole.STUDENT,
+    organisationid: "org-1",
+    schoolid: "school-1",
+  };
 
   let studentsFindOne: jest.SpyInstance;
   let curriculumsFindAll: jest.SpyInstance;
@@ -49,6 +57,9 @@ describe("LibraryBusiness.getLibrary", () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
+
+  // The library's own read of curricula (the one that filters on status), not the ownership read before it.
+  const libraryCurriculumQuery = () => curriculumsFindAll.mock.calls.map((c) => c[0]).find((o: any) => o?.where?.curriculumstatus !== undefined);
 
   const fullFixture = () => {
     studentsFindOne.mockResolvedValue({
@@ -235,7 +246,7 @@ describe("LibraryBusiness.getLibrary", () => {
 
     await new LibraryBusiness().getLibrary(user);
 
-    const curOptions: any = curriculumsFindAll.mock.calls[0][0];
+    const curOptions: any = libraryCurriculumQuery();
     expect(curOptions.where.curriculumstatus).toBe(true);
     expect(curOptions.where.isdeleted).toBe(false);
 
@@ -299,8 +310,12 @@ describe("LibraryBusiness.getLibrary", () => {
     expect(result.curricula).toHaveLength(1);
     expect(result.curricula[0].curriculumid).toBe("cur-1");
     // The token's curriculumids claim must never reach the curricula query.
-    const curOptions: any = curriculumsFindAll.mock.calls[0][0];
+    const curOptions: any = libraryCurriculumQuery();
     expect(curOptions.where.curriculumid[Op.in]).toEqual(["cur-1"]);
+    // ... and only curricula the token's organisation owns are asked for first.
+    const ownedOptions: any = curriculumsFindAll.mock.calls[0][0];
+    expect(ownedOptions.where.organisationid).toBe("org-1");
+    expect(ownedOptions.where.curriculumid[Op.in]).toEqual(["cur-1"]);
   });
 
   it("returns generated_at as an ISO timestamp", async () => {

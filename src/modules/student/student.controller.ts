@@ -9,8 +9,12 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiQuery } from "@nestjs/swagger";
+import { ReportScope } from "src/business/report-scope";
+import { schoolScopeFromToken } from "src/business/school-identity";
 import { StudentBusiness } from "src/business/student.business";
+import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
 import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
@@ -37,6 +41,7 @@ export class StudentController {
   // benefit, since no other route here needs a role restriction — so each
   // route below carries its own single guard instead of one at class level.
   @Get('all')
+  @OrgPolicy("teacher", { note: "The learners are the token's school's; a school in the query can only narrow that.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students successfully",
@@ -64,8 +69,10 @@ export class StudentController {
     @Query("userid") userid: string = '',
     @Query("schoolname") schoolname: string = '',
     @Query("schoolid") schoolid: string = '',
+    @User() user?: Token,
   ): Promise<any> {
-    const data = await new StudentBusiness().getStudentsWithFilter(userid, schoolname, schoolid);
+    // The learners are the token's school's; a school named in the query can only narrow that.
+    const data = await new StudentBusiness().getStudentsWithFilter(userid, schoolname, schoolid, await schoolScopeFromToken(user));
     return {
         data: data,
         error: false,
@@ -73,6 +80,7 @@ export class StudentController {
   }
 
   @Post("profile")
+  @OrgPolicy("learner", { note: "Updates only the token's own learner record.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Profile update successfully",
@@ -102,6 +110,7 @@ export class StudentController {
   }
 
   @Get("progress")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched student progress successfully",
@@ -126,6 +135,7 @@ export class StudentController {
   }
 
   @Get("progress/summary")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched student progress summary successfully",
@@ -150,6 +160,7 @@ export class StudentController {
   }
 
   @Post("logintime")
+  @OrgPolicy("learner", { note: "Central calls it with the server key; a learner token gets its own login only.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "get student last login successfully",
@@ -165,13 +176,14 @@ export class StudentController {
   // Central proxies this route server-to-server (`student.business.ts`'s
   // getStudentLoginTime call there) with the sync key — see
   // edtech4good/workspace#45.
-  @UseGuards(AccessOrServerSyncGuard(TokenType.ACCESS))
+  @UseGuards(AccessOrServerSyncGuard(TokenType.ACCESS), ReportScopeGuard)
   @HttpCode(HttpStatus.OK)
   async getlogintime(
     @Body() body: any,
+    @ReportScopeOf() scope: ReportScope | null,
   ): Promise<any> {
     return {
-      data: await new StudentBusiness().getlogintime(body),
+      data: await new StudentBusiness().getlogintime(body, scope),
       error: false,
     };
   }

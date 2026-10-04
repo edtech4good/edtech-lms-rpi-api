@@ -35,7 +35,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
   it("CurriculumBusiness.getCurriculumsWithFilter binds the search term via Op.like, not sequelize.literal", async () => {
     const spy = jest.spyOn(curriculums, "findAll").mockResolvedValue([] as never);
     try {
-      await new CurriculumBusiness().getCurriculumsWithFilter(HOSTILE, "", "", "");
+      await new CurriculumBusiness().getCurriculumsWithFilter(HOSTILE, "", "", "", "");
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "curriculumname")).toBe(`%${HOSTILE}%`);
       expect(typeof likeValueOf(options.where, "curriculumname")).toBe("string");
@@ -47,7 +47,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
   it("GradeBusiness.getGradesWithFilter binds the search term via Op.like, not sequelize.literal", async () => {
     const spy = jest.spyOn(grades, "findAll").mockResolvedValue([] as never);
     try {
-      await new GradeBusiness().getGradesWithFilter(HOSTILE, "", "", "");
+      await new GradeBusiness().getGradesWithFilter(HOSTILE, "", "", "", "");
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "gradename")).toBe(`%${HOSTILE}%`);
       expect(typeof likeValueOf(options.where, "gradename")).toBe("string");

@@ -9,6 +9,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { FileInterceptor } from "@nestjs/platform-express/multer";
 import {
   ApiBearerAuth,
@@ -136,6 +137,7 @@ export class ImportController {
   // Roster imports: central's server sync key only, online and on a Pi. No
   // client sends these with a user token.
   @Put("students")
+  @OrgPolicy("server", { note: "Roster for one school; refuses rows of any other school (5c)." })
   @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
@@ -268,6 +270,7 @@ export class ImportController {
   }
 
   @Put("teachers")
+  @OrgPolicy("server", { note: "Roster for one school; refuses rows of any other school (5c)." })
   @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
@@ -358,6 +361,7 @@ export class ImportController {
   // of any role, because it assigns ownership. It writes `organisationid` and
   // the `organisations` rows and nothing else (no deletes, no logins).
   @Put("ownership")
+  @OrgPolicy("server", { note: "Central's ownership push." })
   @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
@@ -379,6 +383,10 @@ export class ImportController {
   // Content import: the server sync key, plus staff tokens on a classroom Pi
   // only, where the Android teacher app carries central's content zip in.
   @Put("master")
+  @OrgPolicy("pi-import", {
+    note: "Payload header names the organisation; on a Pi it must match the token's, or the token's school must be unowned (5c; the payload's rows are proved in src/modules/import).",
+    enforcedBy: "src/modules/org-boundary.leak.spec.ts",
+  })
   @UseGuards(
     ServerSyncGuard(SchoolRole.ADMIN, SchoolRole.SUPERADMIN, SchoolRole.TEACHER)
   )

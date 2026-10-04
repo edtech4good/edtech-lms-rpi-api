@@ -4,8 +4,8 @@ import { CurriculumBusiness } from './../../business/curriculum.business';
 import { IRequest } from 'src/models/IRequest';
 
 export const DeleteCurriculumBaseline = async (request: IRequest, data: any): Promise<Array<ValidationError | null | undefined>> => {
-  const schoolnameexits = await new CurriculumBusiness().isexitsSchoolName(data.schoolname);
-  if (!schoolnameexits) {
+  const schoolexists = await new CurriculumBusiness().isOwnSchoolLive(request.user);
+  if (!schoolexists) {
     const error = new ValidationError('Validation', {}, {});
     error.details = [];
     const erroritem: ValidationErrorItem = {

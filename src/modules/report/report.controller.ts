@@ -8,10 +8,13 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiBody, ApiQuery } from "@nestjs/swagger";
 import { ReportBusiness } from "src/business/report.business";
 import { AccessGuard } from "src/guards/access.guard";
 import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
+import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
+import { ReportScope } from "src/business/report-scope";
 import { TokenType } from "src/models/enums";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { IMultiPaging } from "src/models/IPaging";
@@ -37,9 +40,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentprogress')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -54,8 +59,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentsProgress(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getStudentsScoresData(body);
+  async getStudentsProgress(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getStudentsScoresData(body, false, scope);
     return {
       error: false,
       data: {
@@ -73,9 +78,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentprogress/class')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -90,8 +97,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getClassProgress(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getClassScoresData(body);
+  async getClassProgress(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getClassScoresData(body, false, scope);
     return {
       error: false,
       data: {
@@ -109,9 +116,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentlastcompletedquiz')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students last completed successfully",
@@ -126,8 +135,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentsLastProgress(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getStudentLastCompletedQuiz(body, false, 2);
+  async getStudentsLastProgress(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getStudentLastCompletedQuiz(body, false, 2, scope);
     return {
       error: false,
       data: {
@@ -145,9 +154,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentlevelquiz')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students level quiz successfully",
@@ -162,8 +173,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getLevelQuiz(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getLevelQuizScoresData(body);
+  async getLevelQuiz(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getLevelQuizScoresData(body, false, scope);
     return {
       error: false,
       data: {
@@ -181,9 +192,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentlevelquiz/class')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students level quiz successfully",
@@ -198,8 +211,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getClassLevelQuiz(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getClassLevelQuizScoresData(body);
+  async getClassLevelQuiz(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getClassLevelQuizScoresData(body, false, scope);
     return {
       error: false,
       data: {
@@ -217,9 +230,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentstatus')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students status successfully",
@@ -234,12 +249,12 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentStatus(@Body() body: IMultiPaging): Promise<any> {
+  async getStudentStatus(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
     const data = await new ReportBusiness().getStudentStatus({
       pageindex: body?.pageindex || 0,
       pagesize: body?.pagesize || 0,
       filter: body?.filter || [],
-    });
+    }, false, scope);
     return {
       error: false,
       data: {
@@ -257,9 +272,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('student-grade-progress')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched student grade progress successfully",
@@ -274,12 +291,12 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentGradeProgress(@Body() body: IMultiPaging): Promise<any> {
+  async getStudentGradeProgress(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
     const data = await new ReportBusiness().getStudentGradeProgress({
       pageindex: body?.pageindex || 0,
       pagesize: body?.pagesize || 0,
       filter: body?.filter || [],
-    });
+    }, scope);
     return {
       error: false,
       data: {
@@ -298,9 +315,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('student-level-progress')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched student level progress successfully",
@@ -315,12 +334,12 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentLevelProgress(@Body() body: IMultiPaging): Promise<any> {
+  async getStudentLevelProgress(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
     const data = await new ReportBusiness().getStudentLevelProgress({
       pageindex: body?.pageindex || 0,
       pagesize: body?.pagesize || 0,
       filter: body?.filter || [],
-    });
+    }, scope);
     return {
       error: false,
       data: {
@@ -339,9 +358,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('student-lesson-progress')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched student lesson progress successfully",
@@ -356,12 +377,12 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentLessonProgress(@Body() body: IMultiPaging): Promise<any> {
+  async getStudentLessonProgress(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
     const data = await new ReportBusiness().getStudentLessonProgress({
       pageindex: body?.pageindex || 0,
       pagesize: body?.pagesize || 0,
       filter: body?.filter || [],
-    });
+    }, scope);
     return {
       error: false,
       data: {
@@ -380,9 +401,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Get('offlineonline')
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students offline-online successfully",
@@ -403,8 +426,9 @@ export class ReportController {
     @Query("schoolname") schoolname: string = '',
     @Query("countryid") countryid: string = '',
     @Query("schoolid") schoolid: string = '',
+    @ReportScopeOf() scope: ReportScope | null,
   ): Promise<any> {
-    const data = await new ReportBusiness().getStudentsOfflineOnline(schoolname, countryid, schoolid);
+    const data = await new ReportBusiness().getStudentsOfflineOnline(schoolname, countryid, schoolid, scope);
     return {
         data: data,
         error: false,
@@ -417,9 +441,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentprogress/download')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -434,8 +460,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentsQuizzes(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getStudentsScoresData(body, true);
+  async getStudentsQuizzes(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getStudentsScoresData(body, true, scope);
     return {
       error: false,
       data: data.rows,
@@ -448,9 +474,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post("studentlastcompletedquiz/download")
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "download current level sucesfully",
@@ -467,8 +495,9 @@ export class ReportController {
   @HttpCode(HttpStatus.OK)
   async downloadOfflineCurrentLevel(
     @Body() body: IMultiPaging,
+    @ReportScopeOf() scope: ReportScope | null,
   ) {
-    const data = await new ReportBusiness().getStudentLastCompletedQuiz(body, true, 2);
+    const data = await new ReportBusiness().getStudentLastCompletedQuiz(body, true, 2, scope);
     return {
       error: false,
       data: data.lastcompletedlessonquiz,
@@ -481,9 +510,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentlevelquiz/download')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -498,8 +529,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentsLevelQuizzes(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getLevelQuizScoresData(body, true);
+  async getStudentsLevelQuizzes(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getLevelQuizScoresData(body, true, scope);
     return {
       error: false,
       data: data.rows,
@@ -512,9 +543,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentlevelquiz/class/download')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -529,8 +562,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getClassLevelQuizzes(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getClassLevelQuizScoresData(body, true);
+  async getClassLevelQuizzes(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getClassLevelQuizScoresData(body, true, scope);
     return {
       error: false,
       data: data.rows,
@@ -543,9 +576,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentstatus/download')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -560,8 +595,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getStudentsActivity(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getStudentStatus(body, true);
+  async getStudentsActivity(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getStudentStatus(body, true, scope);
     return {
       error: false,
       data: data.rows,
@@ -574,9 +609,11 @@ export class ReportController {
     SchoolRole.ADMIN,
     SchoolRole.SUPERADMIN,
     SchoolRole.TEACHER
-    )
+    ),
+    ReportScopeGuard
   )
   @Post('studentprogress/class/download')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -591,8 +628,8 @@ export class ReportController {
   })
   @ApiBody({ required: false, type: IMultiPaging })
   @HttpCode(HttpStatus.OK)
-  async getClassActivity(@Body() body: IMultiPaging): Promise<any> {
-    const data = await new ReportBusiness().getClassScoresData(body, true);
+  async getClassActivity(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getClassScoresData(body, true, scope);
     return {
       error: false,
       data: data.rows,

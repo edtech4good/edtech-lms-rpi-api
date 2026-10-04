@@ -2,6 +2,8 @@ import { decode } from "jsonwebtoken";
 import { DatabaseError, Sequelize } from "sequelize";
 import { SchoolBusiness } from "./school.business";
 import { initModels } from "src/models/data-models/init-models";
+import { Config } from "src/config";
+import { organisations } from "src/models/data-models/organisations";
 import { schools } from "src/models/data-models/school";
 import { schoolusers } from "src/models/data-models/schoolusers";
 import { students } from "src/models/data-models/students";
@@ -14,8 +16,11 @@ import { TokenBusiness } from "./token.business";
 /**
  * Learner and teacher tokens carry the school id and the school's organisation
  * (organisations package, step 5a). Pinned here: where each claim comes from,
- * that a school with no organisation (or no school at all) still signs in, and
- * that nothing is refused on these claims yet.
+ * and (package 8) who is refused at sign-in: a login whose school or organisation
+ * cannot be resolved, or whose organisation is suspended or deleted, gets a 401 with
+ * one neutral message. A classroom Pi (`RPI_OFFLINE`) whose school is here but has
+ * no organisation yet is the one exception: sign-in succeeds with no organisation
+ * claim, so that the content import can give the school its owner.
  *
  * The models are stubbed, so this proves the lookups and the claim values, not
  * the SQL; `ownership-scope.spec.ts` proves the SQL reads the new columns only
@@ -36,6 +41,9 @@ type Stubs = {
   userSchoolId?: string | null;
   /** The schools that exist, by id and by name. */
   schools: Array<{ schoolid: string; schoolname: string; uitheme: string; organisationid: string | null }>;
+  /** Organisations that exist but are suspended / deleted (any other organisation id is active). */
+  suspended?: string[];
+  deleted?: string[];
 };
 
 let schoolFindOne: jest.Mock;
@@ -85,6 +93,14 @@ const stub = (s: Stubs) => {
     return found ?? null;
   });
   jest.spyOn(schools, "scope").mockReturnValue({ findOne: schoolFindOne } as never);
+  jest.spyOn(organisations, "findOne").mockImplementation((async (opts: { where: { organisationid: string } }) => {
+    const id = opts.where.organisationid;
+    return {
+      organisationid: id,
+      organisationstatus: !(s.suspended ?? []).includes(id),
+      isdeleted: (s.deleted ?? []).includes(id),
+    };
+  }) as never);
   jest.spyOn(tokens, "destroy").mockResolvedValue(0 as never);
   jest.spyOn(tokens, "create").mockResolvedValue({} as never);
 };
@@ -111,7 +127,13 @@ afterAll(async () => {
   await sequelize.close();
 });
 
-afterEach(() => jest.restoreAllMocks());
+const originalOffline = Config.fortyk.api.rpi.offline;
+afterEach(() => {
+  Config.fortyk.api.rpi.offline = originalOffline;
+  jest.restoreAllMocks();
+});
+
+const REFUSED = { code: "SIGN_IN_REQUIRED", status: 401, message: "This account can't sign in right now." };
 
 describe("login token claims: schoolid and organisationid", () => {
   it("resolves the school by NAME, as before ids existed, and takes organisationid from it", async () => {
@@ -147,11 +169,12 @@ describe("login token claims: schoolid and organisationid", () => {
     expect(claims.organisationid).toBe(SCHOOL_Y.organisationid);
   });
 
-  it("when the name finds no school and the stored id matches none either, both claims are null and it still signs in", async () => {
+  it("when the name finds no school and the stored id matches none either, the login cannot sign in (401), online or on a Pi", async () => {
     stub({ studentSchoolId: "5c000000-0000-4000-8000-00000000dead", user: { schoolname: "Nowhere" }, schools: [SCHOOL_Y] });
-    const claims = await signIn();
-    expect(claims.schoolid).toBeNull();
-    expect(claims.organisationid).toBeNull();
+    for (const offline of [false, true]) {
+      Config.fortyk.api.rpi.offline = offline;
+      await expect(signIn()).rejects.toMatchObject(REFUSED);
+    }
   });
 
   it("a teacher (no learner row) gets the same claims from the school-login row", async () => {
@@ -162,35 +185,65 @@ describe("login token claims: schoolid and organisationid", () => {
     expect(claims.schooluserrole).toBe(SchoolRole.TEACHER);
   });
 
-  it("a login whose school has no organisation still signs in, with organisationid null", async () => {
+  it("a login whose school has no organisation cannot sign in online (401, one neutral message)", async () => {
     stub({ user: { schoolname: "School Z" }, schools: [SCHOOL_NO_ORG] });
+    Config.fortyk.api.rpi.offline = false;
+    await expect(signIn()).rejects.toMatchObject(REFUSED);
+  });
+
+  it("on a classroom Pi, a login whose school is here but has no organisation yet DOES sign in, with organisationid null (the bootstrap window)", async () => {
+    stub({ user: { schoolname: "School Z" }, schools: [SCHOOL_NO_ORG] });
+    Config.fortyk.api.rpi.offline = true;
     const claims = await signIn();
     expect(claims.schoolid).toBe(SCHOOL_NO_ORG.schoolid);
     expect(claims.organisationid).toBeNull();
     expect(claims.sub).toBe("u1");
   });
 
-  it("a school with no organisation, reached through the stored id, also signs in with organisationid null", async () => {
+  it("a school with no organisation, reached through the stored id: refused online, signs in on a Pi", async () => {
     stub({ userSchoolId: SCHOOL_NO_ORG.schoolid, user: { schoolname: "Nowhere" }, schools: [SCHOOL_NO_ORG] });
+    Config.fortyk.api.rpi.offline = false;
+    await expect(signIn()).rejects.toMatchObject(REFUSED);
+    Config.fortyk.api.rpi.offline = true;
     const claims = await signIn();
     expect(claims.schoolid).toBe(SCHOOL_NO_ORG.schoolid);
     expect(claims.organisationid).toBeNull();
   });
 
-  it("a login with no resolvable school at all still signs in: both claims null, theme kids", async () => {
+  it("a login with no resolvable school at all cannot sign in, online or on a Pi (a Pi's bootstrap needs a school that is here)", async () => {
     stub({ studentSchoolId: null, userSchoolId: null, user: { schoolname: "Nowhere" }, schools: [SCHOOL_X] });
-    const claims = await signIn();
-    expect(claims.schoolid).toBeNull();
-    expect(claims.organisationid).toBeNull();
-    expect(claims.uitheme).toBe("kids");
-    expect(claims.studentid).toBe("st1");
+    for (const offline of [false, true]) {
+      Config.fortyk.api.rpi.offline = offline;
+      await expect(signIn()).rejects.toMatchObject(REFUSED);
+    }
   });
 
-  it("a teacher with no learner row and no school still signs in", async () => {
+  it("a teacher with no learner row and no school cannot sign in", async () => {
     stub({ student: null, user: { schooluserrole: SchoolRole.TEACHER, schoolname: "" }, schools: [] });
+    await expect(signIn()).rejects.toMatchObject(REFUSED);
+  });
+
+  it("a login whose organisation is suspended, or deleted, cannot sign in, online or on a Pi, and the message does not say which", async () => {
+    const cases: Array<[string, Partial<Stubs>]> = [
+      ["suspended", { suspended: [SCHOOL_X.organisationid] }],
+      ["deleted", { deleted: [SCHOOL_X.organisationid] }],
+    ];
+    for (const [name, extra] of cases) {
+      stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X], ...extra });
+      for (const offline of [false, true]) {
+        Config.fortyk.api.rpi.offline = offline;
+        const refusal = await signIn().catch((e) => e);
+        expect({ name, code: refusal.code, status: refusal.status, message: refusal.message }).toEqual({ name, ...REFUSED });
+      }
+      jest.restoreAllMocks();
+    }
+  });
+
+  it("a login of an active organisation's school signs in on a Pi too (the exception is only for a school with no organisation)", async () => {
+    stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X] });
+    Config.fortyk.api.rpi.offline = true;
     const claims = await signIn();
-    expect(claims.schoolid).toBeNull();
-    expect(claims.organisationid).toBeNull();
+    expect(claims.organisationid).toBe(SCHOOL_X.organisationid);
   });
 
   it("a removed learner is still refused with NOT_ALLOWED, before any school or organisation lookup", async () => {
@@ -238,8 +291,9 @@ describe("a database the organisations migration has not reached (MySQL 1054 on 
     await expect(new SchoolBusiness().getTheme("School X")).rejects.toThrow("deadlock");
   });
 
-  it("a whole login on such a database still signs in, with the claims it had before (schoolid by name, no organisation)", async () => {
+  it("a whole login on such a database signs in on a classroom Pi with the claims it had before (schoolid by name, no organisation), and is refused online", async () => {
     stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X] });
+    Config.fortyk.api.rpi.offline = true;
     jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
     jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
     jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL_X.schoolid, uitheme: "corporate" } as never);
@@ -247,5 +301,7 @@ describe("a database the organisations migration has not reached (MySQL 1054 on 
     expect(claims.schoolid).toBe(SCHOOL_X.schoolid);
     expect(claims.uitheme).toBe("corporate");
     expect(claims.organisationid).toBeNull();
+    Config.fortyk.api.rpi.offline = false;
+    await expect(signIn()).rejects.toMatchObject(REFUSED);
   });
 });

@@ -361,7 +361,8 @@ describe("Server sync key router sweep (edtech4good/workspace#45)", () => {
 
   const send = (method: string, path: string) => {
     const m = method.toLowerCase() as "get" | "post" | "put" | "patch" | "delete";
-    return request(app.getHttpServer())[m](path).set("Authorization", syncKey());
+    // `X-Organisation-Id: platform` is what central sends for a platform user: the report routes refuse a key call without it.
+    return request(app.getHttpServer())[m](path).set("Authorization", syncKey()).set("X-Organisation-Id", "platform");
   };
 
   it("enumerated at least every route this spec knows about (sweep isn't silently empty)", () => {
