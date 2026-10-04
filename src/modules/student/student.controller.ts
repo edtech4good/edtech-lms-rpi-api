@@ -58,12 +58,14 @@ export class StudentController {
   )
   @ApiQuery({ name: "userid", required: false, type: 'string' })
   @ApiQuery({ name: "schoolname", required: false, type: 'string' })
+  @ApiQuery({ name: "schoolid", required: false, type: 'string' })
   @HttpCode(HttpStatus.OK)
   async getAllCurriculums(
     @Query("userid") userid: string = '',
     @Query("schoolname") schoolname: string = '',
+    @Query("schoolid") schoolid: string = '',
   ): Promise<any> {
-    const data = await new StudentBusiness().getStudentsWithFilter(userid, schoolname);
+    const data = await new StudentBusiness().getStudentsWithFilter(userid, schoolname, schoolid);
     return {
         data: data,
         error: false,

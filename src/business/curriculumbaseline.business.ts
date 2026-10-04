@@ -2,7 +2,6 @@ import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { curriculumbaseline, curriculumbaselineAttributes } from "src/models/data-models/curriculumbaseline";
-import { schools, schoolsAttributes } from "src/models/data-models/school";
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { dbinstance } from "src/services/dbservice";
 import { endOfDay, startOfDay } from "date-fns";
@@ -91,12 +90,9 @@ export class CurriculumBaseLineBusiness {
     },
   });
 
-  getCurriculumBaseline = async(curriculumid: string,schoolname: string) =>{
-    const where: WhereOptions<schoolsAttributes> = {
-      schoolname,
-      isdeleted: false,
-    }
-    const school = await schools.findOne({where});
+  // The school is given by its id: the route resolves the name it is sent once, to
+  // a live school, and `undefined`/`null` is a school nobody has.
+  getCurriculumBaseline = async(curriculumid: string,schoolid: string | null | undefined) =>{
     const baseline = await curriculumbaseline.findOne({
       where:{
         curriculumid,
@@ -104,31 +100,15 @@ export class CurriculumBaseLineBusiness {
         isdeleted: false,
       }
     })
-    
-    // const base = baseline?.schoolid.find(schoolid => {
-    //   if(schoolid === school?.schoolid){
-    //     return baseline;
-    //   }
-    // })
 
-    for(const schoolid of baseline?.schoolid ?? ''){
-      if(schoolid === school?.schoolid){
+    for(const baselineschoolid of baseline?.schoolid ?? ''){
+      if(schoolid && baselineschoolid === schoolid){
         return baseline;
       }
     }
   }
 
-  getSchoolid = async(schoolname: string) =>{
-    const where: WhereOptions<schoolsAttributes> = {
-      schoolname,
-      isdeleted: false,
-    }
-    const school = await schools.findOne({where});
-    return school?.schoolid;
-  }
-
-  GetStudentBaseline = async(curriculumid: string,studentid: string, schoolname: string, currentdate: number) =>{
-    const getSchoolid = await this.getSchoolid(schoolname);
+  GetStudentBaseline = async(curriculumid: string,studentid: string, schoolid: string | null | undefined, currentdate: number) =>{
     const whereBaseline: WhereOptions<curriculumbaselineAttributes> = {
       curriculumid,
       baselinestatus: true,
@@ -148,8 +128,8 @@ export class CurriculumBaseLineBusiness {
     const endDate = endOfDay(new Date(baseline?.enddate ?? ''));
     const currentDate = new Date(currentdate);
 
-    for(const schoolid of baseline?.schoolid ?? ''){
-      if(schoolid === getSchoolid){
+    for(const baselineschoolid of baseline?.schoolid ?? ''){
+      if(schoolid && baselineschoolid === schoolid){
         if(baseline?.baselinestatus && !student){
           if(currentDate >= startDate && currentDate <= endDate){
             return true;

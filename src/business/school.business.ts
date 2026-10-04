@@ -1,7 +1,9 @@
 import { DatabaseError } from "sequelize";
+import { ApiError } from "src/models/ApiError";
 import { schools } from "src/models/data-models/school";
 import { schoolusers } from "src/models/data-models/schoolusers";
 import { students } from "src/models/data-models/students";
+import { resolveSchoolRef } from "./school-identity";
 
 export class SchoolBusiness {
   getSchoolByName = (schoolname?: unknown) => {
@@ -17,11 +19,25 @@ export class SchoolBusiness {
 
   /** Powers the unguarded `GET /school/branding` route. Always resolves — an
    * absent/unknown school falls back to the kids theme rather than erroring,
-   * so the app can render before it knows anything about the school. */
+   * so the app can render before it knows anything about the school.
+   *
+   * The school is named by its name (as ever) or by its id; a name is resolved to
+   * an id once and the school is read by that id. A name that matches more than
+   * one school gives the default theme, like an unknown one (names are unique
+   * today, so this is not reachable). */
   getBranding = async (
-    schoolname?: unknown
+    schoolname?: unknown,
+    schoolid?: unknown
   ): Promise<{ uitheme: string; brandingconfig: object | null }> => {
-    const school = await this.getSchoolByName(schoolname);
+    let school: schools | null = null;
+    try {
+      const id = await resolveSchoolRef({ schoolid, schoolname });
+      school = id ? await schools.findOne({ where: { schoolid: id } }) : null;
+    } catch (e) {
+      if (!(e instanceof ApiError)) {
+        throw e;
+      }
+    }
     return {
       uitheme: school?.uitheme ?? "kids",
       brandingconfig: school?.brandingconfig ?? null,

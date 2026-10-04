@@ -425,6 +425,9 @@ export class ImportController {
           await syncb.baselinequestion(newsync.baselinequestion);
           await syncb.lessonplans(newsync.lessonplans);
           await syncb.subject(newsync.subjects);
+          // The tables above were deleted and re-created: give schools and content
+          // back their owning organisation, and keep learners tied to their school.
+          await syncb.restoreOwnership();
         } finally {
           await dbinstance
             .getdbinstance()

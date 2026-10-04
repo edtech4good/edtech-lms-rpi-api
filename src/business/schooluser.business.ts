@@ -10,6 +10,7 @@ import {
   schoolusersAttributes,
   students,
 } from "../models/data-models/init-models";
+import { withImportSchoolIds } from "./school-identity";
 
 export class SchoolUserBusiness {
   importschooluser = async (newschooluser: schoolusers) => {
@@ -30,7 +31,10 @@ export class SchoolUserBusiness {
       // STUDENT here stored them as students and, because `schooluserrole` is in
       // `updateOnDuplicate`, a re-sync overwrote an existing teacher TEACHER->STUDENT.
       // Fall back to STUDENT only if a row arrives without a role.
-      newschooluser.map((x) => ({
+      //
+      // `schoolid` follows the row's school (the id it carries, else its name
+      // resolved), so the id is rewritten with the name and never left stale.
+      (await withImportSchoolIds(newschooluser, tnx)).map((x) => ({
         ...x,
         schooluserrole: x.schooluserrole ?? SchoolRole.STUDENT,
       })),
@@ -42,6 +46,7 @@ export class SchoolUserBusiness {
           "schooluserrole",
           "schooluserstatus",
           "schoolname",
+          "schoolid",
           "isdisabled",
           // So a learner soft-deleted on central propagates here on re-sync and
           // is then refused at login. Without this, the flag would ride the
@@ -55,7 +60,7 @@ export class SchoolUserBusiness {
     transaction: Transaction
   ) =>
     schoolusers.bulkCreate(
-      newschooluser.map((x) => ({ ...x, schooluserrole: SchoolRole.TEACHER })),
+      (await withImportSchoolIds(newschooluser, transaction)).map((x) => ({ ...x, schooluserrole: SchoolRole.TEACHER })),
       {
         transaction,
         // Upsert (matches importschoolusers). Without this a re-import of an
@@ -69,6 +74,7 @@ export class SchoolUserBusiness {
           "schooluserrole",
           "schooluserstatus",
           "schoolname",
+          "schoolid",
           "isdisabled",
           "isdeleted",
         ],

@@ -24,6 +24,7 @@ import { students, studentsAttributes } from "src/models/data-models/students";
 import { Default_Test_Student_ID } from "src/models/enums/user.enum";
 import { IMultiPaging } from "src/models/IPaging";
 import { buildCustomWhere } from "src/services/util.service";
+import { findSchoolIdByName, resolveSchoolScope, schoolOfStudent, studentsOfSchool } from "./school-identity";
 
 export interface ChartItemFormat {
     name: Date | string;
@@ -211,7 +212,7 @@ export class ReportBusiness {
                     attributes: ['standardname']
                 });
                 const schoolcountry = await schools.findOne({
-                    where: { schoolname: student?.schoolname },
+                    where: schoolOfStudent(student?.studentid),
                     attributes: ['schoolname'],
                     include: [
                         {
@@ -417,7 +418,7 @@ export class ReportBusiness {
                     attributes: ['standardname']
                 });
                 const schoolcountry = await schools.findOne({
-                    where: { schoolname: std?.schoolname },
+                    where: schoolOfStudent(std?.studentid),
                     attributes: ['schoolname'],
                     include: [
                         {
@@ -600,8 +601,19 @@ export class ReportBusiness {
             offset = limit * ((paging.pageindex || 1) - 1);
         }
         buildCustomWhere(paging.filter ?? [], {key: 'countryid', fields: '$school.countryid$', where: where});
-        buildCustomWhere(paging.filter ?? [], {key: 'schoolname', fields: '$school.schoolname$', where: where});
         buildCustomWhere(paging.filter ?? [], {key: 'schoolid', fields: '$school.schoolid$', where: where});
+        // A school filter sent as a name (one, or several) is resolved to ids once; the
+        // rows are limited by id. An unknown name matches no learner. When an id filter
+        // is sent as well, both must hold.
+        const schoolnamefilter = paging.filter?.filter(f => f.key === 'schoolname' && f.value).pop();
+        if(schoolnamefilter) {
+            const ids: string[] = [];
+            for(const name of [schoolnamefilter.value].flat()) {
+                const id = await findSchoolIdByName(name);
+                if(id) ids.push(id);
+            }
+            (where as any)[Op.and] = [{ '$school.schoolid$': { [Op.in]: ids } }];
+        }
         buildCustomWhere(paging.filter ?? [], {fields: 'standard', where: where});
         buildCustomWhere(paging.filter ?? [], {fields: 'studentid', where: where});
         buildCustomWhere(paging.filter ?? [], {fields: 'startDate', where: whereUsage});
@@ -820,7 +832,7 @@ export class ReportBusiness {
                     attributes: ['standardname']
                 });
                 const schoolcountry = await schools.findOne({
-                    where: { schoolname: student?.schoolname },
+                    where: schoolOfStudent(student?.studentid),
                     attributes: ['schoolname'],
                     include: [
                         {
@@ -1028,12 +1040,15 @@ export class ReportBusiness {
         return {...studentlessonprogresses, student};
     }
 
-    getStudentsOfflineOnline = async (schoolname: string, countryid: string) => {
+    // The school is a name (as ever) or an id; a name is resolved once. A name no school
+    // has yet filters by the name, as it always did.
+    getStudentsOfflineOnline = async (schoolname: unknown, countryid: string, schoolid?: unknown) => {
         const where: WhereOptions<studentsAttributes> = {
             isactive: 1,
         }
         const wherecountry: any = {};
-        if(schoolname) where.schoolname = schoolname;
+        const school = await resolveSchoolScope({ schoolid, schoolname });
+        if(school !== undefined) Object.assign(where, studentsOfSchool(school));
         if(countryid && countryid !== 'all') wherecountry.countryid = countryid;
         const numberOfOnline = await students.count({
             where,
@@ -1218,7 +1233,7 @@ export class ReportBusiness {
                     attributes: ['standardname']
                 });
                 const schoolcountry = await schools.findOne({
-                    where: { schoolname: student?.schoolname },
+                    where: schoolOfStudent(student?.studentid),
                     attributes: ['schoolname'],
                     include: [
                         {
@@ -1414,7 +1429,7 @@ export class ReportBusiness {
                     attributes: ['standardname']
                 });
                 const schoolcountry = await schools.findOne({
-                    where: { schoolname: std?.schoolname },
+                    where: schoolOfStudent(std?.studentid),
                     attributes: ['schoolname'],
                     include: [
                         {

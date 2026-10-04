@@ -83,7 +83,7 @@ describe("search-endpoint SQL parameterization (#16)", () => {
   it("StandardBusiness.getStandardsWithFilter binds the search term via Op.like, not sequelize.literal", async () => {
     const spy = jest.spyOn(standards, "findAll").mockResolvedValue([] as never);
     try {
-      await new StandardBusiness().getStandardsWithFilter("some-school", HOSTILE);
+      await new StandardBusiness().getStandardsWithFilter({ schoolid: "some-school" }, HOSTILE);
       const options: any = spy.mock.calls[0][0];
       expect(likeValueOf(options.where, "standardname")).toBe(`%${HOSTILE}%`);
       expect(typeof likeValueOf(options.where, "standardname")).toBe("string");

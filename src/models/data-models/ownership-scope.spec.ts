@@ -91,12 +91,15 @@ describe("ownership columns stay out of everything that leaves the API (step 5a)
     expect(sql).toMatch(new RegExp(`WHERE .*\`${column}\` = 'some-id'`));
   });
 
-  it("a school included under a learner does not select organisationid, and the by-name join is unchanged", async () => {
+  it("a school included under a learner does not select organisationid, and the default join is on the school's id (step 5b)", async () => {
     const { students, schools } = models();
     const sql = await sqlThrown(() => students.findAll({ include: [{ model: schools }] }));
     expect(mentions(selectList(sql), "organisationid")).toBe(false);
     expect(mentions(selectList(sql), "schoolid")).toBe(true); // schools' own primary key, as before
-    expect(sql).toMatch(/ON `students`\.`schoolname` = `school`\.`schoolname`/);
+    expect(sql).toMatch(/ON `students`\.`schoolid` = `school`\.`schoolid`/);
+    expect(sql).not.toMatch(/`schoolname` = `school`\.`schoolname`/);
+    // the learner's own schoolid is used by the join but not selected
+    expect(selectList(sql)).not.toMatch(/`students`\.`schoolid`/);
   });
 
   it("the new by-id associations exist alongside it, join on schoolid, and select neither ownership column", async () => {
@@ -129,9 +132,10 @@ describe("ownership columns stay out of everything that leaves the API (step 5a)
     expect(mentions(sql, "schoolid")).toBe(false);
   });
 
-  it("the roster list a teacher sees selects no schoolid", async () => {
-    const sql = await sqlThrown(() => new StudentBusiness().getStudentsWithFilter("demo", "Some School"));
-    expect(mentions(sql, "schoolid")).toBe(false);
+  it("the roster list a teacher sees selects no schoolid (it filters by it)", async () => {
+    const sql = await sqlThrown(() => new StudentBusiness().getStudentsWithFilter("demo", undefined, "5c000000-0000-4000-8000-0000000000a1"));
+    expect(mentions(selectList(sql), "schoolid")).toBe(false);
+    expect(sql).toMatch(/`students`\.`schoolid` = '5c000000-0000-4000-8000-0000000000a1'/);
   });
 
   describe("the one raw query that selects students.* (teacher student stats)", () => {

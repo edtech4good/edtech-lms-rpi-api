@@ -49,14 +49,16 @@ export class GradeController {
   @ApiQuery({ name: "curid", required: false, type: 'string' })
   @ApiQuery({ name: "standardid", required: false, type: 'string' })
   @ApiQuery({ name: "schoolname", required: false, type: 'string' })
+  @ApiQuery({ name: "schoolid", required: false, type: 'string' })
   @HttpCode(HttpStatus.OK)
   async getAllGrades(
     @Query("grade") gradename: string = '',
     @Query("curid") curid: string = '',
     @Query("standardid") standardid: string = '',
     @Query("schoolname") schoolname: string = '',
+    @Query("schoolid") schoolid: string = '',
   ): Promise<any> {
-    const data = await new GradeBusiness().getGradesWithFilter(gradename, curid, standardid, schoolname);
+    const data = await new GradeBusiness().getGradesWithFilter(gradename, curid, standardid, schoolname, schoolid);
     return {
         data: data,
         error: false,

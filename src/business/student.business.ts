@@ -14,6 +14,7 @@ import {
 } from "../models/data-models/init-models";
 import { CurriculumBusiness } from "./curriculum.business";
 import { GradeBusiness } from "./grade.business";
+import { resolveSchoolScope, SchoolScope, studentsOfSchool, withImportSchoolIds } from "./school-identity";
 
 export interface StudentProgressSummaryCurrentLevel {
   levelid: string;
@@ -71,9 +72,9 @@ export class StudentBusiness {
     const student = await students.count({ where: { studentid } });
     return student > 0;
   };
-  getstudentbyschool = (schoolname: string) => {
+  getstudentbyschool = (school: SchoolScope) => {
     return students.findAll({
-      where: { schoolname },
+      where: studentsOfSchool(school),
     });
   };
   getstudentbyschooluserid = (schooluserid: string) => {
@@ -109,7 +110,10 @@ export class StudentBusiness {
     //     "is_teacher_acc"
     //   ],
     // });
-    for await (const student of newstudents) {
+    // Each row's `schoolid` follows its school name (or the id it carries), so a
+    // learner who changes school gets the new id with the new name.
+    const withSchools = await withImportSchoolIds(newstudents, transaction);
+    for await (const student of withSchools) {
       try {
         // if(student.studentid == 'c55bcaa8-2c21-44d4-a48e-2d0445a8f232' || 
         // student.studentid == 'f635c51c-2d95-4a5c-a420-6ee30a2d8721' ||
@@ -137,6 +141,7 @@ export class StudentBusiness {
             "standard",
             "schooltype",
             "schoolname",
+            "schoolid",
             "city",
             "country",
             "state",
@@ -308,13 +313,16 @@ WHERE
     return;
   }
 
-  getStudentsWithFilter = async (userid: string, schoolname: string) => {
+  // The school filter is a name (as ever) or an id; a name is resolved once. A name no
+  // school has yet filters by the name, as it always did.
+  getStudentsWithFilter = async (userid: string, schoolname: unknown, schoolid?: unknown) => {
     const where: WhereOptions<studentsAttributes> = {
       "$schooluser.schoolusername$": {
         [Op.like]: `%${userid.trim()}%`
       }
     };
-    if(schoolname) where.schoolname = schoolname;
+    const school = await resolveSchoolScope({ schoolid, schoolname });
+    if(school !== undefined) Object.assign(where, studentsOfSchool(school));
 
     return await students.findAll(
       {
