@@ -183,6 +183,12 @@ describe("login token claims: schoolid and organisationid", () => {
     expect(claims.organisationid).toBeNull();
   });
 
+  it("a removed learner is still refused with NOT_ALLOWED, before any school or organisation lookup", async () => {
+    stub({ student: { isactive: false }, studentSchoolId: SCHOOL_X.schoolid, schools: [SCHOOL_X] });
+    await expect(new AuthBusiness().login("someone", "pw")).rejects.toMatchObject({ code: "NOT_ALLOWED", status: 403 });
+    expect(schoolFindOne).not.toHaveBeenCalled();
+  });
+
   it("changes no other claim: the token still carries everything it did before", async () => {
     stub({ studentSchoolId: SCHOOL_X.schoolid, schools: [SCHOOL_X] });
     const claims = await signIn();
