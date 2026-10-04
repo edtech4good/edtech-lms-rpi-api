@@ -11,8 +11,8 @@ import {
 } from "src/models/data-models/init-models";
 import { LessonBusiness } from "src/business/lesson.business";
 import { Token } from "src/models/token.model";
-import { schools, schoolsAttributes } from "src/models/data-models/school";
 import { GradeBusiness } from "./grade.business";
+import { findSchoolIdByName, resolveSchoolRef, studentsOfSchool } from "./school-identity";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 export class CurriculumBusiness {
@@ -137,16 +137,15 @@ export class CurriculumBusiness {
     return tempdt > 0;
   };
 
-  isexitsSchoolName = async (schoolname: string) => {
-    const where: WhereOptions<schoolsAttributes> = {
-      schoolname,
-      isdeleted: false,
-    }
-    const tempdt = await schools.count({ where });
-    return tempdt > 0;
-  }
+  // Whether a live school is named by this name (the same text rule as every
+  // other by-name lookup; a name that matches two live schools is a 400).
+  isexitsSchoolName = async (schoolname: string) =>
+    (await findSchoolIdByName(schoolname, { liveOnly: true })) !== null;
 
-  getCurriculumsWithFilter = async (cur: string, studentid: string, standardid: string, schoolname: string) => {
+  // The school is a name (as ever) or an id; a name is resolved once, and an
+  // unknown one matches no learner, so the list is not narrowed to a student's
+  // curricula.
+  getCurriculumsWithFilter = async (cur: string, studentid: string, standardid: string, schoolname: unknown, schoolid?: unknown) => {
     const where: WhereOptions<curriculumsAttributes> = {
       isdeleted: false,
       curriculumstatus: true,
@@ -158,9 +157,10 @@ export class CurriculumBusiness {
       const wherestd: any = {};
       if(studentid) wherestd.studentid = studentid;
       if(standardid) wherestd.standard = standardid;
-      if(schoolname) wherestd.schoolname = schoolname;
+      const school = await resolveSchoolRef({ schoolid, schoolname });
       const std = await students.findOne({
-        where: wherestd, attributes: ['studentid','curriculumids'],
+        where: school === undefined ? wherestd : { ...wherestd, ...studentsOfSchool(school) },
+        attributes: ['studentid','curriculumids'],
       });
       if(std) where.curriculumid = {
         [Op.in]: std.curriculumids ?? []

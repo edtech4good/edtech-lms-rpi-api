@@ -13,11 +13,12 @@ export class SchoolController {
     description: "Fetched school branding successfully",
   })
   @ApiQuery({ name: "schoolname", required: false, type: "string" })
+  @ApiQuery({ name: "schoolid", required: false, type: "string" })
   @HttpCode(HttpStatus.OK)
-  async getBranding(@Query("schoolname") schoolname?: unknown): Promise<any> {
+  async getBranding(@Query("schoolname") schoolname?: unknown, @Query("schoolid") schoolid?: unknown): Promise<any> {
     return {
       error: false,
-      data: await new SchoolBusiness().getBranding(schoolname),
+      data: await new SchoolBusiness().getBranding(schoolname, schoolid),
     };
   }
 }

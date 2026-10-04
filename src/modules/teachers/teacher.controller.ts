@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import "multer";
+import { schoolIdFromToken } from "src/business/school-identity";
 import { StandardBusiness } from "src/business/standard.business";
 import { StudentBusiness } from "src/business/student.business";
 import { TeacherBusiness } from "src/business/teacher.business";
@@ -57,7 +58,7 @@ export class TeacherController {
   async getallstandards(@User() user: Token): Promise<any> {
     return {
       data: await new TeacherBusiness().getTeacherStandard(
-        user.schoolname || ""
+        await schoolIdFromToken(user)
       ),
       error: false,
     };
@@ -71,12 +72,11 @@ export class TeacherController {
   @HttpCode(HttpStatus.OK)
   async getallstats(@User() user: Token): Promise<any> {
     const tb = new TeacherBusiness();
+    const schoolid = await schoolIdFromToken(user);
     return {
       data: {
-        total: await tb.getTeacherStudentsCount(user.schoolname || ""),
-        gendercount: await tb.getTeacherStudentsGenderCount(
-          user.schoolname || ""
-        ),
+        total: await tb.getTeacherStudentsCount(schoolid),
+        gendercount: await tb.getTeacherStudentsGenderCount(schoolid),
       },
       error: false,
     };
@@ -91,7 +91,7 @@ export class TeacherController {
   async getallstudents(@User() user: Token): Promise<any> {
     const tb = new StudentBusiness();
     return {
-      data: await tb.getstudentbyschool(user.schoolname || ""),
+      data: await tb.getstudentbyschool(await schoolIdFromToken(user)),
       error: false,
     };
   }
@@ -220,7 +220,7 @@ export class TeacherController {
     @Query("standard") standardname: string = '',
     @User() user: Token
   ): Promise<any> {
-    const data = await new StandardBusiness().getStandardsWithFilter(user.schoolname ?? '', standardname);
+    const data = await new StandardBusiness().getStandardsWithFilter(await schoolIdFromToken(user), standardname);
     return {
         data: data,
         error: false,

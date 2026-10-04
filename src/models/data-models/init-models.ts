@@ -210,11 +210,9 @@ export function initModels(sequelize: Sequelize) {
   subjects.initModel(sequelize);
   organisations.initModel(sequelize);
 
-  // Ownership links (organisations package, step 5a). Added ALONGSIDE the
-  // existing by-name join (`students.belongsTo(schools, { foreignKey: "schoolname" })`
-  // in setuprelationshipforreport), which keeps its default alias `school`;
-  // nothing reads these yet. The aliases are distinct so the two cannot replace
-  // one another.
+  // Ownership links (organisations package, step 5a): the same join as the default
+  // `school` association in setuprelationshipforreport (which, since step 5b, also
+  // joins on `schoolid`), under its own alias.
   students.belongsTo(schools, {
     as: "schoolbyid",
     foreignKey: "schoolid",
@@ -446,12 +444,18 @@ export function setuprelationshipforreport(sequelize: Sequelize) {
   rpiuseraccess.belongsTo(schoolusers, {
       foreignKey: "userid",
   });
+  // A learner is joined to its school by the school's id, not by its name (the
+  // name columns stay, but nothing joins on them). `constraints: false`: the
+  // foreign key is owned by the migration.
   schools.hasMany(students, {
-    foreignKey: "schoolname",
+    foreignKey: "schoolid",
+    sourceKey: "schoolid",
+    constraints: false,
   });
   students.belongsTo(schools, {
-    foreignKey: "schoolname",
-    targetKey: "schoolname"
+    foreignKey: "schoolid",
+    targetKey: "schoolid",
+    constraints: false,
   });
   schools.belongsTo(countries, {
     as: "countries",

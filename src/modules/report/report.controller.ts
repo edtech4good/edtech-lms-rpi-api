@@ -396,13 +396,15 @@ export class ReportController {
     description: "Server error",
   })
   @ApiQuery({ name: "schoolname", required: false, type: 'string' })
+  @ApiQuery({ name: "schoolid", required: false, type: 'string' })
   @ApiQuery({ name: "countryid", required: false, type: 'string' })
   @HttpCode(HttpStatus.OK)
   async getStudentsOfflineOnline(
     @Query("schoolname") schoolname: string = '',
     @Query("countryid") countryid: string = '',
+    @Query("schoolid") schoolid: string = '',
   ): Promise<any> {
-    const data = await new ReportBusiness().getStudentsOfflineOnline(schoolname, countryid);
+    const data = await new ReportBusiness().getStudentsOfflineOnline(schoolname, countryid, schoolid);
     return {
         data: data,
         error: false,

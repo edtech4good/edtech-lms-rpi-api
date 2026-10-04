@@ -4,14 +4,19 @@ import { Op, WhereOptions } from "sequelize";
 import { standards, standardsAttributes } from "src/models/data-models/standards";
 
 export class StandardBusiness {
-  getStandardsWithFilter = async (schoolname: string, standardname: string) => {
-    if(!schoolname) throw new ApiError(ErrorCode.INVALID_INPUT, { message: 'A school name is required.' });
+  /**
+   * The classes of a school, by its id. `undefined` means the caller named no
+   * school at all, which is refused as before; `null` (a name that matches no
+   * school) matches no classes.
+   */
+  getStandardsWithFilter = async (schoolid: string | null | undefined, standardname: string) => {
+    if(schoolid === undefined) throw new ApiError(ErrorCode.INVALID_INPUT, { message: 'A school name is required.' });
     const where: WhereOptions<standardsAttributes> = {
       isdeleted: false,
       standardname: {
         [Op.like]: `%${standardname.trim()}%`,
       },
-      schoolname
+      schoolid: schoolid ?? { [Op.in]: [] },
     };
     const order = ["standardname"];
     const attributes = ['standardid', 'standardname'];

@@ -26,6 +26,7 @@ import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { Token } from "src/models/token.model";
 import { DeleteCurriculum, DeleteCurriculumBaseline } from "./curriculum.business.validator";
 import { showcurriculum, showschoolname } from "./curriculum.request.validator";
+import { findSchoolIdByName } from "src/business/school-identity";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { CurriculumBaselineDate } from "./models/CurriculumBaseline";
 @ApiTags("Curriculum")
@@ -60,14 +61,16 @@ export class CurriculumController {
   @ApiQuery({ name: "studentid", required: false, type: 'string' })
   @ApiQuery({ name: "standardid", required: false, type: 'string' })
   @ApiQuery({ name: "schoolname", required: false, type: 'string' })
+  @ApiQuery({ name: "schoolid", required: false, type: 'string' })
   @HttpCode(HttpStatus.OK)
   async getAllCurriculums(
     @Query("cur") cur: string = '',
     @Query("studentid") studentid: string = '',
     @Query("standardid") standardid: string = '',
     @Query("schoolname") schoolname: string = '',
+    @Query("schoolid") schoolid: string = '',
   ): Promise<any> {
-    const data = await new CurriculumBusiness().getCurriculumsWithFilter(cur, studentid, standardid, schoolname);
+    const data = await new CurriculumBusiness().getCurriculumsWithFilter(cur, studentid, standardid, schoolname, schoolid);
     return {
         data: data,
         error: false,
@@ -237,10 +240,12 @@ export class CurriculumController {
     @User() user: Token,
     @Body() body?: CurriculumBaselineDate,
   ): Promise<any> {
-    const baseline = await new CurriculumBaseLineBusiness().getCurriculumBaseline(curriculumid,schoolname);
+    // The school the app names is resolved to its id once; the baseline is matched by id.
+    const schoolid = await findSchoolIdByName(schoolname, { liveOnly: true });
+    const baseline = await new CurriculumBaseLineBusiness().getCurriculumBaseline(curriculumid,schoolid);
     const data = await new CurriculumBaseLineBusiness().GetStudentBaseline(
       curriculumid,studentid,
-      schoolname,
+      schoolid,
       body && body.date ? parseInt(body.date) : (new Date(new Date().toUTCString())).getTime()
     );
     let curriculumbaselineid = null;
