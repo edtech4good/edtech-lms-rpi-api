@@ -143,6 +143,27 @@ describe("resolveSchoolRef", () => {
   });
 });
 
+describe("the name fallback never reaches a row that has a school id", () => {
+  // The predicate as a row test: every key must hold (null: the column is empty; a string: the name, under the column collation).
+  const reads = (where: Record<string, unknown>, row: { schoolid: string | null; schoolname: string }) =>
+    Object.entries(where).every(([key, want]) =>
+      want === null ? row[key as "schoolid"] === null : collate(String(row[key as "schoolname"])) === collate(String(want)),
+    );
+  const rows = [
+    { schoolid: null, schoolname: "Window School" },
+    { schoolid: A, schoolname: "Window School" }, // the same name, but it has an id
+    { schoolid: B, schoolname: "window school " }, // collation-equal name, has an id
+    { schoolid: null, schoolname: "Other School" },
+  ];
+
+  it("a name scope reads only the rows with no id; an id scope reads by id alone", () => {
+    const byName = schoolPredicate({ schoolname: "Window School" }) as Record<string, unknown>;
+    expect(rows.filter((r) => reads(byName, r))).toEqual([rows[0]]);
+    const byId = schoolPredicate({ schoolid: A }) as Record<string, unknown>;
+    expect(rows.filter((r) => reads(byId, r))).toEqual([rows[1]]);
+  });
+});
+
 describe("resolveSchoolScope", () => {
   beforeEach(() => install([{ schoolid: A, schoolname: "Demo School" }]));
 
@@ -307,10 +328,12 @@ describe("the SQL of the id filters", () => {
     expect(byId).toMatch(new RegExp(`WHERE \`students\`\\.\`schoolid\` = '${A}';$`));
     expect(byId).not.toMatch(/WHERE.*schoolname/);
     const byName = await sqlOf(() => students.findAll({ where: studentsOfSchool({ schoolname: "Not Here Yet" }) }));
-    expect(byName).toMatch(/WHERE `students`\.`schoolname` = 'Not Here Yet';$/);
-    expect(byName).not.toMatch(/WHERE.*schoolid/);
-    expect(await sqlOf(() => students.findAll({ where: studentsOfSchool({ schoolname: null }) }))).toMatch(/`schoolname` IS NULL/);
+    // the name fallback reads only rows with NO school id: a learner that has an id is never reached through a name
+    expect(byName).toMatch(/WHERE `students`\.`schoolid` IS NULL AND `students`\.`schoolname` = 'Not Here Yet';$/);
+    expect(byName).not.toMatch(/`schoolid` = /);
+    expect(await sqlOf(() => students.findAll({ where: studentsOfSchool({ schoolname: null }) }))).toMatch(/`schoolid` IS NULL AND `students`\.`schoolname` IS NULL/);
     expect(schoolPredicate({ schoolid: A })).toEqual({ schoolid: A });
+    expect(schoolPredicate({ schoolname: "Foo" })).toEqual({ schoolid: null, schoolname: "Foo" });
   });
 
   it("schoolOfStudent reads the learner's school id inside the statement and escapes the id it is given", async () => {

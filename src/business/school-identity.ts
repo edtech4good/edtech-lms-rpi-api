@@ -138,9 +138,14 @@ export type SchoolScope = { schoolid: string } | { schoolname: string | null };
 /** What a token with no school at all matched before ids: learners whose name is the empty string. */
 export const NO_SCHOOL_NAME: SchoolScope = { schoolname: "" };
 
-/** The `where` for a scope, on `students` or `standards` (both carry `schoolid` and `schoolname`). */
+/**
+ * The `where` for a scope, on `students` or `standards` (both carry `schoolid` and `schoolname`).
+ * The name fallback only ever reads rows that have NO school id: those are exactly the rows of a
+ * school that has not arrived yet, and a row that has an id belongs to a school by id, so it can
+ * never be reached through a name (the column collation calls some different names equal).
+ */
 export const schoolPredicate = (scope: SchoolScope): WhereOptions =>
-  "schoolid" in scope ? { schoolid: scope.schoolid } : { schoolname: scope.schoolname };
+  "schoolid" in scope ? { schoolid: scope.schoolid } : { schoolid: null, schoolname: scope.schoolname };
 
 /**
  * A school named by a request (query parameter, filter) as a scope:

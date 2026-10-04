@@ -88,7 +88,8 @@ const run = async (fn: () => Promise<unknown>): Promise<{ sql: string[]; error?:
 };
 
 const FILTERS_ON_ID = (id: string) => new RegExp(`\`students\`\\.\`schoolid\` = '${id}'`);
-const BY_NAME = (name: string) => new RegExp(`WHERE \`students\`\\.\`schoolname\` = '${name}'`);
+// The name fallback reads only learners that have no school id: a learner with an id is never reached by a name.
+const BY_NAME = (name: string) => new RegExp(`WHERE \`students\`\\.\`schoolid\` IS NULL AND \`students\`\\.\`schoolname\` = '${name}'`);
 // A school NAME used as a filter or a join column anywhere in the statement.
 const FILTERS_ON_NAME = /`school(name)?`\s*=\s*('|`)|schoolname`\s+IN|`schoolname` =|\$school\.schoolname\$/;
 const selectList = (sql: string) => sql.slice(0, sql.search(/\sFROM\s/i));
@@ -140,8 +141,8 @@ describe("teacher routes: the token's school (id claim, or the name claim of an 
       const r = await run(() => call({ schoolname: NOT_YET }));
       expect(r.error).toBeUndefined();
       const sql = r.sql.join("\n");
-      expect(sql).toMatch(new RegExp(`\`schoolname\` = '${NOT_YET}'`));
-      expect(sql).not.toMatch(/WHERE[^;]*schoolid/);
+      expect(sql).toMatch(new RegExp(`\`schoolid\` IS NULL AND \`students\`\\.\`schoolname\` = '${NOT_YET}'|\`schoolid\` IS NULL AND \`standards\`\\.\`schoolname\` = '${NOT_YET}'`));
+      expect(sql).not.toMatch(/`schoolid` = /);
     }
     const scores = await run(() => teacher.getStudentsProgress({} as never, { schoolname: NOT_YET } as Token));
     expect(scores.sql.join("\n")).toMatch(BY_NAME(NOT_YET));
@@ -213,7 +214,7 @@ describe("teacher routes: the token's school (id claim, or the name claim of an 
     schoolRows = [];
     stub(null, null);
     const legacy = await run(() => teacher.getteacherprofile(NEW_TOKEN, "4A"));
-    expect(legacy.sql.join("\n")).toMatch(new RegExp(`\`students\`\\.\`schoolname\` = '${NAME_A}'`));
+    expect(legacy.sql.join("\n")).toMatch(new RegExp(`\`students\`\\.\`schoolid\` IS NULL AND \`students\`\\.\`schoolname\` = '${NAME_A}'`));
   });
 });
 
@@ -244,8 +245,8 @@ describe("query-parameter filters: a name (as ever) or an id, resolved once", ()
   it.each(cases)("%s: a name no school has yet filters by the name, as before ids existed; once the school exists, by its id", async (_n, call) => {
     const unknown = await run(() => call("Nobody School", undefined));
     expect(unknown.error).toBeUndefined();
-    expect(unknown.sql.join("\n")).toMatch(/`students`\.`schoolname` = 'Nobody School'/);
-    expect(unknown.sql.join("\n")).not.toMatch(/WHERE[^;]*`schoolid`/);
+    expect(unknown.sql.join("\n")).toMatch(/`students`\.`schoolid` IS NULL AND `students`\.`schoolname` = 'Nobody School'/);
+    expect(unknown.sql.join("\n")).not.toMatch(/`schoolid` = '/);
     schoolRows = [...TWO_SCHOOLS, { schoolid: "5c000000-0000-4000-8000-0000000000d4", schoolname: "Nobody School" }];
     const arrived = await run(() => call("Nobody School", undefined));
     expect(arrived.sql.join("\n")).toMatch(/`students`\.`schoolid` = '5c000000-0000-4000-8000-0000000000d4'/);
@@ -283,8 +284,8 @@ describe("the other readers", () => {
     expect(byId.sql.join("\n")).toMatch(new RegExp(`\`schoolid\` = '${A}'`));
     expect(byId.sql.join("\n")).not.toMatch(/WHERE[^;]*`schoolname`/);
     const byName = await run(() => new StandardBusiness().getStandardsWithFilter({ schoolname: "Not Here Yet" }, "4"));
-    expect(byName.sql.join("\n")).toMatch(/`schoolname` = 'Not Here Yet'/);
-    expect(byName.sql.join("\n")).not.toMatch(/WHERE[^;]*schoolid/);
+    expect(byName.sql.join("\n")).toMatch(/`standards`\.`schoolid` IS NULL AND `standards`\.`schoolname` = 'Not Here Yet'/);
+    expect(byName.sql.join("\n")).not.toMatch(/`schoolid` = /);
   });
 
   it("the offline/online count joins students to their school by id", async () => {

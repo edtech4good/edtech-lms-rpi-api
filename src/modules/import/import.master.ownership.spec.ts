@@ -332,6 +332,24 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
       expect(logged.join("\n")).not.toMatch(/School (New|Twin|Unknown)/);
     });
 
+    it("a row that already has a school id keeps it, even when a row with no id has the same school name", async () => {
+      install({
+        ...before(),
+        students: [
+          { studentid: "k1", schoolname: "School B", schoolid: S(1) }, // has an id (another school's: a stale name)
+          { studentid: "k2", schoolname: "School B", schoolid: null }, // same name, no id
+        ],
+        schoolusers: [
+          { schooluserid: "ku1", schoolname: "School B", schoolid: S(1) },
+          { schooluserid: "ku2", schoolname: "School B", schoolid: null },
+        ],
+      });
+      mockZipContaining(payload());
+      await new ImportController().completesync(file, user);
+      expect(store.students.map((r) => [r.studentid, r.schoolid])).toEqual([["k1", S(1)], ["k2", S(2)]]);
+      expect(store.schoolusers.map((r) => [r.schooluserid, r.schoolid])).toEqual([["ku1", S(1)], ["ku2", S(2)]]);
+    });
+
     it("rows that already have a school id are never touched by it", async () => {
       install(before());
       mockZipContaining(payload());
