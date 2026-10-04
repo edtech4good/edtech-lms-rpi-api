@@ -80,7 +80,7 @@ export interface TableSpec {
   parent?: Reference;
   /** Other ids the row holds, which must also be rows of this payload (so one organisation's content never points into another's). */
   refs?: Reference[];
-  /** Columns holding a LIST of ids (a JSON array), each of which must be a row of this payload. */
+  /** Columns holding a LIST of ids (a JSON array) of rows of `to`. The import keeps the entries that are rows of this payload. */
   lists?: Array<{ fk: string; to: TableKey }>;
 }
 
@@ -360,24 +360,24 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
     }
   }
 
-  // Lists of ids (a school's curricula, the schools a baseline is for): each must be a row of the payload.
+  // Lists of ids (a school's curricula, the schools a baseline is for) must be lists of ids. Which
+  // entries name rows that are not in the payload is a matter for the import, which can see what
+  // is here: it refuses the file for an entry owned by another organisation and drops the rest.
   for (const key of TABLE_KEYS) {
     const list = tables[key];
     if (!list) continue;
     for (const { fk, to } of CONTENT_TABLES[key].lists ?? []) {
-      const targets = idsOf[to];
-      if (!targets) continue;
       let bad = 0;
       for (const row of list) {
         if (!isRow(row)) continue;
         const value = row[fk];
         if (value === undefined || value === null) continue;
-        if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !targets.has(lower(id)))) {
+        if (!Array.isArray(value) || value.some((id) => !isId(id))) {
           bad += 1;
         }
       }
       if (bad) {
-        problems.add(key, `${key}: ${rows(bad)} list${bad === 1 ? "s" : ""} a ${to} row (${fk}) that is not in the payload.`);
+        problems.add(key, `${key}: ${rows(bad)} ${bad === 1 ? "has" : "have"} a ${fk} that is not a list of ${to} ids.`);
       }
     }
   }

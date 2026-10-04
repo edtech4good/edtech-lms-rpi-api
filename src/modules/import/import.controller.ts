@@ -94,6 +94,8 @@ async function rollbackQuietly(tnx: Transaction): Promise<void> {
   }
 }
 
+const CLAIM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Who may import ONE organisation's content (format 3):
  *  - central, with the server sync key: always;
@@ -102,22 +104,27 @@ async function rollbackQuietly(tnx: Transaction): Promise<void> {
  *  - on a classroom Pi only, a staff token with NO claim (its school has no organisation
  *    here yet): "bootstrap", allowed only if its own school is adoptable (see
  *    `assertOwnSchoolIsAdoptable`), which is checked after the payload is validated;
- *  - anything else (another organisation's claim, a claim that is not an id, a null claim
- *    online): 403.
+ *  - anything else (another organisation's claim, a claim that is not an organisation id,
+ *    an empty string included, a missing claim online): 403.
  */
 function organisationAccess(user: Token | undefined, organisationid: unknown): "allowed" | "bootstrap" {
   if (user?.schooluserid === SERVER_SYNC_USER_ID) {
     return "allowed";
   }
   const claim = user?.organisationid;
-  if (typeof claim === "string" && claim !== "") {
-    if (typeof organisationid === "string" && claim.toLowerCase() === organisationid.toLowerCase()) {
-      return "allowed";
+  // Only a missing claim (null or absent) is "no claim". Any other value, an empty string
+  // included, must be an organisation id, and the header's, or it is a 403.
+  if (claim === undefined || claim === null) {
+    if (Config.fortyk.api.rpi.offline) {
+      return "bootstrap";
     }
-    throw new ApiError(ErrorCode.NOT_ALLOWED);
-  }
-  if ((claim === undefined || claim === null || claim === "") && Config.fortyk.api.rpi.offline) {
-    return "bootstrap";
+  } else if (
+    typeof claim === "string" &&
+    CLAIM_ID.test(claim) &&
+    typeof organisationid === "string" &&
+    claim.toLowerCase() === organisationid.toLowerCase()
+  ) {
+    return "allowed";
   }
   throw new ApiError(ErrorCode.NOT_ALLOWED);
 }

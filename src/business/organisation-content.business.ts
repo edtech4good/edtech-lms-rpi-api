@@ -198,7 +198,7 @@ export class OrganisationContentImport {
   };
 
   private apply = async (content: OrganisationContent): Promise<void> => {
-    const { organisationid, tables } = content;
+    const { organisationid } = content;
     const t = this.transaction;
 
     // What this organisation owns here now, before anything is changed.
@@ -207,6 +207,7 @@ export class OrganisationContentImport {
 
     // Refused from reads alone, before the first write.
     await this.refuseRowsOfOtherOrganisations(content);
+    const tables = await this.trimLists(content);
 
     await organisations.bulkCreate([{ ...content.organisation }] as never, { transaction: t, updateOnDuplicate: ORGANISATION_UPDATE as never });
     this.counts.organisations.written = 1;
@@ -264,6 +265,70 @@ export class OrganisationContentImport {
   };
 
   // ---------------------------------------------------------------------------
+
+  /**
+   * The payload's columns that hold a list of ids of rows of another table (a school's
+   * curricula, the schools a baseline is for) keep only the entries that are rows of the
+   * payload. An entry that names a row owned by ANOTHER organisation here refuses the file;
+   * any other entry the payload does not carry (owned by no one here, or here nowhere) is
+   * dropped from the list that is stored, and counted in the log (no ids).
+   */
+  private trimLists = async (content: OrganisationContent): Promise<Record<TableKey, Row[]>> => {
+    const header = lower(content.organisationid);
+    const tables = { ...content.tables };
+    const dropped: string[] = [];
+    const foreign: string[] = [];
+    for (const key of TABLE_KEYS) {
+      for (const { fk, to } of CONTENT_TABLES[key].lists ?? []) {
+        const inPayload = new Set(content.tables[to].map((r) => lower(String(r[PKS[to]]))));
+        const outside = new Set<string>();
+        for (const row of content.tables[key]) {
+          for (const id of (row[fk] as string[] | null | undefined) ?? []) {
+            if (!inPayload.has(lower(id))) outside.add(id);
+          }
+        }
+        if (outside.size === 0) continue;
+        const owners = new Map<string, string | null>();
+        for (const part of chunk([...outside], CHUNK)) {
+          const found = (await MODELS[to].scope("withOwnership").findAll({
+            attributes: [PKS[to], "organisationid"],
+            where: { [PKS[to]]: { [Op.in]: part } },
+            raw: true,
+            transaction: this.transaction,
+          })) as unknown as Array<Record<string, string | null>>;
+          for (const r of found) owners.set(lower(String(r[PKS[to]])), r.organisationid ?? null);
+        }
+        const isForeign = (id: string) => {
+          const owner = owners.get(lower(id));
+          return owner !== undefined && owner !== null && owner !== "" && lower(owner) !== header;
+        };
+        const foreignEntries = [...outside].filter(isForeign).length;
+        if (foreignEntries > 0) {
+          foreign.push(`${key}.${fk}: ${foreignEntries} ${foreignEntries === 1 ? "entry names a row" : "entries name rows"} owned by another organisation here`);
+          continue;
+        }
+        let drops = 0;
+        tables[key] = content.tables[key].map((row) => {
+          const list = row[fk] as string[] | null | undefined;
+          if (!Array.isArray(list)) return row;
+          const kept = list.filter((id) => inPayload.has(lower(id)));
+          drops += list.length - kept.length;
+          return kept.length === list.length ? row : { ...row, [fk]: kept };
+        });
+        dropped.push(`${key}.${fk} ${drops}`);
+      }
+    }
+    if (foreign.length > 0) {
+      throw new ApiError(ErrorCode.INVALID_INPUT, {
+        message: `The payload lists rows that belong to another organisation here. Nothing was written. ${foreign.join("; ")}.`,
+        fields: foreign.map((message) => ({ field: message.split(".")[0], message })),
+      });
+    }
+    if (dropped.length > 0) {
+      Logger.info(`import contents for one organisation: list entries not in the payload were dropped (${dropped.join(", ")})`);
+    }
+    return tables;
+  };
 
   /** The ids of the rows of an owned table that `organisationid` owns here (as stored). */
   private idsOwnedBy = async (key: TableKey, organisationid: string): Promise<string[]> => {

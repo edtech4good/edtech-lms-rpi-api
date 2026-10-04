@@ -445,6 +445,96 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(canon(store)).toEqual(once);
     });
 
+    describe("lists of ids (schools.curriculums, curriculumbaselines.schoolid)", () => {
+      it("an entry that names a row owned by another organisation here refuses the whole file, nothing written", async () => {
+        install(dbBefore());
+        const p = content("x", 1, ORG_X);
+        p.schools[0].curriculums = ["x-cur-1", "y-cur-1"];
+        await expect(importIt(payloadOf(p))).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/schools\.curriculums: 1 entry names a row owned by another organisation/) });
+        const q = content("x", 1, ORG_X);
+        q.curriculumbaselines[0].schoolid = ["x-school-1", "y-school-1"];
+        await expect(importIt(payloadOf(q))).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/curriculumbaselines\.schoolid: 1 entry names a row owned by another organisation/) });
+        expect(writes).toEqual([]);
+        expect(tnx.commit).not.toHaveBeenCalled();
+      });
+
+      it("every other entry the payload does not carry (unowned here, existing nowhere, this organisation's own absent row) is dropped from the stored list, and counted without ids", async () => {
+        install(dbBefore());
+        const p = content("x", 1, ORG_X);
+        p.schools[0].curriculums = ["u-cur-1", "x-cur-1", "no-such-curriculum", "x-cur-3"];
+        p.curriculumbaselines[0].schoolid = ["u-school-1", "x-school-1", "no-such-school"];
+        await importIt(payloadOf(p));
+        expect(store.schools.find((s) => s.schoolid === "x-school-1")?.curriculums).toEqual(["x-cur-1"]);
+        expect(store.curriculumbaselines.find((b) => b.curriculumbaselineid === "x-bl-1")?.schoolid).toEqual(["x-school-1"]);
+        const line = logged.find((l) => /list entries not in the payload were dropped/.test(l)) ?? "";
+        expect(line).toContain("schools.curriculums 3");
+        expect(line).toContain("curriculumbaselines.schoolid 2");
+        expect(line).not.toMatch(/u-cur-1|no-such|x-cur-3/);
+      });
+
+      it("a list that is already the payload-only subset, empty, or absent is stored as it is, with nothing logged", async () => {
+        install({});
+        const p = content("x", 1, ORG_X);
+        p.schools[0].curriculums = ["x-cur-1"];
+        p.curriculumbaselines[0].schoolid = null;
+        await importIt(payloadOf(p));
+        expect(store.schools[0].curriculums).toEqual(["x-cur-1"]);
+        expect(store.curriculumbaselines[0].schoolid).toBeNull();
+        expect(logged.some((l) => /list entries not in the payload/.test(l))).toBe(false);
+      });
+    });
+
+    describe("a row that moves over from a curriculum that left the payload brings what hangs from it (at every level)", () => {
+      // x-cur-3 is absent; the payload (x1) takes one of its rows into x1 and carries nothing under it
+      const canon = (st: Store) => Object.fromEntries(Object.entries(st).map(([t, rs]) => [t, rs.map((r) => JSON.stringify(r)).sort()]));
+      const moves = async (change: (p: Store) => void, gone: Array<[string, string, string]>) => {
+        install(dbBefore());
+        const payload = content("x", 1, ORG_X);
+        change(payload);
+        await importIt(payloadOf(payload));
+        for (const [table, pk, id] of gone) {
+          expect(store[table].some((r) => r[pk] === id)).toBe(false);
+        }
+        // the rest of the absent curriculum is untouched
+        expect(store.curriculums.find((c) => c.curriculumid === "x-cur-3")).toMatchObject({ isdeleted: true });
+        expect(store.grades.some((g) => g.gradeid === "x-grade-3")).toBe(true);
+        const once = canon(store);
+        await importIt(payloadOf(payload));
+        expect(canon(store)).toEqual(once);
+      };
+
+      it("a level: its lessons and everything under them, and its level quiz rows, are gone", () =>
+        moves((p) => p.levels.push({ levelid: "x-level-3", gradeid: "x-grade-1" }), [
+          ["lessons", "lessonid", "x-lesson-3"],
+          ["lessonlearnings", "lessonlearningid", "x-ll-3"],
+          ["lessonplans", "lessonplanid", "x-lp-3"],
+          ["lessonpractices", "lessonpracticeid", "x-pr-3"],
+          ["lessonquizzes", "lessonquizid", "x-qz-3"],
+          ["lessonpracticequestions", "lessonpracticequestionid", "x-prq-3"],
+          ["lessonquizquestions", "lessonquizquestionid", "x-qzq-3"],
+          ["levelquizquestions", "levelquizquestionid", "x-lvq-3"],
+        ]));
+
+      it("a lesson: its learnings, plans, practices, quizzes and their attach rows are gone", () =>
+        moves((p) => p.lessons.push({ lessonid: "x-lesson-3", levelid: "x-level-1" }), [
+          ["lessonlearnings", "lessonlearningid", "x-ll-3"],
+          ["lessonplans", "lessonplanid", "x-lp-3"],
+          ["lessonpractices", "lessonpracticeid", "x-pr-3"],
+          ["lessonquizzes", "lessonquizid", "x-qz-3"],
+          ["lessonpracticequestions", "lessonpracticequestionid", "x-prq-3"],
+          ["lessonquizquestions", "lessonquizquestionid", "x-qzq-3"],
+        ]));
+
+      it("a practice: its practice questions are gone", () =>
+        moves((p) => p.lessonpractices.push({ lessonpracticeid: "x-pr-3", lessonid: "x-lesson-1" }), [["lessonpracticequestions", "lessonpracticequestionid", "x-prq-3"]]));
+
+      it("a quiz: its quiz questions are gone", () =>
+        moves((p) => p.lessonquizzes.push({ lessonquizid: "x-qz-3", lessonid: "x-lesson-1" }), [["lessonquizquestions", "lessonquizquestionid", "x-qzq-3"]]));
+
+      it("a baseline: its baseline questions are gone", () =>
+        moves((p) => p.curriculumbaselines.push({ curriculumbaselineid: "x-bl-3", curriculumid: "x-cur-1" }), [["baselinequestion", "baselinequestionid", "x-blq-3"]]));
+    });
+
     it("a school or curriculum that was already marked deleted is not counted as marked again", async () => {
       const before = dbBefore();
       before.schools.find((s) => s.schoolid === "x-school-3")!.isdeleted = true;
@@ -634,16 +724,13 @@ describe("PUT /import/master with a format-3 payload", () => {
       s.schools[0].countryid = "c-zz";
       await invalid(payloadOf(s), /schools: 1 row points at a countries row/);
     });
-    it("a list of ids that names a curriculum or a school that is not in the payload (a school's curricula, a baseline's schools)", async () => {
-      const p = content("x", 1, ORG_X);
-      p.schools[0].curriculums = ["x-cur-1", "y-cur-1"];
-      await invalid(payloadOf(p), /schools: 1 row lists a curriculums row \(curriculums\) that is not in the payload/);
-      const q = content("x", 1, ORG_X);
-      q.curriculumbaselines[0].schoolid = ["y-school-1"];
-      await invalid(payloadOf(q), /curriculumbaselines: 1 row lists a schools row \(schoolid\) that is not in the payload/);
+    it("a list column that is not a list of ids (a school's curricula, a baseline's schools)", async () => {
       const r = content("x", 1, ORG_X);
       r.schools[0].curriculums = "x-cur-1"; // not a list
-      await invalid(payloadOf(r), /schools: 1 row lists a curriculums row/);
+      await invalid(payloadOf(r), /schools: 1 row has a curriculums that is not a list of curriculums ids/);
+      const q = content("x", 1, ORG_X);
+      q.curriculumbaselines[0].schoolid = ["x-school-1", 7];
+      await invalid(payloadOf(q), /curriculumbaselines: 1 row has a schoolid that is not a list of schools ids/);
     });
     it("lists that are all in the payload, empty, or absent are accepted", async () => {
       install({});
@@ -811,6 +898,21 @@ describe("who may import one organisation's content", () => {
     it("a token WITH a claim is still checked before the payload is read, and another organisation's claim is a 403", async () => {
       install(unownedSchoolDb());
       await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }, ORG_Y))).rejects.toMatchObject({ status: 403 });
+    });
+
+    it("an empty-string claim, or any claim that is not an organisation id, is a 403 (only a missing claim is 'no claim') even when its school would qualify", async () => {
+      install(unownedSchoolDb());
+      for (const claim of ["", "  ", "not-a-uuid", ORG_X.slice(1)]) {
+        await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }, claim))).rejects.toMatchObject({ status: 403 });
+        await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }, claim))).rejects.toMatchObject({ status: 403 });
+      }
+      expect(writes).toEqual([]);
+    });
+
+    it("a claim that is absent altogether (no organisationid key in the token) is 'no claim': the bootstrap rule applies", async () => {
+      install(unownedSchoolDb());
+      const token = { schooluserid: "t1", schoolusername: "teacher", schoolid: "x-school-1" } as unknown as Token;
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), token)).resolves.toMatchObject({ error: false });
     });
 
     it("a claim that is not an id is a 403 even when its school would qualify", async () => {
