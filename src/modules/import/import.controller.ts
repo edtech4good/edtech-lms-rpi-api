@@ -27,19 +27,22 @@ import { OwnershipBusiness, OwnershipResult } from "src/business/ownership.busin
 import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
+import { assertOwnSchoolIsAdoptable, OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
+import { assertRosterBelongsToSchool, RosterSchoolError } from "src/business/school-identity";
 import { SyncBusiness } from "src/business/sync.business";
-import { Logger } from "src/config";
+import { Config, Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
-import { ServerSyncGuard } from "src/guards/server-sync.guard";
+import { SERVER_SYNC_USER_ID, ServerSyncGuard } from "src/guards/server-sync.guard";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { ResponseBoolean } from "src/models/ResponseBoolean";
 import { Sync } from "src/models/Sync";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
+import { looksLikeOrganisationContent, validateOrganisationContent } from "./organisation-content.validator";
 import { validateOwnershipBody } from "./ownership.request.validator";
 
 /**
@@ -89,6 +92,41 @@ async function rollbackQuietly(tnx: Transaction): Promise<void> {
   } catch (e) {
     Logger.error("import rollback failed", { error: e });
   }
+}
+
+const CLAIM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Who may import ONE organisation's content (format 3):
+ *  - central, with the server sync key: always;
+ *  - a staff token whose `organisationid` claim is that organisation: allowed (checked
+ *    before the payload is read, so another organisation's teacher learns nothing of it);
+ *  - on a classroom Pi only, a staff token with NO claim (its school has no organisation
+ *    here yet): "bootstrap", allowed only if its own school is adoptable (see
+ *    `assertOwnSchoolIsAdoptable`), which is checked after the payload is validated;
+ *  - anything else (another organisation's claim, a claim that is not an organisation id,
+ *    an empty string included, a missing claim online): 403.
+ */
+function organisationAccess(user: Token | undefined, organisationid: unknown): "allowed" | "bootstrap" {
+  if (user?.schooluserid === SERVER_SYNC_USER_ID) {
+    return "allowed";
+  }
+  const claim = user?.organisationid;
+  // Only a missing claim (null or absent) is "no claim". Any other value, an empty string
+  // included, must be an organisation id, and the header's, or it is a 403.
+  if (claim === undefined || claim === null) {
+    if (Config.fortyk.api.rpi.offline) {
+      return "bootstrap";
+    }
+  } else if (
+    typeof claim === "string" &&
+    CLAIM_ID.test(claim) &&
+    typeof organisationid === "string" &&
+    claim.toLowerCase() === organisationid.toLowerCase()
+  ) {
+    return "allowed";
+  }
+  throw new ApiError(ErrorCode.NOT_ALLOWED);
 }
 
 @ApiTags("Import")
@@ -167,6 +205,14 @@ export class ImportController {
         const stp = new StudentProgressBusiness();
         const tnx = await dbinstance.getdbinstance().transaction();
         try {
+          // A roster that names its school (format 3) may only carry that school's rows.
+          if (payload.schoolid !== undefined) {
+            await assertRosterBelongsToSchool(
+              newstudents.map((x) => [x, x.student]),
+              payload.schoolid,
+              tnx
+            );
+          }
           const suresult = await su.importschoolusers(newstudents, tnx);
           await st.importstudents(
             suresult.map((x: any) => {
@@ -191,6 +237,9 @@ export class ImportController {
           await tnx.commit();
         } catch(e) {
           await rollbackQuietly(tnx);
+          if (e instanceof RosterSchoolError) {
+            throw e;
+          }
           throw new BadRequestException({
             error: true,
             errormessage: "Invalid file",
@@ -202,6 +251,9 @@ export class ImportController {
           data: true,
         };
       } catch (e) {
+        if (e instanceof RosterSchoolError) {
+          throw e;
+        }
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",
@@ -265,11 +317,24 @@ export class ImportController {
       try {
         const teachersjson = zipEntries[0].getData().toString("utf8");
         let newteachers: Array<any> = [];
-        newteachers = JSON.parse(teachersjson);
+        const parsed = JSON.parse(teachersjson);
+        if (Array.isArray(parsed)) {
+          newteachers = parsed;
+        } else {
+          // A roster that names its school (format 3): `{ schoolid, teachers: [...] }`.
+          if (!Array.isArray(parsed?.teachers) || parsed.schoolid === undefined) {
+            throw new Error("not a teacher roster");
+          }
+          newteachers = parsed.teachers;
+          await assertRosterBelongsToSchool(newteachers, parsed.schoolid, tnx);
+        }
         await su.importschoolteachers(newteachers, tnx);
         await tnx.commit();
-      } catch {
+      } catch (e) {
         await rollbackQuietly(tnx);
+        if (e instanceof RosterSchoolError) {
+          throw e;
+        }
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",
@@ -355,16 +420,36 @@ export class ImportController {
   async completesync(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
-  ): Promise<ResponseBoolean> {
+  ): Promise<ResponseBoolean | OrganisationContentResult> {
     const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
       assertEntryWithinLimit(zipEntries[0], UploadLimits.MASTER_ZIP_DECOMPRESSED_MAX_BYTES);
       const tnx = await dbinstance.getdbinstance().transaction();
+      let ofOneOrganisation = false;
       try {
         const data = zipEntries[0].getData().toString("utf8");
+        const parsed = JSON.parse(data);
+        // One organisation's content (format 3): a scoped replace, and a refusal says why.
+        if (looksLikeOrganisationContent(parsed)) {
+          ofOneOrganisation = true;
+          const access = organisationAccess(user, parsed.organisationid);
+          const content = validateOrganisationContent(parsed);
+          if (access === "bootstrap") {
+            await assertOwnSchoolIsAdoptable(user, content, tnx);
+          }
+          const counts = await new OrganisationContentImport(tnx).run(content);
+          await tnx.commit();
+          Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
+          return {
+            error: false,
+            data: true,
+            organisationid: content.organisationid,
+            counts,
+          };
+        }
         let newsync: Sync = new Sync();
-        newsync = JSON.parse(data);
+        newsync = parsed;
         const syncb = new SyncBusiness(tnx);
 
         // Sync is a full-replace of content by id: cleanup() wipes every
@@ -443,6 +528,9 @@ export class ImportController {
       } catch (e: any) {
         Logger.info(e);
         await rollbackQuietly(tnx);
+        if (ofOneOrganisation && e instanceof ApiError) {
+          throw e;
+        }
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",

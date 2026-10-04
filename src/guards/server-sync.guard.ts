@@ -14,6 +14,9 @@ import { Token } from "src/models/token.model";
 import { AccessGuard } from "./access.guard";
 import { isServerSyncKey } from "./server-sync-key.util";
 
+/** The `schooluserid` the guard gives a request that carried central's server sync key. */
+export const SERVER_SYNC_USER_ID = "server";
+
 /**
  * For endpoints that central pushes to server-to-server: the bulk imports
  * that wipe and rebuild content or roster tables.
@@ -39,7 +42,7 @@ export const ServerSyncGuard = (
     async canActivate(context: ExecutionContext): Promise<boolean> {
       const request: Request = context.switchToHttp().getRequest();
       if (isServerSyncKey(request.headers.authorization)) {
-        (request as any).user = <Token>{ schooluserid: "server" };
+        (request as any).user = <Token>{ schooluserid: SERVER_SYNC_USER_ID };
         return true;
       }
 

@@ -89,7 +89,8 @@ const settingsconfig = joi
   .allow(null)
   .required();
 
-const organisation = joi.object({
+/** One `organisations` row, as `PUT /import/ownership` and a format-3 content payload both carry it. */
+export const organisation = joi.object({
   organisationid: id.required(),
   organisationname: joi.string().min(1).max(250).custom(displayText).required(),
   organisationcode: joi.string().pattern(ORGANISATION_CODE).required(),

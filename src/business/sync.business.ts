@@ -424,7 +424,7 @@ export class SyncBusiness {
    * names, once per distinct name, by the same text rule every reader uses. A name
    * that matches no school, or more than one, is left empty (counted, not named).
    */
-  private linkRosterToSchools = async () => {
+  linkRosterToSchools = async () => {
     for (const [table, model] of [["students", students], ["schoolusers", schoolusers]] as const) {
       // BINARY: the exact stored text, not what the column collation calls equal.
       const rows = (await (model as typeof students).findAll({
