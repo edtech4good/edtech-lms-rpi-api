@@ -56,7 +56,7 @@ A route used by both a user token and the server key is classified by its user p
 - **Server key**: `yes` when every authentication guard on the route lets central's server sync key through, so a caller with no user gets in.
 - **Staff only**: `yes` when an authentication guard lists school roles (teacher, admin, super admin), so a learner's token is refused.
 
-Routes admitting the server key: 22.
+Routes admitting the server key: 21.
 
 ## Routes
 
@@ -76,7 +76,7 @@ Routes admitting the server key: 22.
 | POST | `/curriculum/baseline/:curriculumid/:schoolname/:studentid` | CurriculumController.getCurriculumBaseline | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) | The school and learner in the path are not read: the token's are. |
 | GET | `/curriculum/subjects` | CurriculumController.getAllCurriculumsWithSubjects | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) |  |
 | GET | `/export/log` | ExportController.exportlog | teacher | yes | `src/modules/export-scope.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | log.ini holds only the caller's school's learners and logins; the server's own log files are added only on a classroom Pi. |
-| GET | `/export/report-data` | ExportController.getReportData | teacher | yes | `src/modules/export-scope.leak.spec.ts` | yes | yes | AccessOrServerSyncGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | The nightly report pull sends the server key and X-Organisation-Id (an organisation id, or platform); a token gets its own school's rows. Same zip and file name, only the rows differ. |
+| GET | `/export/report-data` | ExportController.getReportData | teacher | yes | `src/modules/export-scope.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | A token gets its own school's rows; the server key is not admitted. The scope also resolves an organisation id or platform, which no caller can reach here. Same zip and file name, only the rows differ. |
 | GET | `/export/system-log/files` | ExportController.exportfiles | teacher | yes | `src/modules/export-scope.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | The server's own log files are served only on a classroom Pi; elsewhere the answer is the one for a role that is not allowed. |
 | GET | `/grade/all` | GradeController.getAllGrades | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), AccessGuard(ACCESS) | The curriculum, class and school in the query can only narrow inside the token's scope. |
 | GET | `/grade/curriculum/:curriculumid` | GradeController.getgradesbycurriculumid | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) |  |
