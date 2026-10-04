@@ -234,8 +234,8 @@ describe("a database the organisations migration has not reached (MySQL 1054 on 
   });
 
   it("getTheme: any other database error is still raised", async () => {
-    jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(new Error("connection lost")) } as never);
-    await expect(new SchoolBusiness().getTheme("School X")).rejects.toThrow("connection lost");
+    jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(new DatabaseError(Object.assign(new Error("deadlock"), { errno: 1213 }) as never)) } as never);
+    await expect(new SchoolBusiness().getTheme("School X")).rejects.toThrow("deadlock");
   });
 
   it("a whole login on such a database still signs in, with the claims it had before (schoolid by name, no organisation)", async () => {
