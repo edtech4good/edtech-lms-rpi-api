@@ -6,7 +6,7 @@ import { standards } from "src/models/data-models/standards";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { IMultiFilter } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
-import { callerKindOf, claimsOf, ContentKind, curriculaInScope, curriculumIdsOf, schoolCurriculumList } from "./content-access";
+import { callerKindOf, callerOf, ContentKind, curriculaInScope, curriculumIdsOf, schoolCurriculumList } from "./content-access";
 
 /**
  * Whose learners (and which content) a report, a login-time read or a baseline result may cover.
@@ -27,7 +27,8 @@ import { callerKindOf, claimsOf, ContentKind, curriculaInScope, curriculumIdsOf,
  *  - a learner token (only where a route admits one): the token's own login and nothing else.
  */
 export interface ReportScope {
-  organisationid: string;
+  /** Null only in the classroom-Pi window (a school with no organisation yet): the scope is that one school. */
+  organisationid: string | null;
   /** The schools whose learners may be covered. */
   schoolids: string[];
   /** The curricula in play, when narrower than everything the organisation owns (a school's own list). */
@@ -77,7 +78,7 @@ export async function resolveReportScope(request: { headers: Record<string, unkn
     const organisationid = header.trim();
     return { organisationid, schoolids: await schoolIdsOfOrganisation(organisationid) };
   }
-  const claims = claimsOf(user);
+  const claims = await callerOf(user);
   if (!user || !claims) {
     throw new ApiError(ErrorCode.SIGN_IN_REQUIRED);
   }

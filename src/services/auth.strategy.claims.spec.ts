@@ -1,7 +1,6 @@
 import { UnauthorizedException } from "@nestjs/common";
 import { Sequelize } from "sequelize";
 import { Config } from "src/config";
-import { markPiBootstrapRoute } from "src/guards/pi-bootstrap";
 import { initModels } from "src/models/data-models/init-models";
 import { organisations } from "src/models/data-models/organisations";
 import { schools } from "src/models/data-models/school";
@@ -11,9 +10,8 @@ import { JwtAccessStrategy } from "./auth.strategy";
  * The strategy refuses a token that does not prove the organisation it acts for (organisations package 8):
  * both `schoolid` and `organisationid` must be present, the organisation must be here and neither suspended
  * nor deleted, and the school must still be that organisation's. The one exception is a classroom Pi
- * (`RPI_OFFLINE`) whose own school has no organisation yet: a token with no organisation is accepted ONLY on
- * the import route (the request carries the server-side mark its guard sets) and ONLY while the school is here
- * and unowned.
+ * (`RPI_OFFLINE`) whose own school has no organisation yet: a token with no organisation is accepted, on every
+ * route, ONLY while the school is here and unowned (and never online).
  *
  * No database: the token table and the two lookups are stubbed; the rule is the real code.
  */
@@ -63,15 +61,10 @@ afterEach(() => {
 });
 
 const strategy = () => new JwtAccessStrategy();
-const refused = (claims: Record<string, unknown>, request: object = {}) =>
-  expect(strategy().validate(request, { jti: "j", sub: "u1", schooluserid: "u1", ...claims })).rejects.toBeInstanceOf(UnauthorizedException);
-const accepted = (claims: Record<string, unknown>, request: object = {}) =>
-  expect(strategy().validate(request, { jti: "j", sub: "u1", schooluserid: "u1", ...claims })).resolves.toMatchObject({ jti: "j", ...claims });
-const bootstrapRequest = () => {
-  const request = {};
-  markPiBootstrapRoute(request);
-  return request;
-};
+const refused = (claims: Record<string, unknown>) =>
+  expect(strategy().validate({ jti: "j", sub: "u1", schooluserid: "u1", ...claims })).rejects.toBeInstanceOf(UnauthorizedException);
+const accepted = (claims: Record<string, unknown>) =>
+  expect(strategy().validate({ jti: "j", sub: "u1", schooluserid: "u1", ...claims })).resolves.toMatchObject({ jti: "j", ...claims });
 
 describe("JwtAccessStrategy: a token must prove its school and organisation", () => {
   it("accepts a token whose school belongs to an active organisation, and passes the claims through", async () => {
@@ -139,47 +132,43 @@ describe("JwtAccessStrategy: the classroom Pi whose school has no organisation y
     Config.fortyk.api.rpi.offline = true;
   });
 
-  it("accepts a token with no organisation on the import route (marked by its guard), while its school is here and unowned", async () => {
-    await accepted({ schoolid: UNOWNED }, bootstrapRequest());
-    await accepted({ schoolid: UNOWNED, organisationid: null }, bootstrapRequest());
+  it("accepts a token with no organisation, on any route, while its school is here and unowned", async () => {
+    await accepted({ schoolid: UNOWNED });
+    await accepted({ schoolid: UNOWNED, organisationid: null });
   });
 
-  it("finds the unowned school by its name when the token carries none (a sign-in that could not give an id)", async () => {
-    await accepted({ schoolid: null, schoolname: "Unowned School", organisationid: null }, bootstrapRequest());
+  it("finds the unowned school by its name when the token carries no id (a token from before the claims existed)", async () => {
+    await accepted({ schoolid: null, schoolname: "Unowned School", organisationid: null });
+    await accepted({ schoolname: "Unowned School" });
   });
 
-  it("refuses the same token on any other route (the request is not marked)", async () => {
-    await refused({ schoolid: UNOWNED });
-    await refused({ schoolid: UNOWNED, organisationid: null }, {});
-  });
-
-  it("refuses it online, even on the import route", async () => {
+  it("refuses it online, always", async () => {
     Config.fortyk.api.rpi.offline = false;
-    await refused({ schoolid: UNOWNED }, bootstrapRequest());
+    await refused({ schoolid: UNOWNED });
+    await refused({ schoolid: UNOWNED, organisationid: null });
+    await refused({ schoolname: "Unowned School" });
   });
 
   it("refuses it once its school has an owner (the token is stale: it signs in again)", async () => {
-    await refused({ schoolid: SCHOOL }, bootstrapRequest());
-    await refused({ schoolid: SCHOOL, organisationid: null }, bootstrapRequest());
+    await refused({ schoolid: SCHOOL });
+    await refused({ schoolid: SCHOOL, organisationid: null });
   });
 
   it("refuses it when its school is not here, or the token names none", async () => {
-    await refused({ schoolid: "5c000000-0000-4000-8000-00000000dead" }, bootstrapRequest());
-    await refused({}, bootstrapRequest());
-    await refused({ schoolname: "Nowhere School" }, bootstrapRequest());
+    await refused({ schoolid: "5c000000-0000-4000-8000-00000000dead" });
+    await refused({});
+    await refused({ schoolname: "Nowhere School" });
   });
 
   it("does not take an organisation claim that is not null as 'no organisation' (an empty or odd value is refused)", async () => {
-    await refused({ schoolid: UNOWNED, organisationid: "" }, bootstrapRequest());
-    await refused({ schoolid: UNOWNED, organisationid: 42 }, bootstrapRequest());
+    await refused({ schoolid: UNOWNED, organisationid: "" });
+    await refused({ schoolid: UNOWNED, organisationid: 42 });
+    await refused({ schoolid: UNOWNED, organisationid: "  " });
   });
 
   it("does not let a token that HAS an organisation use the exception: its organisation and school are checked as usual", async () => {
     orgs[ORG].organisationstatus = false;
-    await refused({ schoolid: SCHOOL, organisationid: ORG }, bootstrapRequest());
-  });
-
-  it("the mark is the server's: a request object that merely has a property of that name is not marked", async () => {
-    await refused({ schoolid: UNOWNED }, { "pi-bootstrap-route": true, markPiBootstrapRoute: true });
+    await refused({ schoolid: SCHOOL, organisationid: ORG });
+    await refused({ schoolid: UNOWNED, organisationid: ORG });
   });
 });

@@ -125,9 +125,11 @@ const SCH_X = uid("a1", 2);
 const SCH_Y = uid("b2", 2);
 const SCH_Z = uid("c3", 2);
 const SCH_L = uid("d4", 2); // an unowned legacy school
+const SCH_L2 = uid("d5", 2); // a second unowned school (on the same Pi)
 const CLS_X = uid("a1", 3);
 const CLS_Y = uid("b2", 3);
 const CLS_L = uid("d4", 3);
+const CLS_L2 = uid("d5", 3);
 const NOWHERE = uid("ee", 9); // an id that names nothing
 
 interface Tree {
@@ -167,6 +169,7 @@ const T_X1 = treeOf("a1", ORG_X); // in X's school's list, and in X's learners' 
 const T_X2 = treeOf("a2", ORG_X); // X's, but NOT in X's school's list; only learner X2 is enrolled
 const T_Y1 = treeOf("b2", ORG_Y);
 const T_L = treeOf("d4", null); // unowned
+const T_L2 = treeOf("d5", null); // unowned, a second unowned school's
 
 const ST_X1 = uid("a1", 31);
 const ST_X2 = uid("a1", 32);
@@ -175,6 +178,7 @@ const ST_Y2 = uid("b2", 32);
 const ST_Y3 = uid("b2", 33);
 const ST_R = uid("b2", 34); // a learner of Y whose class is a class of X (a roster that went wrong)
 const ST_L1 = uid("d4", 31);
+const ST_L2 = uid("d5", 31);
 const SU_X1 = uid("a1", 41);
 const SU_X2 = uid("a1", 42);
 const SU_TX = uid("a1", 43); // X's teacher
@@ -185,6 +189,9 @@ const SU_Y3 = uid("b2", 44);
 const SU_R = uid("b2", 45);
 const SU_TY = uid("b2", 43);
 const SU_L1 = uid("d4", 41);
+const SU_L2 = uid("d5", 41);
+const SU_TL = uid("d4", 43); // a teacher of the unowned school
+const SU_TL2 = uid("d5", 43);
 const SU_Z = uid("c3", 41);
 
 // ---------------------------------------------------------------------------------------------------------
@@ -424,12 +431,14 @@ const seedData = () => {
     { schoolid: SCH_Y, schoolname: "School Y", organisationid: ORG_Y, countryid: "c1", curriculums: [T_Y1.curriculum], isdeleted: false, uitheme: "kids", brandingconfig: { logo: "y" } },
     { schoolid: SCH_Z, schoolname: "School Z", organisationid: ORG_Z, countryid: "c1", curriculums: [], isdeleted: false, uitheme: "kids", brandingconfig: null },
     { schoolid: SCH_L, schoolname: "Legacy School", organisationid: null, countryid: "c1", curriculums: [T_L.curriculum], isdeleted: false, uitheme: "kids", brandingconfig: null },
+    { schoolid: SCH_L2, schoolname: "Second Legacy School", organisationid: null, countryid: "c1", curriculums: [T_L2.curriculum], isdeleted: false, uitheme: "kids", brandingconfig: null },
   ]);
-  for (const t of [T_X1, T_X2, T_Y1, T_L]) for (const [model, row] of treeRows(t)) put(model, [row]);
+  for (const t of [T_X1, T_X2, T_Y1, T_L, T_L2]) for (const [model, row] of treeRows(t)) put(model, [row]);
   put(standards, [
     { standardid: CLS_X, standardname: "Class X", schoolid: SCH_X, schoolname: "School X", isdeleted: false },
     { standardid: CLS_Y, standardname: "Class Y", schoolid: SCH_Y, schoolname: "School Y", isdeleted: false },
     { standardid: CLS_L, standardname: "Class L", schoolid: SCH_L, schoolname: "Legacy School", isdeleted: false },
+    { standardid: CLS_L2, standardname: "Class L2", schoolid: SCH_L2, schoolname: "Second Legacy School", isdeleted: false },
   ]);
   put(students, [
     learner(ST_X1, SU_X1, SCH_X, "School X", CLS_X, [T_X1.curriculum]),
@@ -440,6 +449,7 @@ const seedData = () => {
     learner(ST_Y3, SU_Y3, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
     learner(ST_R, SU_R, SCH_Y, "School Y", CLS_X, [T_Y1.curriculum]),
     learner(ST_L1, SU_L1, SCH_L, "Legacy School", CLS_L, [T_L.curriculum]),
+    learner(ST_L2, SU_L2, SCH_L2, "Second Legacy School", CLS_L2, [T_L2.curriculum]),
   ]);
   put(schoolusers, [
     login(SU_X1, "x.learner1", SchoolRole.STUDENT, SCH_X, "School X"),
@@ -452,6 +462,9 @@ const seedData = () => {
     login(SU_R, "y.rogue", SchoolRole.STUDENT, SCH_Y, "School Y"),
     login(SU_TY, "y.teacher", SchoolRole.TEACHER, SCH_Y, "School Y"),
     login(SU_L1, "legacy.learner", SchoolRole.STUDENT, SCH_L, "Legacy School"),
+    login(SU_L2, "legacy2.learner", SchoolRole.STUDENT, SCH_L2, "Second Legacy School"),
+    login(SU_TL, "legacy.teacher", SchoolRole.TEACHER, SCH_L, "Legacy School"),
+    login(SU_TL2, "legacy2.teacher", SchoolRole.TEACHER, SCH_L2, "Second Legacy School"),
   ]);
   put(studentappusages, [SU_X1, SU_X2, SU_Y1, SU_L1].map((id, i) => ({ studentappusageid: uid("ff", i), schooluserid: id, time_spent: 60, created_at: new Date() })));
   put(studentprogress, [
@@ -459,7 +472,7 @@ const seedData = () => {
     { studentprogressid: uid("f1", 2), studentid: ST_Y1, studentprogressreferenceid: T_Y1.baseline, progresstype: 5, ispass: 1 },
   ]);
   // each baseline is for its own organisation's school
-  for (const [tree, school] of [[T_X1, SCH_X], [T_Y1, SCH_Y], [T_L, SCH_L]] as Array<[Tree, string]>) {
+  for (const [tree, school] of [[T_X1, SCH_X], [T_Y1, SCH_Y], [T_L, SCH_L], [T_L2, SCH_L2]] as Array<[Tree, string]>) {
     rowsOf(curriculumbaseline).find((b) => b.curriculumbaselineid === tree.baseline)!.schoolid = [school];
   }
 };
@@ -1670,9 +1683,173 @@ describe("PUT /import/master: who may send content, online and on a classroom Pi
       r = await put(auth, ORG_X);
       check(`${name} -> ${r.status} (wanted 401)`, r.status === 401);
     }
-    // the bootstrap exception is for this route only: the same token reaches nothing else
+    // the window is not for the import alone: the same token works elsewhere, scoped to its one school (see the next describe)
     const other = await send("get", "/teacher/students", UNOWNED_STAFF);
-    check(`the unowned school's token on GET /teacher/students -> ${other.status} (wanted 401)`, other.status === 401);
+    check(`the unowned school's token on GET /teacher/students -> ${other.status} (wanted 200)`, other.status === 200);
+    expect(failures).toEqual([]);
+  });
+});
+
+const bodyOfSchools = (values: string[], key = "schoolid") => ({ pageindex: 1, pagesize: 50, filter: [{ key, value: values }] });
+
+// ---------------------------------------------------------------------------------------------------------
+// the classroom Pi's window: a school with no organisation yet
+// ---------------------------------------------------------------------------------------------------------
+describe("a classroom Pi whose school has no organisation yet keeps working, one school at a time", () => {
+  const originalOffline = Config.fortyk.api.rpi.offline;
+  beforeEach(() => {
+    Config.fortyk.api.rpi.offline = true;
+  });
+  afterEach(() => {
+    Config.fortyk.api.rpi.offline = originalOffline;
+  });
+
+  const nullOrg = { organisationid: null };
+  const L_LEARNER: Auth = { bearer: bearer({ ...pupil(SU_L1, ST_L1, SCH_L, ORG_X, []), ...nullOrg }) };
+  const L2_LEARNER: Auth = { bearer: bearer({ ...pupil(SU_L2, ST_L2, SCH_L2, ORG_X, []), ...nullOrg }) };
+  const L_TEACHER: Auth = { bearer: bearer({ ...staff(SU_TL, SchoolRole.TEACHER, SCH_L, ORG_X), ...nullOrg }) };
+  const L2_TEACHER: Auth = { bearer: bearer({ ...staff(SU_TL2, SchoolRole.TEACHER, SCH_L2, ORG_X), ...nullOrg }) };
+  // a token from before the claims existed: the school's name only
+  const L_OLD: Auth = { bearer: bearer({ sub: SU_L1, schooluserid: SU_L1, studentid: ST_L1, schooluserrole: SchoolRole.STUDENT, schoolname: "Legacy School" }) };
+  const OWNED_NULL: Auth = { bearer: bearer({ ...pupil(SU_X1, ST_X1, SCH_X, ORG_X, []), organisationid: null }) };
+  const OWNED_OLD: Auth = { bearer: bearer({ sub: SU_X1, schooluserid: SU_X1, studentid: ST_X1, schooluserrole: SchoolRole.STUDENT, schoolname: "School X" }) };
+  const ODD_CLAIM: Auth[] = [
+    { bearer: bearer({ ...pupil(SU_L1, ST_L1, SCH_L, ORG_X, []), organisationid: "" }) },
+    { bearer: bearer({ ...pupil(SU_L1, ST_L1, SCH_L, ORG_X, []), organisationid: 42 }) },
+  ];
+
+  const contentPaths = (t: Tree): string[] => [
+    `/curriculum/${t.curriculum}`,
+    `/grade/curriculum/${t.curriculum}`,
+    `/level/grade/${t.grade}`,
+    `/Lesson/level/${t.level}`,
+    `/lesson/plan/${t.plan}`,
+    `/lesson/learning/${t.learning}`,
+    `/question/lesson/${t.lesson}`,
+  ];
+
+  it("a learner of the unowned school gets its own content and lists, and nothing of any other school's (a second unowned school on the Pi, or an organisation's)", async () => {
+    const { failures, check } = scenario();
+    for (const [name, auth] of [["learner", L_LEARNER], ["learner with a token from before the claims existed", L_OLD]] as Array<[string, Auth]>) {
+      for (const path of contentPaths(T_L)) {
+        const r = await send("get", path, auth);
+        check(`${name}, own ${path.split("/")[1]} -> ${r.status} (wanted 200)`, r.status === 200);
+      }
+      const absent = await send("get", `/Lesson/level/${NOWHERE}`, auth);
+      check(`${name}, a level that is not there -> ${absent.status} (wanted 404)`, absent.status === 404);
+      for (const [what, tree] of [["the second unowned school's", T_L2], ["X's", T_X1], ["Y's", T_Y1]] as Array<[string, Tree]>) {
+        for (const path of contentPaths(tree)) {
+          const r = await send("get", path, auth);
+          check(`${name}, ${what} ${path.split("/")[1]} -> ${r.status} (wanted 404)`, r.status === 404);
+        }
+        const r = await send("get", `/Lesson/level/${tree.level}`, auth);
+        check(`${name}, ${what} level: the answer is the one for absent content`, text(r.body) === text(absent.body));
+      }
+      for (const [path, key, wanted] of [
+        ["/curriculum", "curriculumid", [T_L.curriculum]],
+        ["/curriculum/subjects", "curriculumid", [T_L.curriculum]],
+        ["/curriculum/all", "curriculumid", [T_L.curriculum]],
+        ["/grade/all", "gradeid", [T_L.grade]],
+        ["/level/all", "levelid", [T_L.level]],
+        ["/Lesson/all", "lessonid", [T_L.lesson]],
+      ] as Array<[string, string, string[]]>) {
+        const r = await send("get", path, auth);
+        check(`${name}, ${path} -> ${r.status}, ${JSON.stringify(idsIn(r.body, key))} (wanted only the school's)`, r.status === 200 && sameSet(idsIn(r.body, key), wanted));
+      }
+      const library = await send("get", "/level/library", auth);
+      check(`${name}, /level/library -> ${JSON.stringify(libraryIds(library.body))}`, library.status === 200 && sameSet(libraryIds(library.body), [T_L.curriculum]));
+    }
+    // the second unowned school's learner is the mirror image
+    for (const path of contentPaths(T_L2)) check(`second school's learner, own ${path.split("/")[1]}`, (await send("get", path, L2_LEARNER)).status === 200);
+    for (const path of contentPaths(T_L)) check(`second school's learner, the first school's ${path.split("/")[1]} -> 404`, (await send("get", path, L2_LEARNER)).status === 404);
+    expect(failures).toEqual([]);
+  });
+
+  it("a result submission of the unowned school's learner writes for its own content, and writes nothing for another school's", async () => {
+    const { failures, check } = scenario();
+    reset();
+    let r = await send("post", `/result/lesson/practice/${T_L.practice}`, L_LEARNER, RESULT_BODY);
+    check(`own practice -> ${r.status} (wanted 200)`, r.status === 200);
+    check(`own practice: the writes ran (${stubCalls.join()})`, stubCalls.includes("ResultBusiness.updatePracticePoints"));
+    reset();
+    const before = snapshot();
+    const transactionsBefore = (dbinstance.getdbinstance().transaction as unknown as jest.Mock).mock.calls.length;
+    for (const tree of [T_L2, T_X1, T_Y1]) {
+      r = await send("post", `/result/lesson/practice/${tree.practice}`, L_LEARNER, RESULT_BODY);
+      check(`another school's practice -> ${r.status} (wanted 404)`, r.status === 404);
+    }
+    check(`another school's practice: nothing ran (${stubCalls.join()})`, stubCalls.length === 0);
+    check("another school's practice: no table changed, no transaction", snapshot() === before && (dbinstance.getdbinstance().transaction as unknown as jest.Mock).mock.calls.length === transactionsBefore);
+    expect(failures).toEqual([]);
+  });
+
+  it("a teacher of the unowned school sees its own school's learners, classes, reports and content, and no other school's", async () => {
+    const { failures, check } = scenario();
+    for (const path of contentPaths(T_L)) check(`teacher, own ${path.split("/")[1]}`, (await send("get", path, L_TEACHER)).status === 200);
+    for (const [what, tree] of [["the second unowned school's", T_L2], ["X's", T_X1]] as Array<[string, Tree]>) {
+      for (const path of contentPaths(tree)) {
+        const r = await send("get", path, L_TEACHER);
+        check(`teacher, ${what} ${path.split("/")[1]} -> ${r.status} (wanted 404)`, r.status === 404);
+      }
+    }
+    const students = await send("get", "/teacher/students", L_TEACHER);
+    check(`teacher/students -> ${JSON.stringify(idsIn(students.body, "studentid"))} (wanted only the school's learner)`, students.status === 200 && sameSet(idsIn(students.body, "studentid"), [ST_L1]));
+    const progress = await send("post", "/teacher/studentprogress", L_TEACHER, {});
+    check(`teacher/studentprogress, no class -> ${JSON.stringify(idsIn(progress.body, "studentid"))} (wanted only the school's learner)`, sameSet(idsIn(progress.body, "studentid"), [ST_L1]));
+    const foreignClass = await send("post", "/teacher/studentprogress", L_TEACHER, { filter: [{ key: "standard", value: CLS_L2 }] });
+    check(`teacher/studentprogress, the second school's class -> total ${foreignClass.body?.data?.total} (wanted an unknown class: 0)`, foreignClass.status === 200 && foreignClass.body?.data?.total === 0);
+    const classes = await send("get", "/teacher/standards", L_TEACHER);
+    check(`teacher/standards -> ${JSON.stringify(idsIn(classes.body, "standard"))}`, sameSet(idsIn(classes.body, "standard"), [CLS_L]));
+    const info = await send("get", `/teacher/studentinfo?studentid=${ST_L2}`, L_TEACHER);
+    check(`teacher/studentinfo for the second school's learner -> ${JSON.stringify(info.body?.data)} (wanted null)`, info.status === 200 && info.body?.data === null);
+    for (const [path, key, wanted] of [
+      ["/curriculum", "curriculumid", [T_L.curriculum]],
+      ["/curriculum/all", "curriculumid", [T_L.curriculum]],
+      ["/grade/all", "gradeid", [T_L.grade]],
+    ] as Array<[string, string, string[]]>) {
+      const r = await send("get", path, L_TEACHER);
+      check(`teacher ${path} -> ${JSON.stringify(idsIn(r.body, key))}`, r.status === 200 && sameSet(idsIn(r.body, key), wanted));
+    }
+    reset();
+    const report = await send("post", "/report/studentstatus", L_TEACHER, bodyOfSchools([SCH_L, SCH_L2]));
+    check(`report/studentstatus naming both unowned schools -> ${report.status}, read ${JSON.stringify([...seen])} (wanted only the school's learner)`, report.status === 200 && seen.size > 0 && [...seen].every((id) => id === ST_L1));
+    reset();
+    await send("post", "/report/studentprogress/class", L_TEACHER, bodyOfSchools([CLS_L2], "standard"));
+    check(`report/studentprogress/class, the second school's class: read ${JSON.stringify([...seen])} (wanted none)`, seen.size === 0);
+    reset();
+    await send("post", "/student/logintime", L_TEACHER, [SU_L1, SU_L2, SU_X1]);
+    check(`student/logintime asked ${JSON.stringify(rawQueries.flatMap((q) => q.replacements))} (wanted only the school's login)`, sameSet(rawQueries.flatMap((q) => q.replacements as string[]), [SU_L1]));
+    const other = await send("get", "/teacher/students", L2_TEACHER);
+    check(`the second school's teacher sees ${JSON.stringify(idsIn(other.body, "studentid"))} (wanted only its own)`, sameSet(idsIn(other.body, "studentid"), [ST_L2]));
+    expect(failures).toEqual([]);
+  });
+
+  it("online, a token with no organisation is refused everywhere, an unowned school or not", async () => {
+    const { failures, check } = scenario();
+    Config.fortyk.api.rpi.offline = false;
+    for (const [name, auth] of [["learner", L_LEARNER], ["teacher", L_TEACHER], ["old token", L_OLD]] as Array<[string, Auth]>) {
+      for (const path of ["/curriculum", "/teacher/students", "/level/library", `/curriculum/${T_L.curriculum}`]) {
+        const r = await send("get", path, auth);
+        check(`online, ${name}, ${path} -> ${r.status} (wanted 401)`, r.status === 401);
+      }
+      const w = await send("post", `/result/lesson/practice/${T_L.practice}`, auth, RESULT_BODY);
+      check(`online, ${name}, a result -> ${w.status} (wanted 401)`, w.status === 401);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("on a Pi, a token with no organisation is refused once its school has an owner, and an empty or odd claim is never 'none'", async () => {
+    const { failures, check } = scenario();
+    for (const [name, auth] of [["null claim, owned school", OWNED_NULL], ["old token, owned school", OWNED_OLD], ["empty claim", ODD_CLAIM[0]], ["number claim", ODD_CLAIM[1]]] as Array<[string, Auth]>) {
+      for (const path of ["/curriculum", "/level/library", `/curriculum/${T_X1.curriculum}`, `/curriculum/${T_L.curriculum}`]) {
+        const r = await send("get", path, auth);
+        check(`Pi, ${name}, ${path} -> ${r.status} (wanted 401)`, r.status === 401);
+      }
+    }
+    // an owned school's ordinary token works as it does online
+    const own = await send("get", `/Lesson/level/${T_X1.level}`, X_LEARNER);
+    const foreign = await send("get", `/Lesson/level/${T_L.level}`, X_LEARNER);
+    check(`Pi, X learner: own -> ${own.status}, an unowned school's level -> ${foreign.status} (wanted 200, 404)`, own.status === 200 && foreign.status === 404);
     expect(failures).toEqual([]);
   });
 });

@@ -18,11 +18,13 @@ import { findSchoolIdByName, isGiven } from "./school-identity";
  *  - the school is not here, or is no longer the organisation's.
  *
  * The one exception is a classroom Pi (`RPI_OFFLINE`) whose own school has no
- * organisation yet. A staff member signs in there with no `organisationid`, and
- * the content import is what gives the school its organisation. That token is
- * accepted ONLY on the import route (the route's guard says so with
- * `markPiBootstrapRoute`), and ONLY while its school is a school here that still
- * has no organisation. Everywhere else it is refused like any claim-less token.
+ * organisation yet (the window between a code update and the first format-3 zip).
+ * A learner or staff member signs in there with no `organisationid`, and the
+ * content import is what gives the school its organisation. That token is accepted
+ * on every route, ONLY while its school is a school here that still has no
+ * organisation, and its scope is that one school (see content-access.ts). Once the
+ * school is owned the token is refused like any other without the claim, so people
+ * sign in again. Online, a token with no organisation is always refused.
  */
 export interface TokenClaims {
   schoolid?: unknown;
@@ -30,17 +32,19 @@ export interface TokenClaims {
   organisationid?: unknown;
 }
 
-export interface TokenClaimOptions {
-  /** True only on the request of the route a Pi's unowned school uses to get its organisation. */
-  piBootstrapRoute?: boolean;
-}
-
 const refuse = (): never => {
   throw new UnauthorizedException();
 };
 
-/** Is the school this token names (by id, else by name) a school here with no organisation? */
-async function ownSchoolIsUnowned(claims: TokenClaims): Promise<boolean> {
+/**
+ * On a classroom Pi, the id of the school this token names (by id, else by name) when it is a school here with no
+ * organisation and the token itself has no organisation (null or absent: an empty or odd claim is not "none").
+ * Null in every other case, and always online.
+ */
+export async function unownedPiSchoolOf(claims: TokenClaims): Promise<string | null> {
+  if (!Config.fortyk.api.rpi.offline || (claims.organisationid !== undefined && claims.organisationid !== null)) {
+    return null;
+  }
   let own: string | null = null;
   if (isGiven(claims.schoolid)) {
     own = claims.schoolid.trim();
@@ -48,14 +52,14 @@ async function ownSchoolIsUnowned(claims: TokenClaims): Promise<boolean> {
     own = await findSchoolIdByName(claims.schoolname, { strict: true }).catch(() => null);
   }
   if (!own) {
-    return false;
+    return null;
   }
   const row = (await schools.scope("withOwnership").findOne({
     attributes: ["schoolid", "organisationid"],
     where: { schoolid: own },
     raw: true,
   })) as unknown as { organisationid: string | null } | null;
-  return Boolean(row) && (row!.organisationid === null || row!.organisationid === undefined || row!.organisationid === "");
+  return row && (row.organisationid === null || row.organisationid === undefined || row.organisationid === "") ? own : null;
 }
 
 /** Is the organisation here, not deleted and not suspended? */
@@ -95,13 +99,12 @@ export async function assertCanSignIn(claims: { schoolid: string | null; organis
   }
 }
 
-export async function checkTokenClaims(claims: TokenClaims, options: TokenClaimOptions = {}): Promise<void> {
+export async function checkTokenClaims(claims: TokenClaims): Promise<void> {
   const organisationid = claims.organisationid;
   const schoolid = claims.schoolid;
 
   if (!isGiven(organisationid) || !isGiven(schoolid)) {
-    const noOrganisation = organisationid === undefined || organisationid === null;
-    if (noOrganisation && options.piBootstrapRoute === true && Config.fortyk.api.rpi.offline && (await ownSchoolIsUnowned(claims))) {
+    if (await unownedPiSchoolOf(claims)) {
       return;
     }
     return refuse();

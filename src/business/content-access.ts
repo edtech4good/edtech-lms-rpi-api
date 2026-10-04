@@ -20,6 +20,7 @@ import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
 import { isGiven } from "./school-identity";
+import { unownedPiSchoolOf } from "./token-claims";
 
 /**
  * Which curriculum a piece of content belongs to, and whether the caller may see it.
@@ -78,6 +79,34 @@ export const claimsOf = (user: Pick<Token, "organisationid" | "schoolid"> | unde
   isGiven(user?.organisationid) && isGiven(user?.schoolid)
     ? { organisationid: String(user?.organisationid).trim(), schoolid: String(user?.schoolid).trim() }
     : null;
+
+/** Who is asking: the school, and the organisation (null only in the classroom-Pi window below). */
+export interface Caller {
+  organisationid: string | null;
+  schoolid: string;
+}
+
+/**
+ * The caller of a request, from the token's claims. Null when the token proves nothing (the strategy refuses
+ * such a token before any route runs; this is the same answer for anything that asks without it).
+ *
+ * The one case with no organisation: on a classroom Pi (`RPI_OFFLINE`) whose school is here and has none yet, a
+ * token with no organisation claim stands for THAT ONE SCHOOL, with no organisation to filter by. Its scope is
+ * then what it was before organisations existed: the school's rows, the learner's current curricula, the
+ * school's own curriculum list. It lasts until the school gets its owner; then the token is refused and the
+ * person signs in again. Online it never applies.
+ */
+export async function callerOf(user: Pick<Token, "organisationid" | "schoolid" | "schoolname"> | undefined): Promise<Caller | null> {
+  const claims = claimsOf(user);
+  if (claims) {
+    return claims;
+  }
+  if (!user) {
+    return null;
+  }
+  const schoolid = await unownedPiSchoolOf(user);
+  return schoolid ? { organisationid: null, schoolid } : null;
+}
 
 const usable = (id: unknown): id is string => typeof id === "string" && id.length > 0 && id.length <= 64;
 
@@ -209,7 +238,8 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
  * curriculum the organisation owns; a list means those of them in it (a school's own list).
  */
 export interface CurriculumScope {
-  organisationid: string;
+  /** Null only in the classroom-Pi window (see `callerOf`): there is no organisation to filter by. */
+  organisationid: string | null;
   curriculumids?: string[];
 }
 
@@ -220,7 +250,7 @@ export async function curriculaInScope(scope: CurriculumScope, candidates: strin
     return [];
   }
   const rows = await curriculums.findAll({
-    where: { curriculumid: { [Op.in]: wanted }, organisationid: scope.organisationid },
+    where: scope.organisationid === null ? { curriculumid: { [Op.in]: wanted } } : { curriculumid: { [Op.in]: wanted }, organisationid: scope.organisationid },
     attributes: ["curriculumid"],
     raw: true,
   });
@@ -236,14 +266,19 @@ const idList = (value: unknown): string[] => (Array.isArray(value) ? value.filte
 
 /**
  * The curricula of the caller's school: its `curriculums` list, and only when the school is the token's
- * organisation's (a school that moved to another organisation, or is gone, has nothing).
+ * organisation's (a school that moved to another organisation, or is gone, has nothing). With no organisation
+ * (the classroom-Pi window) the school must have none either.
  */
-export async function schoolCurriculumList(organisationid: string, schoolid: string): Promise<string[]> {
+export async function schoolCurriculumList(organisationid: string | null, schoolid: string): Promise<string[]> {
   const school = await schools.scope("withOwnership").findOne({
     where: { schoolid },
     attributes: ["schoolid", "organisationid", "curriculums"],
   });
-  if (!school || !school.organisationid || lower(String(school.organisationid)) !== lower(organisationid)) {
+  if (!school) {
+    return [];
+  }
+  const owner = school.organisationid ? lower(String(school.organisationid)) : null;
+  if (owner !== (organisationid === null ? null : lower(organisationid))) {
     return [];
   }
   return idList(school.curriculums);
@@ -260,7 +295,7 @@ export async function learnerCurriculumList(studentid: unknown): Promise<string[
 
 /** The curricula the token's holder may see, as curriculum rows' ids: the rule above, applied to the whole list. */
 export async function curriculumIdsInScope(user: Token | undefined): Promise<string[]> {
-  const claims = claimsOf(user);
+  const claims = await callerOf(user);
   if (!claims || !user) {
     return [];
   }
@@ -277,7 +312,7 @@ export async function curriculumIdsInScope(user: Token | undefined): Promise<str
  * list). What the learner screens (subjects, progress summary, library) show.
  */
 export async function enrolledCurriculumIds(user: Token | undefined): Promise<string[]> {
-  const claims = claimsOf(user);
+  const claims = await callerOf(user);
   if (!claims || !user) {
     return [];
   }
@@ -291,7 +326,8 @@ export async function enrolledCurriculumIds(user: Token | undefined): Promise<st
 
 /** May the token's holder see this content? An id that names nothing is not visible either. */
 export async function canAccessContent(user: Token | undefined, kind: ContentKind, id: unknown): Promise<boolean> {
-  if (!claimsOf(user)) {
+  const caller = await callerOf(user);
+  if (!caller) {
     return false;
   }
   const own = await curriculumIdsOf(kind, id);
@@ -305,9 +341,9 @@ export async function canAccessContent(user: Token | undefined, kind: ContentKin
   if (!own.some((curriculumid) => visible.has(lower(curriculumid)))) {
     return false;
   }
-  if (kind === "document") {
+  if (kind === "document" && caller.organisationid !== null) {
     // a document has its owner too: it must be the token's organisation's, as well as used by a curriculum in scope
-    const claims = claimsOf(user)!;
+    const claims = caller as { organisationid: string };
     const doc = await documents.scope("withOwnership").findOne({ where: { documentid: String(id) }, attributes: ["documentid", "organisationid"], raw: true });
     const owner = field(doc, "organisationid");
     return owner !== null && lower(owner) === lower(claims.organisationid);
