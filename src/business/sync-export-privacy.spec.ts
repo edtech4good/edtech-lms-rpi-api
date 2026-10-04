@@ -120,7 +120,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
   };
 
   it("SyncReport.getreportdata() (GET export/report-data, served to central) strips answer", async () => {
-    const payload = await new SyncReport().getreportdata();
+    const payload = await new SyncReport().getreportdata(null);
     assertPayloadIsClean(payload);
     const options = spqSpy.mock.calls[0][0];
     expect(options.attributes).toEqual({ exclude: ["answer"] });
@@ -134,7 +134,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
   });
 
   it("LogBusiness.exportlog() (the GET export/log zip) strips answer", async () => {
-    const { log } = await new LogBusiness().exportlog();
+    const { log } = await new LogBusiness().exportlog(null);
     const questionRows = log.result.flatMap((r: any) => r.studentprogressquestions ?? []);
     expect(questionRows.length).toBeGreaterThan(0);
     for (const row of questionRows) {

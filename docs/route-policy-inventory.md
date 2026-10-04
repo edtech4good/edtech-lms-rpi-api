@@ -26,16 +26,16 @@ pinned in `src/route-policy/pending-enforcement.snapshot.txt`.
 
 Pending refers only to the organisation boundary; every route keeps the authentication and role guards shown in the Guards column.
 
-Of **83** routes, **72** are proved by a spec, **5** are not applicable (public) and **6** are pending.
+Of **83** routes, **78** are proved by a spec, **5** are not applicable (public) and **0** are pending.
 
 | Policy | Routes | Proved | Not applicable | Pending |
 |---|---|---|---|---|
 | public | 5 | 0 | 5 | 0 |
 | learner | 42 | 42 | 0 | 0 |
-| teacher | 32 | 29 | 0 | 3 |
-| server | 3 | 0 | 0 | 3 |
+| teacher | 32 | 32 | 0 | 0 |
+| server | 3 | 3 | 0 | 0 |
 | pi-import | 1 | 1 | 0 | 0 |
-| **all** | **83** | **72** | **5** | **6** |
+| **all** | **83** | **78** | **5** | **0** |
 
 ## Policies
 
@@ -56,7 +56,7 @@ A route used by both a user token and the server key is classified by its user p
 - **Server key**: `yes` when every authentication guard on the route lets central's server sync key through, so a caller with no user gets in.
 - **Staff only**: `yes` when an authentication guard lists school roles (teacher, admin, super admin), so a learner's token is refused.
 
-Routes admitting the server key: 21.
+Routes admitting the server key: 22.
 
 ## Routes
 
@@ -75,17 +75,17 @@ Routes admitting the server key: 21.
 | GET | `/curriculum/all` | CurriculumController.getAllCurriculums | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | Learner, school and organisation come from the token; the query can only narrow inside them. |
 | POST | `/curriculum/baseline/:curriculumid/:schoolname/:studentid` | CurriculumController.getCurriculumBaseline | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) | The school and learner in the path are not read: the token's are. |
 | GET | `/curriculum/subjects` | CurriculumController.getAllCurriculumsWithSubjects | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) |  |
-| GET | `/export/log` | ExportController.exportlog | teacher | pending |  |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER) | Organisation scoping in a later step. |
-| GET | `/export/report-data` | ExportController.getReportData | teacher | pending |  |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER) | Organisation scoping in a later step. |
-| GET | `/export/system-log/files` | ExportController.exportfiles | teacher | pending |  |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER) | Organisation scoping in a later step. |
+| GET | `/export/log` | ExportController.exportlog | teacher | yes | `src/modules/export-scope.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | log.ini holds only the caller's school's learners and logins; the server's own log files are added only on a classroom Pi. |
+| GET | `/export/report-data` | ExportController.getReportData | teacher | yes | `src/modules/export-scope.leak.spec.ts` | yes | yes | AccessOrServerSyncGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | The nightly report pull sends the server key and X-Organisation-Id (an organisation id, or platform); a token gets its own school's rows. Same zip and file name, only the rows differ. |
+| GET | `/export/system-log/files` | ExportController.exportfiles | teacher | yes | `src/modules/export-scope.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | The server's own log files are served only on a classroom Pi; elsewhere the answer is the one for a role that is not allowed. |
 | GET | `/grade/all` | GradeController.getAllGrades | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), AccessGuard(ACCESS) | The curriculum, class and school in the query can only narrow inside the token's scope. |
 | GET | `/grade/curriculum/:curriculumid` | GradeController.getgradesbycurriculumid | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) |  |
 | GET | `/grade/progress/curriculum/:curriculumid` | GradeController.getuesrgradesprogess | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) |  |
 | GET | `/grade/totalgradeprogress/:gradeid` | GradeController.totalgradeprogress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(grade:gradeid) |  |
 | PUT | `/import/master` | ImportController.completesync | pi-import | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | ServerSyncGuard(Role.ADMIN, Role.SUPERADMIN, Role.TEACHER) | Payload header names the organisation; on a Pi it must match the token's, or the token's school must be unowned (5c; the payload's rows are proved in src/modules/import). |
-| PUT | `/import/ownership` | ImportController.ownership | server | pending |  | yes |  | ServerSyncGuard() | Central's ownership push. |
-| PUT | `/import/students` | ImportController.studentsimport | server | pending |  | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
-| PUT | `/import/teachers` | ImportController.teachersimport | server | pending |  | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
+| PUT | `/import/ownership` | ImportController.ownership | server | yes | `src/modules/import/import.ownership.spec.ts` | yes |  | ServerSyncGuard() | Central's ownership push. |
+| PUT | `/import/students` | ImportController.studentsimport | server | yes | `src/modules/import/import.roster.school.spec.ts` | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
+| PUT | `/import/teachers` | ImportController.teachersimport | server | yes | `src/modules/import/import.roster.school.spec.ts` | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
 | GET | `/Lesson/:lessonid/activities/progress` | LessonController.getlessonactivitiesprogress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(lesson:lessonid) |  |
 | GET | `/Lesson/:lessonid/progress` | LessonController.getuserlessonprogress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(lesson:lessonid) |  |
 | GET | `/Lesson/all` | LessonController.getAllLessons | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), AccessGuard(ACCESS) |  |

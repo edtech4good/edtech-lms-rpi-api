@@ -6,6 +6,7 @@ import { Config } from "src/config";
 
 import { AppModule } from "src/app.module";
 import { CurriculumController } from "src/modules/curriculum/curriculum.controller";
+import { ExportController } from "src/modules/export/export.controller";
 import { ImportController } from "src/modules/import/import.controller";
 import { ReportController } from "src/modules/report/report.controller";
 import { StudentController } from "src/modules/student/student.controller";
@@ -41,8 +42,9 @@ const routeKey = (method: string, path: string): RouteKey =>
 // The 15 report/* routes central proxies with the sync key (`offlineonline`
 // is deliberately excluded: central's call to it is commented out, so it
 // keeps the plain AccessGuard and refuses the key), plus
-// curriculum/:id/getstudentresult, student/logintime, and the 3 import/*
-// routes (ServerSyncGuard). See export.controller.ts / report.controller.ts
+// curriculum/:id/getstudentresult, student/logintime, export/report-data (the
+// nightly report pull) and the 4 import/* routes (ServerSyncGuard). export/log
+// and export/system-log/files have no key caller and refuse the key. See export.controller.ts / report.controller.ts
 // / curriculum.controller.ts / student.controller.ts for the per-route
 // comments citing the central caller for each.
 const ALLOWLIST: Array<RouteKey> = [
@@ -63,6 +65,7 @@ const ALLOWLIST: Array<RouteKey> = [
   routeKey("POST", "/report/studentprogress/class/download"),
   routeKey("GET", "/curriculum/:curriculumbaselineid/getstudentresult"),
   routeKey("POST", "/student/logintime"),
+  routeKey("GET", "/export/report-data"),
   routeKey("PUT", "/import/students"),
   routeKey("PUT", "/import/teachers"),
   routeKey("PUT", "/import/master"),
@@ -136,6 +139,7 @@ const ALLOWLIST_HANDLERS: Record<RouteKey, [any, string]> = {
     "getStudentBaselineEndlineResults",
   ],
   [routeKey("POST", "/student/logintime")]: [StudentController, "getlogintime"],
+  [routeKey("GET", "/export/report-data")]: [ExportController, "getReportData"],
   [routeKey("PUT", "/import/students")]: [ImportController, "studentsimport"],
   [routeKey("PUT", "/import/teachers")]: [ImportController, "teachersimport"],
   [routeKey("PUT", "/import/master")]: [ImportController, "completesync"],

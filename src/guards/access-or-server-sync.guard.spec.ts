@@ -27,11 +27,12 @@ import { AccessController } from "src/modules/access/access.controller";
  *
  * `AccessOrServerSyncGuard` (access-or-server-sync.guard.ts) scopes that
  * down: the sync key now only works on the specific routes central actually
- * calls server-to-server. `export/*` was dropped from the allow-list after
- * review: no caller sends the key there — central never calls it, and the
- * Android teacher app and Expo call `export/log` etc. with a user token —
- * so it is back on plain `AccessGuard` and refuses the sync key like any
- * other unlisted route. This spec drives real HTTP through the real JWT
+ * calls server-to-server. Of `export/*` only `export/report-data` is on it:
+ * the nightly report pull sends the key there (and the organisation it acts
+ * for, which the route requires). `export/log` and `export/system-log/files`
+ * have no key caller (the Android teacher app and Expo call them with a user
+ * token), so they stay on plain `AccessGuard` and refuse the sync key like
+ * any other unlisted route. This spec drives real HTTP through the real JWT
  * strategy with signed tokens, so the guards run exactly as they do in the
  * app — only the token-table lookup and the handlers' own business-layer
  * calls (which would otherwise hit a real database) are stubbed.
@@ -126,9 +127,10 @@ jest.mock("src/business/log.business", () => ({
   })),
 }));
 
+const mockGetReportData = jest.fn().mockResolvedValue("{}");
 jest.mock("src/business/sync.report", () => ({
   SyncReport: jest.fn().mockImplementation(() => ({
-    getreportdata: jest.fn().mockResolvedValue("{}"),
+    getreportdata: mockGetReportData,
   })),
 }));
 
@@ -196,11 +198,10 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
       ["get", "/student/all"],
       ["get", "/teacher/standards"],
       ["get", "/access"],
-      // export/* dropped after review: no caller sends the key; every real
+      // export/log and export/system-log/files: no caller sends the key; every real
       // caller uses a user token (edtech4good/workspace#45 follow-up).
       ["get", "/export/log"],
       ["get", "/export/system-log/files"],
-      ["get", "/export/report-data"],
     ];
 
     it.each(NON_ALLOWLISTED)("%s %s refuses the sync key with 401", async (method, path) => {
@@ -238,6 +239,9 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
       ["post", "/report/studentprogress/class/download", mockGetClassScoresData],
       ["get", "/curriculum/some-baseline-id/getstudentresult", mockGetStudentBaselineEndlineResults],
       ["post", "/student/logintime", mockGetlogintime],
+      // the nightly report pull (its scope, from X-Organisation-Id, is proved in src/modules/export-scope.leak.spec.ts;
+      // the scope guard is stood aside above, so only the key's admission is proved here)
+      ["get", "/export/report-data", mockGetReportData],
     ];
 
     it.each(ALLOWLISTED)(

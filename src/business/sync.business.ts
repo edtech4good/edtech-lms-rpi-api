@@ -544,7 +544,7 @@ export class SyncBusiness {
 
   getreportdata = async () => {
     const studentusers =
-      await new SchoolUserBusiness().getschoolusers();
+      await new SchoolUserBusiness().getschoolusers(null);
     const getstudentdata = await this.getstudentdata();
     const data = {
       students: studentusers ? studentusers.map((x) => x.get({ plain: true })) : [],

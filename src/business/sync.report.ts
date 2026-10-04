@@ -13,13 +13,20 @@ import {
   studentprogressquestions,
 } from "src/models/data-models/init-models";
 import { studentappusages } from "src/models/data-models/studentappusage";
+import { byLogin, byStudent, exportKeysOf, ExportKeys } from "./export-scope";
+import { ReportScope } from "./report-scope";
 import { SchoolUserBusiness } from "./schooluser.business";
 
 export class SyncReport {
-  getreportdata = async () => {
+  /**
+   * The payload of `GET export/report-data`. `scope` is whose rows it may carry (see export-scope.ts): `null` is the
+   * whole server (the platform view), anything else only the learners and logins of its schools.
+   */
+  getreportdata = async (scope: ReportScope | null) => {
+    const keys = await exportKeysOf(scope);
     const studentusers =
-      await new SchoolUserBusiness().getschoolusers();
-    const getstudentdata = await this.getstudentdata();
+      await new SchoolUserBusiness().getschoolusers(keys);
+    const getstudentdata = await this.getstudentdata(scope, keys);
     const data = {
       students: studentusers ? studentusers.map((x) => x.get({ plain: true })) : [],
       studentprogress: getstudentdata.progress,
@@ -29,12 +36,15 @@ export class SyncReport {
     return JSON.stringify(data);
   };
 
-  getstudentdata = async () => {
+  /** The six months of progress, results, sign-ins and usage; `keys` (from `scope`) keeps them to the scope's learners and logins. */
+  getstudentdata = async (scope: ReportScope | null, keys: ExportKeys | null = null) => {
+    keys = keys ?? (await exportKeysOf(scope));
     const limitdate = subMonths(new Date(), 6);
     const sp = (
       await studentprogress.findAll({
         where: {
           starttime: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -55,12 +65,14 @@ export class SyncReport {
     const sa = await rpiuseraccess.findAll({
       where: {
         logintime: { [Op.gt]: limitdate },
+        ...byLogin(keys, "userid"),
       },
     });
     const stactives = (
       await studentactives.findAll({
         where: {
           created_at: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -70,6 +82,7 @@ export class SyncReport {
       await studentlearningprogress.findAll({
         where: {
           lastupdated: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -79,6 +92,7 @@ export class SyncReport {
       await studentgradesprogress.findAll({
         where: {
           lastupdated: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -88,6 +102,7 @@ export class SyncReport {
       await studentlevelsprogress.findAll({
         where: {
           lastupdated: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -97,6 +112,7 @@ export class SyncReport {
       await studentlessonsprogress.findAll({
         where: {
           lastupdated: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -106,6 +122,7 @@ export class SyncReport {
       await studentpoints.findAll({
         where: {
           created_at: { [Op.gt]: limitdate },
+          ...byStudent(keys),
         },
       })
     ).map((x) => ({
@@ -115,6 +132,7 @@ export class SyncReport {
       await studentappusages.findAll({
         where: {
           created_at: { [Op.gt]: limitdate },
+          ...byLogin(keys, "schooluserid"),
         },
       })
     ).map((x) => ({

@@ -53,21 +53,13 @@ import {
 // `npm run routes:policy -- --write` to refresh the committed files.
 const EXPECTED_TOTAL = 83;
 const EXPECTED_BY_POLICY = { public: 5, learner: 42, teacher: 32, server: 3, "pi-import": 1 };
-const EXPECTED_PROVED = 72;
+const EXPECTED_PROVED = 78;
 const EXPECTED_NOT_APPLICABLE = 5;
-const EXPECTED_PENDING = 6;
+const EXPECTED_PENDING = 0;
 
-// The routes still pending, by name. They are the ones the leak spec does not prove: the whole-server exports, and the
-// three server-key-only imports (whose rows are proved by the specs under src/modules/import, which the inventory does
-// not read).
-const EXPECTED_PENDING_ROUTES = [
-  "GET /export/log",
-  "GET /export/report-data",
-  "GET /export/system-log/files",
-  "PUT /import/ownership",
-  "PUT /import/students",
-  "PUT /import/teachers",
-];
+// The routes still pending, by name: none. The three whole-server exports are proved by src/modules/export-scope.leak.spec.ts,
+// and the three server-key-only imports by the specs under src/modules/import.
+const EXPECTED_PENDING_ROUTES: string[] = [];
 
 // Routes with no AccessGuard that read the bearer token in the handler.
 const AUTHENTICATED_IN_HANDLER = ["POST /auth/logout"];
@@ -114,7 +106,7 @@ describe("route inventory (real application wiring)", () => {
   });
 
   describe("proved and pending", () => {
-    it("divides the routes into 72 proved by a spec, 5 not applicable (public) and 6 pending", () => {
+    it("divides the routes into 78 proved by a spec, 5 not applicable (public) and none pending", () => {
       const count = (state: string) => routes.filter((r) => enforcementState(r) === state).length;
       expect(count("yes")).toBe(EXPECTED_PROVED);
       expect(count("n/a")).toBe(EXPECTED_NOT_APPLICABLE);
@@ -123,7 +115,7 @@ describe("route inventory (real application wiring)", () => {
       expect(routes.filter((r) => r.policy === "public").every((r) => enforcementState(r) === "n/a")).toBe(true);
     });
 
-    it("the pending routes are exactly the six named ones", () => {
+    it("no route is pending", () => {
       expect(routes.filter((r) => enforcementState(r) === "pending").map(key).sort()).toEqual([...EXPECTED_PENDING_ROUTES].sort());
     });
 
@@ -137,8 +129,13 @@ describe("route inventory (real application wiring)", () => {
       expect(routes.filter((r) => r.policy === "public" && r.enforcedBy !== undefined).map(key)).toEqual([]);
     });
 
-    it("the proving spec is the leak spec", () => {
-      expect([...new Set(routes.filter((r) => r.enforcedBy !== undefined).map((r) => r.enforcedBy))]).toEqual(["src/modules/org-boundary.leak.spec.ts"]);
+    it("the proving specs are the leak specs, the export spec and the specs of the three server-key imports", () => {
+      expect([...new Set(routes.filter((r) => r.enforcedBy !== undefined).map((r) => r.enforcedBy))].sort()).toEqual([
+        "src/modules/export-scope.leak.spec.ts",
+        "src/modules/import/import.ownership.spec.ts",
+        "src/modules/import/import.roster.school.spec.ts",
+        "src/modules/org-boundary.leak.spec.ts",
+      ]);
     });
 
     it("the snapshot file, header included, is exactly what the generator writes", () => {
@@ -191,9 +188,10 @@ describe("route inventory (real application wiring)", () => {
       expect(pi[0].rolesRequired).toBe(true);
     });
 
-    it("the routes that admit central's server key besides the imports are the 15 proxied reports, login time and the baseline results", () => {
+    it("the routes that admit central's server key besides the imports are the 15 proxied reports, login time, the baseline results and the nightly report pull", () => {
       expect(routes.filter((r) => r.admitsServerKey && r.policy !== "server").map(key).sort()).toEqual([
         "GET /curriculum/:curriculumbaselineid/getstudentresult",
+        "GET /export/report-data",
         "POST /report/student-grade-progress",
         "POST /report/student-lesson-progress",
         "POST /report/student-level-progress",
@@ -222,7 +220,7 @@ describe("route inventory (real application wiring)", () => {
       expect(unguarded.map(key)).toEqual([]);
       // every route central proxies has the report scope in front of it
       expect(withGuard("ReportScopeGuard").length).toBe(
-        routes.filter((r) => r.path.startsWith("/report/")).length + 2, // + /student/logintime and the baseline results
+        routes.filter((r) => r.path.startsWith("/report/")).length + 5, // + /student/logintime, the baseline results and the three exports
       );
     });
   });
