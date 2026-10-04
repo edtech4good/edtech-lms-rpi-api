@@ -26,7 +26,7 @@ import { standards } from "src/models/data-models/standards";
 import { subjects } from "src/models/data-models/subjects";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { dbinstance } from "src/services/dbservice";
-import { OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
+import { CONTENT_TABLES, OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
 import { SyncBusiness } from "./sync.business";
 
 /**
@@ -39,16 +39,19 @@ import { SyncBusiness } from "./sync.business";
  *     already owned by ANOTHER organisation refuses the whole file (400). A row
  *     whose id is here with no owner is the same row (ids are central's) and takes
  *     the header's organisation when it is written; those are counted as `adopted`.
- *  3. This organisation's content is deleted: its questions, documents and
- *     subjects (by `organisationid`), and everything under its curricula (the
- *     ones it owns here plus the ones in the payload): baselines, grades, levels,
- *     lessons, learnings, plans, practices, quizzes and their attach rows; and the
- *     standards of its schools. Nothing owned by another organisation and nothing
- *     with no owner is deleted. Schools are NOT deleted (learners hold ids into
- *     them).
+ *  3. This organisation's content is replaced: its questions, documents and
+ *     subjects (by `organisationid`) are deleted, and so is everything under the
+ *     curricula IN the payload (baselines, grades, levels, lessons, learnings,
+ *     plans, practices, quizzes and their attach rows) and the standards of the
+ *     schools in the payload; the payload re-creates them under the same ids, so
+ *     learners' progress stays valid. A curriculum or school of this organisation
+ *     that the payload no longer has is not deleted, and neither is anything under
+ *     it: it is marked `isdeleted` (step 5) and what hangs from it stays, inert.
+ *     Nothing owned by another organisation and nothing with no owner is deleted.
  *  4. The payload's rows are written with their owners. Schools, curricula and
- *     countries are upserted by id; a child row whose id is still here after step 3
- *     belongs to something else, and refuses the file (400).
+ *     countries are upserted by id. A child row whose id is still here after step 3
+ *     is replaced by id when it sits under an absent curriculum or school of this
+ *     organisation; under anything else it refuses the file (400).
  *  5. This organisation's schools and curricula that the payload no longer has are
  *     marked `isdeleted` (learners hold ids into them), never destroyed.
  *  6. Learners and logins that were pushed before their school are given their
@@ -209,16 +212,23 @@ export class OrganisationContentImport {
     this.counts.organisations.upserted = 1;
 
     // ---- delete this organisation's content --------------------------------
-    const curriculumIds = this.union(ownedCurriculaBefore, tables.curriculums.map((r) => String(r.curriculumid)));
-    const schoolIds = this.union(ownedSchoolsBefore, tables.schools.map((r) => String(r.schoolid)));
-    await this.deleteCurriculumChildren(curriculumIds);
-    await this.deleteWhere("standards", "schoolid", schoolIds);
+    // Only what is replaced is deleted. A curriculum or school this organisation owned that the
+    // payload no longer has keeps its grades, levels, lessons, standards and the rest, inert:
+    // learners' progress and `students.gradeid` still point at them.
+    const payloadCurricula = tables.curriculums.map((r) => String(r.curriculumid));
+    const payloadSchools = tables.schools.map((r) => String(r.schoolid));
+    const absent = await this.absentFromPayload(
+      this.without(ownedCurriculaBefore, payloadCurricula),
+      this.without(ownedSchoolsBefore, payloadSchools),
+    );
+    await this.deleteCurriculumChildren(payloadCurricula);
+    await this.deleteWhere("standards", "schoolid", payloadSchools);
     for (const key of ["questions", "documents", "subjects"] as const) {
       this.counts[key].deleted = await MODELS[key].destroy({ where: { organisationid }, transaction: t });
     }
 
     // A child row whose id is still here is not this organisation's: refuse the file.
-    await this.refuseStrayChildren(content);
+    await this.refuseStrayChildren(content, absent);
 
     // ---- write the payload ---------------------------------------------------
     const owned = (key: TableKey): Row[] => tables[key].map((r) => ({ ...r, organisationid }));
@@ -267,12 +277,10 @@ export class OrganisationContentImport {
     return found.map((r) => String(r[pk]));
   };
 
-  private union = (a: string[], b: string[]): string[] => {
-    const seen = new Map<string, string>();
-    for (const id of [...a, ...b]) {
-      if (!seen.has(lower(id))) seen.set(lower(id), id);
-    }
-    return [...seen.values()];
+  /** The ids in `ids` that `others` does not have (compared without regard to letter case). */
+  private without = (ids: string[], others: string[]): string[] => {
+    const drop = new Set(others.map(lower));
+    return ids.filter((id) => !drop.has(lower(id)));
   };
 
   /**
@@ -313,38 +321,64 @@ export class OrganisationContentImport {
     }
   };
 
-  /** Everything under the curricula, children first. */
-  private deleteCurriculumChildren = async (curriculumIds: string[]): Promise<void> => {
-    const idsWhere = async (key: TableKey, column: string, parents: string[]): Promise<string[]> => {
-      const pk = PKS[key];
-      const out: string[] = [];
-      for (const part of chunk(parents, CHUNK)) {
-        const found = (await MODELS[key].findAll({
-          attributes: [pk],
-          where: { [column]: { [Op.in]: part } },
-          raw: true,
-          transaction: this.transaction,
-        })) as unknown as Array<Record<string, string>>;
-        out.push(...found.map((r) => String(r[pk])));
-      }
-      return out;
-    };
-    const gradeIds = await idsWhere("grades", "curriculumid", curriculumIds);
-    const levelIds = await idsWhere("levels", "gradeid", gradeIds);
-    const lessonIds = await idsWhere("lessons", "levelid", levelIds);
-    const practiceIds = await idsWhere("lessonpractices", "lessonid", lessonIds);
-    const quizIds = await idsWhere("lessonquizzes", "lessonid", lessonIds);
-    const baselineIds = await idsWhere("curriculumbaselines", "curriculumid", curriculumIds);
+  /** The ids of the rows of `key` whose `column` is one of `parents`. */
+  private idsWhere = async (key: TableKey, column: string, parents: string[]): Promise<string[]> => {
+    const pk = PKS[key];
+    const out: string[] = [];
+    for (const part of chunk(parents, CHUNK)) {
+      const found = (await MODELS[key].findAll({
+        attributes: [pk],
+        where: { [column]: { [Op.in]: part } },
+        raw: true,
+        transaction: this.transaction,
+      })) as unknown as Array<Record<string, string>>;
+      out.push(...found.map((r) => String(r[pk])));
+    }
+    return out;
+  };
 
-    await this.deleteWhere("lessonquizquestions", "lessonquizid", quizIds);
-    await this.deleteWhere("lessonpracticequestions", "lessonpracticeid", practiceIds);
-    await this.deleteWhere("levelquizquestions", "levelid", levelIds);
-    await this.deleteWhere("lessonquizzes", "lessonid", lessonIds);
-    await this.deleteWhere("lessonpractices", "lessonid", lessonIds);
-    await this.deleteWhere("lessonlearnings", "lessonid", lessonIds);
-    await this.deleteWhere("lessonplans", "lessonid", lessonIds);
-    await this.deleteWhere("lessons", "levelid", levelIds);
-    await this.deleteWhere("levels", "gradeid", gradeIds);
+  /** The ids of the rows that other rows hang from, down from the curricula: what a delete or a stray check needs to know. */
+  private chainOf = async (curriculumIds: string[]) => {
+    const grades = await this.idsWhere("grades", "curriculumid", curriculumIds);
+    const levels = await this.idsWhere("levels", "gradeid", grades);
+    const lessons = await this.idsWhere("lessons", "levelid", levels);
+    return {
+      curriculumbaselines: await this.idsWhere("curriculumbaselines", "curriculumid", curriculumIds),
+      grades,
+      levels,
+      lessons,
+      lessonpractices: await this.idsWhere("lessonpractices", "lessonid", lessons),
+      lessonquizzes: await this.idsWhere("lessonquizzes", "lessonid", lessons),
+    };
+  };
+
+  /**
+   * What this organisation owns here that the payload no longer has: those curricula and
+   * schools, and the ids under them (read now, before the deletes; nothing here is changed).
+   */
+  private absentFromPayload = async (curriculumIds: string[], schoolIds: string[]): Promise<Partial<Record<TableKey, Set<string>>>> => {
+    const chain = await this.chainOf(curriculumIds);
+    const sets: Partial<Record<TableKey, Set<string>>> = { curriculums: new Set(curriculumIds.map(lower)), schools: new Set(schoolIds.map(lower)) };
+    for (const [key, ids] of Object.entries(chain)) {
+      sets[key as TableKey] = new Set(ids.map(lower));
+    }
+    return sets;
+  };
+
+  /** What is under the curricula of the payload (replaced by the payload's own rows of the same ids), children first. */
+  private deleteCurriculumChildren = async (curriculumIds: string[]): Promise<void> => {
+    const chain = await this.chainOf(curriculumIds);
+    const baselineIds = chain.curriculumbaselines;
+
+    await this.deleteWhere("lessonquizquestions", "lessonquizid", chain.lessonquizzes);
+    await this.deleteWhere("lessonpracticequestions", "lessonpracticeid", chain.lessonpractices);
+    await this.deleteWhere("levelquizquestions", "levelid", chain.levels);
+    await this.deleteWhere("lessonquizzes", "lessonid", chain.lessons);
+    await this.deleteWhere("lessonpractices", "lessonid", chain.lessons);
+    await this.deleteWhere("lessonlearnings", "lessonid", chain.lessons);
+    await this.deleteWhere("lessonplans", "lessonid", chain.lessons);
+    await this.deleteWhere("lessons", "levelid", chain.levels);
+    await this.deleteWhere("levels", "gradeid", chain.grades);
     await this.deleteWhere("grades", "curriculumid", curriculumIds);
     await this.deleteWhere("baselinequestion", "curriculumbaselineid", baselineIds);
     await this.deleteWhere("curriculumbaselines", "curriculumid", curriculumIds);
@@ -356,14 +390,27 @@ export class OrganisationContentImport {
     }
   };
 
-  /** After the deletes, a payload child row whose id is still here is somebody else's: the file is refused. */
-  private refuseStrayChildren = async (content: OrganisationContent): Promise<void> => {
+  /**
+   * After the deletes, a payload child row whose id is still here is replaced (upserted by
+   * id) only when it sits under a curriculum or school of this organisation that the
+   * payload no longer has: the payload takes the row over. Any other row with that id is
+   * somebody else's (another organisation's, or no one's), and the file is refused.
+   */
+  private refuseStrayChildren = async (content: OrganisationContent, absent: Partial<Record<TableKey, Set<string>>>): Promise<void> => {
     const refused: string[] = [];
     for (const key of TABLE_KEYS) {
-      if (key === "countries" || OWNED.includes(key)) continue;
+      const parent = CONTENT_TABLES[key].parent;
+      if (!parent) continue; // countries and the owned tables are not children
+      const takeover = absent[parent.to] ?? new Set<string>();
       let stray = 0;
       for (const part of chunk(content.tables[key].map((r) => String(r[PKS[key]])), CHUNK)) {
-        stray += await MODELS[key].count({ where: { [PKS[key]]: { [Op.in]: part } }, transaction: this.transaction });
+        const found = (await MODELS[key].findAll({
+          attributes: [PKS[key], parent.fk],
+          where: { [PKS[key]]: { [Op.in]: part } },
+          raw: true,
+          transaction: this.transaction,
+        })) as unknown as Array<Record<string, string | null>>;
+        stray += found.filter((r) => !takeover.has(lower(String(r[parent.fk] ?? "")))).length;
       }
       if (stray > 0) {
         refused.push(`${key}: ${rows(stray)} already exist${stray === 1 ? "s" : ""} here outside this organisation's content`);

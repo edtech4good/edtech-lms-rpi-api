@@ -257,7 +257,7 @@ const dbBefore = (): Store => ({
   organisations: [organisationRow(ORG_Y, "yorg")],
   students: [
     { studentid: "x-student-1", schoolname: "សាលា x1", schoolid: "x-school-1" },
-    { studentid: "x-student-3", schoolname: "សាលា x3", schoolid: "x-school-3" },
+    { studentid: "x-student-3", schoolname: "សាលា x3", schoolid: "x-school-3", curriculumid: "x-cur-3", gradeid: "x-grade-3" },
     { studentid: "y-student-1", schoolname: "សាលា y1", schoolid: "y-school-1" },
     { studentid: "u-student-1", schoolname: "សាលា u1", schoolid: "u-school-1" },
   ],
@@ -320,17 +320,15 @@ describe("PUT /import/master with a format-3 payload", () => {
     it("another organisation's content and unowned legacy content are byte-identical afterwards, in every table", async () => {
       install(dbBefore());
       const snapshot = notX(store);
-      // X now has content under new ids only: all of x1 and x3 is replaced
+      // X's payload now has only x2: owner-scoped rows are replaced by it ...
       await importIt(payloadOf(content("x", 2, ORG_X)));
       expect(notX(store)).toEqual(snapshot);
-      // and what was X's is replaced
       expect(ids("questions", "questionid").filter((id) => id.startsWith("x-"))).toEqual(["x-q1-2", "x-q2-2"]);
       expect(ids("documents", "documentid").filter((id) => id.startsWith("x-"))).toEqual(["x-doc-2"]);
       expect(ids("subjects", "subjectid").filter((id) => id.startsWith("x-"))).toEqual(["x-subject-2"]);
+      // ... and what hangs from the curricula that left the payload (x1, x3) stays where it is, next to x2's
       for (const [table, pk] of [["grades", "gradeid"], ["levels", "levelid"], ["lessons", "lessonid"], ["lessonlearnings", "lessonlearningid"], ["lessonplans", "lessonplanid"], ["lessonpractices", "lessonpracticeid"], ["lessonquizzes", "lessonquizid"], ["lessonpracticequestions", "lessonpracticequestionid"], ["lessonquizquestions", "lessonquizquestionid"], ["levelquizquestions", "levelquizquestionid"], ["curriculumbaselines", "curriculumbaselineid"], ["baselinequestion", "baselinequestionid"], ["standards", "standardid"]]) {
-        const xs = ids(table, pk).filter((id) => id.startsWith("x-"));
-        expect(xs).toHaveLength(1);
-        expect(xs[0]).toMatch(/-2$/);
+        expect(ids(table, pk).filter((id) => id.startsWith("x-")).map((id) => id.slice(-1))).toEqual(["1", "2", "3"]);
       }
       // Y's and the legacy rows are all still there (counted, not only compared)
       expect(ids("questions", "questionid").filter((id) => /^[yu]-/.test(id))).toEqual(["u-q1-1", "u-q2-1", "y-q1-1", "y-q2-1"]);
@@ -355,6 +353,9 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(x3).toMatchObject({ isdeleted: true, organisationid: ORG_X });
       expect(store.schools.find((s) => s.schoolid === "x-school-1")).toMatchObject({ isdeleted: false });
       expect(store.students).toEqual(learners);
+      // its standards stay with it: only the standards of schools IN the payload are replaced
+      expect(store.standards.find((s) => s.standardid === "x-std-3")).toMatchObject({ schoolid: "x-school-3" });
+      expect(result.counts.standards).toMatchObject({ deleted: 1, inserted: 1 });
       expect(result.counts.schools).toMatchObject({ upserted: 1, markedDeleted: 1 });
       // a school of another organisation, and an unowned one, are not marked
       expect(store.schools.find((s) => s.schoolid === "y-school-1")?.isdeleted).toBe(false);
@@ -370,18 +371,54 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.schools.find((s) => s.schoolid === "x-school-1")).toMatchObject({ schoolname: "សាលា ថ្មី", organisationid: ORG_X });
     });
 
-    it("a curriculum missing from the payload is marked isdeleted and its content below it is deleted; the others are kept", async () => {
+    it("a curriculum missing from the payload is marked isdeleted and nothing under it is deleted: a learner's grade still resolves", async () => {
       install(dbBefore());
+      const learners = cloneDeep(store.students);
+      const below = ["grades", "levels", "lessons", "lessonlearnings", "lessonplans", "lessonpractices", "lessonquizzes", "lessonpracticequestions", "lessonquizquestions", "levelquizquestions", "curriculumbaselines", "baselinequestion"];
+      const absentRows = Object.fromEntries(below.map((t) => [t, cloneDeep(store[t].filter((r) => String(Object.values(r)[0]).endsWith("-3")))]));
       const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
       expect(store.curriculums.find((c) => c.curriculumid === "x-cur-3")).toMatchObject({ isdeleted: true, organisationid: ORG_X });
       expect(store.curriculums.find((c) => c.curriculumid === "x-cur-1")).toMatchObject({ isdeleted: false });
-      expect(store.grades.find((g) => g.gradeid === "x-grade-3")).toBeUndefined();
-      expect(store.lessonquizquestions.find((g) => g.lessonquizquestionid === "x-qzq-3")).toBeUndefined();
-      expect(store.curriculumbaselines.find((g) => g.curriculumbaselineid === "x-bl-3")).toBeUndefined();
+      for (const t of below) {
+        expect(store[t].filter((r) => String(Object.values(r)[0]).endsWith("-3"))).toEqual(absentRows[t]);
+        expect(absentRows[t]).toHaveLength(1);
+      }
+      // the learner's grade and curriculum still name rows that exist
+      const learner = store.students.find((s) => s.studentid === "x-student-3");
+      expect(learner).toEqual(learners.find((s) => s.studentid === "x-student-3"));
+      expect(store.grades.some((g) => g.gradeid === learner?.gradeid)).toBe(true);
+      expect(store.curriculums.some((c) => c.curriculumid === learner?.curriculumid)).toBe(true);
       expect(store.curriculums.find((c) => c.curriculumid === "y-cur-1")?.isdeleted).toBe(false);
       expect(result.counts.curriculums).toMatchObject({ upserted: 1, markedDeleted: 1 });
-      expect(result.counts.grades).toMatchObject({ deleted: 2, inserted: 1 });
+      // only the children of the curriculum that IS in the payload were deleted and re-created
+      expect(result.counts.grades).toMatchObject({ deleted: 1, inserted: 1 });
+      expect(result.counts.lessonquizquestions).toMatchObject({ deleted: 1, inserted: 1 });
+      // the owner-scoped tables are still replaced whole
       expect(result.counts.questions).toMatchObject({ deleted: 4, inserted: 2 });
+    });
+
+    it("an attach row of the absent curriculum keeps naming its question: the question is re-created by id, and if it left the payload the row is left dangling (package 7's export decides what is sent)", async () => {
+      install(dbBefore());
+      await importIt(payloadOf(content("x", 1, ORG_X)));
+      // x-q2-3 is not in the payload, so it is gone; the absent curriculum's attach rows still point at it
+      expect(store.questions.some((q) => q.questionid === "x-q2-3")).toBe(false);
+      expect(store.lessonquizquestions.find((r) => r.lessonquizquestionid === "x-qzq-3")).toMatchObject({ questionid: "x-q2-3" });
+      // a question that IS still in the payload keeps resolving
+      install(dbBefore());
+      const keep = content("x", 1, ORG_X);
+      keep.questions.push({ questionid: "x-q2-3", questiontext: "kept", isdeleted: false, organisationid: ORG_X });
+      await importIt(payloadOf(keep));
+      expect(store.questions.some((q) => q.questionid === "x-q2-3")).toBe(true);
+    });
+
+    it("a payload child whose id is under a curriculum or school of this organisation that left the payload is replaced, not refused", async () => {
+      install(dbBefore());
+      const payload = content("x", 1, ORG_X);
+      payload.grades.push({ gradeid: "x-grade-3", curriculumid: "x-cur-1" }); // was under the absent x-cur-3
+      payload.standards.push({ standardid: "x-std-3", standardname: "ថ្នាក់ទី៣", schoolid: "x-school-1" }); // was under the absent x-school-3
+      await expect(importIt(payloadOf(payload))).resolves.toMatchObject({ error: false });
+      expect(store.grades.filter((g) => g.gradeid === "x-grade-3")).toEqual([{ gradeid: "x-grade-3", curriculumid: "x-cur-1" }]);
+      expect(store.standards.find((s) => s.standardid === "x-std-3")).toMatchObject({ schoolid: "x-school-1" });
     });
 
     it("a school or curriculum that was already marked deleted is not counted as marked again", async () => {
