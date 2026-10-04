@@ -1,5 +1,6 @@
 import { DatabaseError } from "sequelize";
 import { ApiError } from "src/models/ApiError";
+import { organisations } from "src/models/data-models/organisations";
 import { schools } from "src/models/data-models/school";
 import { schoolusers } from "src/models/data-models/schoolusers";
 import { students } from "src/models/data-models/students";
@@ -24,23 +25,43 @@ export class SchoolBusiness {
    * The school is named by its name (as ever) or by its id; a name is resolved to
    * an id once and the school is read by that id. A name that matches more than
    * one school gives the default theme, like an unknown one (names are unique
-   * today, so this is not reachable). */
+   * today, so this is not reachable).
+   *
+   * Two levels, then the default: each of the two settings (`uitheme`,
+   * `brandingconfig`) is the SCHOOL's when it has one, else its ORGANISATION's
+   * (when the organisation is active), else the default (`kids`, no config). A school
+   * has none of its own when the value is null (a blank theme counts as none). */
   getBranding = async (
     schoolname?: unknown,
     schoolid?: unknown
   ): Promise<{ uitheme: string; brandingconfig: object | null }> => {
     let school: schools | null = null;
+    let organisation: organisations | null = null;
     try {
       const id = await resolveSchoolRef({ schoolid, schoolname });
-      school = id ? await schools.findOne({ where: { schoolid: id } }) : null;
+      if (id) {
+        try {
+          school = await schools.scope("withOwnership").findOne({ where: { schoolid: id } });
+        } catch (e) {
+          if (!isUnknownColumn(e)) {
+            throw e;
+          }
+          school = await schools.findOne({ where: { schoolid: id } });
+        }
+      }
+      if (school?.organisationid) {
+        const owner = await organisations.findOne({ where: { organisationid: school.organisationid } });
+        organisation = owner && !owner.isdeleted && owner.organisationstatus ? owner : null;
+      }
     } catch (e) {
       if (!(e instanceof ApiError)) {
         throw e;
       }
     }
+    const given = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
     return {
-      uitheme: school?.uitheme ?? "kids",
-      brandingconfig: school?.brandingconfig ?? null,
+      uitheme: given(school?.uitheme) ? school!.uitheme : given(organisation?.uitheme) ? organisation!.uitheme : "kids",
+      brandingconfig: school?.brandingconfig ?? organisation?.brandingconfig ?? null,
     };
   };
 

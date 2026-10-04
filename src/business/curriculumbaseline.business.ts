@@ -8,6 +8,8 @@ import { endOfDay, startOfDay } from "date-fns";
 import { students } from "src/models/data-models/students";
 import { baselinequestion } from "src/models/data-models/baselinequestion";
 import { schoolusers } from "src/models/data-models/schoolusers";
+import { curriculaInScope, curriculumIdsOf } from "./content-access";
+import { learnersInScope, ReportScope } from "./report-scope";
 interface BaselineQuestionCorrectAnswer {
   iscorrect: boolean;
   question: undefined;
@@ -143,7 +145,16 @@ export class CurriculumBaseLineBusiness {
 
   }
 
-  async getStudentBaselineEndlineResults(curriculumbaselineid: string) {
+  // `scope` (see report-scope.ts): a baseline of a curriculum outside it answers as one that does not exist (no
+  // rows), and the rows are only learners of the scope's schools. Undefined or null: no limit (the platform's view).
+  async getStudentBaselineEndlineResults(curriculumbaselineid: string, scope?: ReportScope | null) {
+    if (scope) {
+      const own = await curriculumIdsOf("baseline", curriculumbaselineid);
+      const inside = await curriculaInScope({ organisationid: scope.organisationid, curriculumids: scope.curriculumids }, own);
+      if (own.length === 0 || inside.length !== own.length) {
+        return [];
+      }
+    }
     curriculumbaseline.hasMany(studentprogress, {
       foreignKey: "studentprogressreferenceid",
       sourceKey: "curriculumbaselineid",
@@ -165,6 +176,7 @@ export class CurriculumBaseLineBusiness {
           model: students,
           attributes: ['studentfirstname', 'schoolname'],
           required: true,
+          ...(scope ? { where: learnersInScope(scope) } : {}),
           include: [
             {
               model: schoolusers,

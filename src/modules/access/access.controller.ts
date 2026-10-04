@@ -8,6 +8,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiBody } from "@nestjs/swagger";
 import { AccessBusiness } from "src/business/access.business";
 import { User } from "src/decorators/user.decorator";
@@ -23,6 +24,7 @@ import { AccessBody } from "./models/AccessRequest";
 @ApiBearerAuth()
 export class AccessController {
   @Post()
+  @OrgPolicy("learner", { note: "Records the caller's own usage; no other login's row is read or written.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Access updated successfully",
@@ -51,6 +53,7 @@ export class AccessController {
   }
 
   @Get()
+  @OrgPolicy("learner", { note: "A learner gets their own usage rows; staff get those of their school's learners.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students usages successfully",
@@ -65,8 +68,8 @@ export class AccessController {
   })
   @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
-  async getStudentsOfflineOnline(): Promise<any> {
-    const data = await new AccessBusiness().getStudentsAccess();
+  async getStudentsOfflineOnline(@User() user: Token): Promise<any> {
+    const data = await new AccessBusiness().getStudentsAccess(user);
     return {
         data: data,
         error: false,

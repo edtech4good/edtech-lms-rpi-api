@@ -8,12 +8,14 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { LevelBusiness } from "src/business/level.business";
 import { LibraryBusiness } from "src/business/library.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
 import {
   SchemaValidationInterceptor,
   BusinessValidationInterceptor,
@@ -35,6 +37,7 @@ export class LevelController {
   // e.g. "grade/:gradeid"), so there is no route here "library" could be
   // shadowed by regardless of declaration order.
   @Get("library")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Library fetched successfully",
@@ -61,6 +64,7 @@ export class LevelController {
   }
 
   @Get('all')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched levels successfully",
@@ -79,9 +83,10 @@ export class LevelController {
   @HttpCode(HttpStatus.OK)
   async getAllLevels(
     @Query("gradeid") gradeid: string = '',
-    @Query("level") levelname: string = ''
+    @Query("level") levelname: string = '',
+    @User() user?: Token
   ): Promise<any> {
-    const data = await new LevelBusiness().getLevelsWithFilter(gradeid, levelname);
+    const data = await new LevelBusiness().getLevelsWithFilter(gradeid, levelname, user);
     return {
         data: data,
         error: false,
@@ -89,6 +94,8 @@ export class LevelController {
   }
 
   @Get("/grade/:gradeid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("grade", "gradeid"))
   @ApiResponse({
     status: 200,
     description: "Levels fetch successfully",
@@ -120,6 +127,8 @@ export class LevelController {
   }
 
   @Get("progress/grade/:gradeid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("grade", "gradeid"))
   @ApiResponse({
     status: 200,
     description: "Levels fetch successfully",

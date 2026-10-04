@@ -9,7 +9,8 @@ import { studenttrash } from "src/models/data-models/studenttrash";
 import { COMPLETED_PERCENTAGE } from "src/models/enums/constant.enum";
 import { Token } from "src/models/token.model";
 import { v4 as uuidv4 } from "uuid";
-import { resolveSchoolScope, studentsOfSchool } from "./school-identity";
+import { curriculumIdsInScope } from "./content-access";
+import { schoolRefIsOwn, schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 
 export class GradeBusiness {
   getgradesbycurriculumid = async (curriculumid: string, user: Token) => {
@@ -153,7 +154,16 @@ export class GradeBusiness {
 
   // The school is a name (as ever) or an id; a name is resolved once. A name no school
   // has yet filters learners by the name, as it always did.
-  getGradesWithFilter = async (gradename: string, curid: string, standardid: string, schoolname: unknown, schoolid?: unknown) => {
+  // Only the grades of curricula in the caller's scope (a learner's enrolments, or a school's list, of the token's
+  // organisation). The curriculum, class and school the request names can only narrow that, never widen it.
+  getGradesWithFilter = async (gradename: string, curid: string, standardid: string, schoolname: unknown, schoolid: unknown, user?: Token) => {
+    const own = await schoolScopeFromToken(user);
+    if(!(await schoolRefIsOwn(own, { schoolid, schoolname }))) return [];
+    let allowed = await curriculumIdsInScope(user);
+    const narrow = (ids: string[]) => {
+      const keep = new Set(ids.map((id) => id.toLowerCase()));
+      allowed = allowed.filter((id) => keep.has(id.toLowerCase()));
+    };
     const where: WhereOptions<gradesAttributes> = {
       isdeleted: false,
       gradename: {
@@ -161,18 +171,18 @@ export class GradeBusiness {
       }
     };
     if(curid){
-      where.curriculumid = curid;
+      narrow([curid]);
     }
-    const school = standardid ? await resolveSchoolScope({ schoolid, schoolname }) : undefined;
-    if(standardid && school !== undefined) {
+    if(standardid && own !== undefined) {
       const student = await students.findOne({
         where: {
           standard: standardid,
-          ...studentsOfSchool(school)
+          ...studentsOfSchool(own)
         }
       });
-      if(student) where.curriculumid = student.curriculumid;
+      if(student && student.curriculumid) narrow([student.curriculumid]);
     }
+    where.curriculumid = { [Op.in]: allowed };
     const order = ["gradename"];
 
     return await grades.findAll({ where, order });

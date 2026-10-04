@@ -9,6 +9,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   ApiTags,
   ApiBearerAuth,
@@ -24,6 +25,7 @@ import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
 import { SchemaValidationInterceptor } from "src/interceptors";
 import { TokenType } from "src/models/enums";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
@@ -50,6 +52,8 @@ import { LessonPlanResponse } from "./models/LessonPlan";
 @UseGuards(AccessGuard(TokenType.ACCESS))
 export class LessonLearningController {
   @Post("learning/:lessonlearningid/progress")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonlearning", "lessonlearningid"))
   @ApiResponse({
     status: 200,
     description: "Lesson learning progress updated successfully",
@@ -86,6 +90,8 @@ export class LessonLearningController {
   }
 
   @Get(":lessonid/learning/progress")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lesson", "lessonid"))
   @ApiResponse({
     status: 200,
     description: "Lesson learning fetched successfully",
@@ -113,6 +119,8 @@ export class LessonLearningController {
   }
 
   @Get("learning/:lessonlearningid/progress")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonlearning", "lessonlearningid"))
   @ApiResponse({
     status: 200,
     description: "Lesson learning fetched successfully",
@@ -141,6 +149,8 @@ export class LessonLearningController {
   }
 
   @Get("learning/:lessonlearningid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonlearning", "lessonlearningid"))
   @ApiResponse({
     status: 200,
     description: "Lesson learning fetched successfully",
@@ -170,6 +180,8 @@ export class LessonLearningController {
   }
 
   @Get(':lessonid/learning')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lesson", "lessonid"))
   @ApiResponse({
     status: 200,
     description: 'Lesson Question fetch successfully',
@@ -202,6 +214,8 @@ export class LessonLearningController {
   }
 
   @Get("plan/:lessonplanid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonplan", "lessonplanid"))
   @ApiResponse({
     status: 200,
     description: "Lesson plan fetched successfully",

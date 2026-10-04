@@ -133,7 +133,7 @@ describe("ownership columns stay out of everything that leaves the API (step 5a)
   });
 
   it("the roster list a teacher sees selects no schoolid (it filters by it)", async () => {
-    const sql = await sqlThrown(() => new StudentBusiness().getStudentsWithFilter("demo", undefined, "5c000000-0000-4000-8000-0000000000a1"));
+    const sql = await sqlThrown(() => new StudentBusiness().getStudentsWithFilter("demo", undefined, "5c000000-0000-4000-8000-0000000000a1", { schoolid: "5c000000-0000-4000-8000-0000000000a1" }));
     expect(mentions(selectList(sql), "schoolid")).toBe(false);
     expect(sql).toMatch(/`students`\.`schoolid` = '5c000000-0000-4000-8000-0000000000a1'/);
   });

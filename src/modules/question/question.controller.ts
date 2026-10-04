@@ -6,6 +6,7 @@ import {
   UseGuards,
   UseInterceptors
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   ApiBearerAuth,
   ApiParam,
@@ -18,6 +19,7 @@ import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
 import { SchemaValidationInterceptor } from "src/interceptors";
 import { TokenType } from "src/models/enums";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
@@ -30,6 +32,8 @@ import { baselinequestion, lessonpractices, lessonquestions, lessonquizzes, leve
 @UseGuards(AccessGuard(TokenType.ACCESS))
 export class QuestionController {
   @Get('lesson/:lessonid')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lesson", "lessonid"))
   @ApiResponse({
     status: 200,
     description: 'Lesson Question fetch successfully',
@@ -61,6 +65,8 @@ export class QuestionController {
   }
 
   @Get('level/:levelid')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("level", "levelid"))
   @ApiResponse({
     status: 200,
     description: 'Level Question fetch successfully',
@@ -93,6 +99,8 @@ export class QuestionController {
   }
 
   @Get('practice/:lessonpracticeid')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonpractice", "lessonpracticeid"))
   @ApiResponse({
     status: 200,
     description: 'Practice Questions fetch successfully',
@@ -125,6 +133,8 @@ export class QuestionController {
   }
 
   @Get('quiz/:lessonquizid')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonquiz", "lessonquizid"))
   @ApiResponse({
     status: 200,
     description: 'Quiz Questions fetch successfully',
@@ -157,6 +167,8 @@ export class QuestionController {
   }
 
   @Get('baseline/:curriculumbaselineid')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("baseline", "curriculumbaselineid"))
   @ApiResponse({
     status: 200,
     description: 'Baseline Questions fetch successfully',
@@ -189,6 +201,8 @@ export class QuestionController {
   }
 
   @Get('level/:levelid/answers')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("level", "levelid"))
   @ApiResponse({
     status: 200,
     description: 'Level Question fetch successfully',

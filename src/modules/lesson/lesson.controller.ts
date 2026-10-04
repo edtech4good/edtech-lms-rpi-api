@@ -8,12 +8,14 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { ActivityProgressBusiness } from "src/business/activityprogress.business";
 import { LessonBusiness } from "src/business/lesson.business";
 import { Logger } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
 import {
   SchemaValidationInterceptor,
   BusinessValidationInterceptor,
@@ -33,6 +35,7 @@ import { lessonidparams } from "./lesson.request.validator";
 export class LessonController {
 
   @Get('all')
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched lessons successfully",
@@ -51,9 +54,10 @@ export class LessonController {
   @HttpCode(HttpStatus.OK)
   async getAllLessons(
     @Query("levelid") levelid: string = '',
-    @Query("lesson") lessonname: string = ''
+    @Query("lesson") lessonname: string = '',
+    @User() user?: Token
   ): Promise<any> {
-    const data = await new LessonBusiness().getLessonsWithFilter(levelid, lessonname);
+    const data = await new LessonBusiness().getLessonsWithFilter(levelid, lessonname, user);
     return {
         data: data,
         error: false,
@@ -61,6 +65,8 @@ export class LessonController {
   }
 
   @Get("/level/:levelid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("level", "levelid"))
   @ApiResponse({
     status: 200,
     description: "Lessons fetch successfully",
@@ -92,6 +98,8 @@ export class LessonController {
   }
 
   @Get("progress/level/:levelid")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("level", "levelid"))
   @ApiResponse({
     status: 200,
     description: "Lessons fetch successfully",
@@ -123,6 +131,8 @@ export class LessonController {
   }
 
   @Get("level/:levelid/steps")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("level", "levelid"))
   @ApiResponse({
     status: 200,
     description: "Per-activity level steps fetch successfully",
@@ -153,6 +163,8 @@ export class LessonController {
   }
 
   @Get(":lessonid/progress")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lesson", "lessonid"))
   @ApiResponse({
     status: 200,
     description: "User Lesson Progress fetch successfully",
@@ -184,6 +196,8 @@ export class LessonController {
   }
 
   @Get(":lessonid/activities/progress")
+  @OrgPolicy("learner", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lesson", "lessonid"))
   @ApiResponse({
     status: 200,
     description: "Per-activity lesson progress fetch successfully",

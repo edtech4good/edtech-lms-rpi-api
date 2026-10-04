@@ -12,6 +12,7 @@ import { ReportController } from "src/modules/report/report.controller";
 import { SchoolController } from "src/modules/school/school.controller";
 import { StudentController } from "src/modules/student/student.controller";
 import { TeacherController } from "src/modules/teachers/teacher.controller";
+import { SchoolRole } from "src/models/enums/school.role.enum";
 import { Token } from "src/models/token.model";
 import { CurriculumBusiness } from "./curriculum.business";
 import { GradeBusiness } from "./grade.business";
@@ -192,7 +193,7 @@ describe("teacher routes: the token's school (id claim, or the name claim of an 
     expect(b.sql.join("\n")).not.toMatch(/WHERE[^;]*schoolname/);
   });
 
-  it("the teacher profile reads the school stored on the login, and the login's name only when no id is stored", async () => {
+  it("the teacher profile reads the TOKEN's school; only a token that names no school falls back to the school stored on the login (and then to the login's name)", async () => {
     const fakeTeacher = () => ({ schoolname: NAME_A, getDataValue: () => null, setDataValue: () => undefined });
     const stub = (loginSchoolId: string | null, learnerSchoolId: string | null) => {
       jest.spyOn(schoolusers, "findOne").mockResolvedValue(fakeTeacher() as never);
@@ -207,26 +208,35 @@ describe("teacher routes: the token's school (id claim, or the name claim of an 
     expect(named.sql).toEqual(stored.sql);
     expect(stored.sql.join("\n")).toMatch(FILTERS_ON_ID(A));
     expect(stored.sql.join("\n")).not.toMatch(FILTERS_ON_NAME);
-    stub(B, null); // a stored id is the school, whatever the name says
+    stub(B, null); // the token's school (A) is the school, whatever the login row says
     const other = await run(() => teacher.getteacherprofile(NEW_TOKEN, "4A"));
-    expect(other.sql.join("\n")).toMatch(FILTERS_ON_ID(B));
+    expect(other.sql.join("\n")).toMatch(FILTERS_ON_ID(A));
+    expect(other.sql.join("\n")).not.toContain(B);
+    // a token that names no school at all: the school stored on the login is the school
+    const nameless = await run(() => teacher.getteacherprofile(NAMELESS_TOKEN, "4A"));
+    expect(nameless.sql.join("\n")).toMatch(FILTERS_ON_ID(B));
     // no id stored and no school of that name yet: the login's name, as before ids existed
     schoolRows = [];
     stub(null, null);
-    const legacy = await run(() => teacher.getteacherprofile(NEW_TOKEN, "4A"));
+    const legacy = await run(() => teacher.getteacherprofile(NAMELESS_TOKEN, "4A"));
     expect(legacy.sql.join("\n")).toMatch(new RegExp(`\`students\`\\.\`schoolid\` IS NULL AND \`students\`\\.\`schoolname\` = '${NAME_A}'`));
   });
 });
 
-describe("query-parameter filters: a name (as ever) or an id, resolved once", () => {
+// A teacher of school A. The school every one of these reads is the TOKEN's; a school named in the query (by id or by
+// name, resolved once) can only narrow that, so it must be the token's own school or the answer is nothing.
+const TEACHER_A: Token = { ...NEW_TOKEN, schooluserrole: SchoolRole.TEACHER, organisationid: "0a000000-0000-4000-8000-00000000000a" };
+const SCOPE_A = { organisationid: TEACHER_A.organisationid as string, schoolids: [A] };
+
+describe("query-parameter filters: the token's school is the scope; a school the query names can only narrow it", () => {
   const cases: Array<[string, (name?: string, id?: string) => Promise<unknown>, RegExp]> = [
-    ["GET student/all", (n, i) => new StudentController().getAllCurriculums("", n, i), FILTERS_ON_ID(A)],
-    ["GET grade/all (narrowed by a class)", (n, i) => new GradeController().getAllGrades("", "", "4A", n, i), FILTERS_ON_ID(A)],
-    ["GET curriculum/all (narrowed by a class)", (n, i) => new CurriculumController().getAllCurriculums("", "", "4A", n, i), FILTERS_ON_ID(A)],
-    ["GET report/offlineonline", (n, i) => new ReportController().getStudentsOfflineOnline(n, "", i), FILTERS_ON_ID(A)],
+    ["GET student/all", (n, i) => new StudentController().getAllCurriculums("", n as string, i as string, TEACHER_A), FILTERS_ON_ID(A)],
+    ["GET grade/all (narrowed by a class)", (n, i) => new GradeController().getAllGrades("", "", "4A", n as string, i as string, TEACHER_A), FILTERS_ON_ID(A)],
+    ["GET curriculum/all (narrowed by a class)", (n, i) => new CurriculumController().getAllCurriculums("", "", "4A", n as string, i as string, TEACHER_A), FILTERS_ON_ID(A)],
+    ["GET report/offlineonline", (n, i) => new ReportController().getStudentsOfflineOnline(n as string, "", i as string, SCOPE_A), FILTERS_ON_ID(A)],
   ];
 
-  it.each(cases)("%s: the id and the name read the same rows", async (_n, call, filter) => {
+  it.each(cases)("%s: the id and the name read the same rows, by the school's id", async (_n, call, filter) => {
     const byId = await run(() => call(undefined, A));
     const byName = await run(() => call(NAME_A, undefined));
     const padded = await run(() => call(`  ${NAME_A.toUpperCase()} `, undefined));
@@ -242,15 +252,34 @@ describe("query-parameter filters: a name (as ever) or an id, resolved once", ()
     expect(both.sql.join("\n")).toMatch(filter);
   });
 
-  it.each(cases)("%s: a name no school has yet filters by the name, as before ids existed; once the school exists, by its id", async (_n, call) => {
+  it.each(cases)("%s: naming no school reads the token's own school, never every school", async (_n, call) => {
+    const none = await run(() => call(undefined, undefined));
+    expect(none.error).toBeUndefined();
+    expect(none.sql.join("\n")).toMatch(new RegExp(`\`students\`\\.\`schoolid\` (=|IN) \\(?'${A}'`));
+  });
+
+  it.each(cases)("%s: naming ANOTHER school reads nothing of it (no query, or one that also needs the token's school)", async (_n, call) => {
+    const other = await run(() => call(undefined, B));
+    const sql = other.sql.join("\n");
+    expect(other.error).toBeUndefined();
+    if (sql !== "") {
+      // the only way a query is made is one the token's school is a condition of, so the other school's rows cannot come back
+      expect(sql).toMatch(new RegExp(`\`schoolid\` IN \\('${A}'\\)`));
+    }
+  });
+
+  it.each(cases)("%s: a name no school has gives nothing (the old by-name fallback is not the token's school)", async (_n, call) => {
     const unknown = await run(() => call("Nobody School", undefined));
     expect(unknown.error).toBeUndefined();
-    expect(unknown.sql.join("\n")).toMatch(/`students`\.`schoolid` IS NULL AND `students`\.`schoolname` = 'Nobody School'/);
-    expect(unknown.sql.join("\n")).not.toMatch(/`schoolid` = '/);
+    if (unknown.sql.length > 0) {
+      expect(unknown.sql.join("\n")).toMatch(new RegExp(`\`schoolid\` IN \\('${A}'\\)`));
+    }
     schoolRows = [...TWO_SCHOOLS, { schoolid: "5c000000-0000-4000-8000-0000000000d4", schoolname: "Nobody School" }];
     const arrived = await run(() => call("Nobody School", undefined));
-    expect(arrived.sql.join("\n")).toMatch(/`students`\.`schoolid` = '5c000000-0000-4000-8000-0000000000d4'/);
-    expect(arrived.sql.join("\n")).not.toMatch(/WHERE[^;]*schoolname/);
+    // the school now exists, but it is still not the token's: nothing of it is read
+    if (arrived.sql.length > 0) {
+      expect(arrived.sql.join("\n")).toMatch(new RegExp(`\`schoolid\` IN \\('${A}'\\)`));
+    }
   });
 
   it.each(cases)("%s: a name that matches two live schools is a 400, and by id each school is its own rows", async (_n, call, filter) => {
@@ -262,19 +291,18 @@ describe("query-parameter filters: a name (as ever) or an id, resolved once", ()
     expect((byName.error as ApiError).getStatus()).toBe(400);
     expect(byName.sql).toEqual([]);
     const a = await run(() => call(undefined, A));
-    const b = await run(() => call(undefined, B));
     expect(a.sql.join("\n")).toMatch(filter);
-    expect(b.sql.join("\n")).toMatch(new RegExp(String(filter).slice(1, -1).replace(A, B)));
-    expect(b.sql.join("\n")).not.toContain(A);
   });
 
-  it("no school filter at all adds none (and a non-string name is no filter)", async () => {
-    for (const [, call] of cases) {
-      const none = await run(() => call(undefined, undefined));
-      expect(none.sql.join("\n")).not.toMatch(/WHERE[^;]*schoolid/);
-    }
-    const odd = await run(() => new StudentBusiness().getStudentsWithFilter("", { gt: "a" }, ["x", "y"]));
-    expect(odd.sql.join("\n")).not.toMatch(/`students`\.`schoolid`/);
+  it("a value that is not a school (an object, a list) names nothing: the token's school still limits the rows", async () => {
+    const odd = await run(() => new StudentBusiness().getStudentsWithFilter("", { gt: "a" }, ["x", "y"], { schoolid: A }));
+    expect(odd.sql.join("\n")).toMatch(FILTERS_ON_ID(A));
+    expect(odd.sql.join("\n")).not.toMatch(/'x'|'y'/);
+  });
+
+  it("a token that names no school at all has no learners to list", async () => {
+    const none = await run(() => new StudentBusiness().getStudentsWithFilter("", undefined, undefined, undefined));
+    expect(none.sql).toEqual([]);
   });
 });
 
@@ -453,7 +481,7 @@ describe("branding: a name or an id, one school, and never an error", () => {
   });
 });
 
-describe("curriculum baseline: the app's school name is resolved once to a live school's id", () => {
+describe("curriculum baseline: the school and the learner are the token's, not the path's", () => {
   const baselineRow = (schoolids: string[]) => ({
     curriculumbaselineid: "cb1",
     baselinename: "Baseline",
@@ -462,44 +490,72 @@ describe("curriculum baseline: the app's school name is resolved once to a live 
     startdate: "2020-01-01",
     enddate: "2099-12-31",
   });
-  const call = (schoolname: string) =>
-    new CurriculumController().getCurriculumBaseline("c1", schoolname, "s1", { schoolusername: "x", schooluserid: "u1" } as Token, {
-      date: String(Date.now()),
-    } as never);
+  const learnerOf = (schoolid: string): Token => ({
+    schoolusername: "x",
+    schooluserid: "u1",
+    studentid: "s1",
+    schooluserrole: SchoolRole.STUDENT,
+    schoolid,
+    organisationid: "0a000000-0000-4000-8000-00000000000a",
+  });
+  const call = (pathSchool: string, user: Token = learnerOf(A), pathStudent = "s1") =>
+    new CurriculumController().getCurriculumBaseline("c1", pathSchool, pathStudent, user, { date: String(Date.now()) } as never);
+  const NONE = { baselinename: undefined, curriculumbaselineid: undefined, baselinepass: false };
 
   beforeEach(() => {
     jest.spyOn(curriculumbaseline, "findOne").mockResolvedValue(baselineRow([A]) as never);
     jest.spyOn(models.studentprogress, "findOne").mockResolvedValue(null as never);
   });
 
-  it("a school the baseline lists gets it; another school does not", async () => {
+  it("a learner of a school the baseline lists gets it; a learner of another school does not", async () => {
     await expect(call(NAME_A)).resolves.toMatchObject({ data: { curriculumbaselineid: "cb1", baselinepass: true } });
-    await expect(call(` ${NAME_A.toLowerCase()} `)).resolves.toMatchObject({ data: { curriculumbaselineid: "cb1", baselinepass: true } });
-    expect((await call(NAME_B)).data).toEqual({ baselinename: undefined, curriculumbaselineid: undefined, baselinepass: false });
+    expect((await call(NAME_A, learnerOf(B))).data).toEqual(NONE);
   });
 
-  it("a school this server does not have gets no baseline; a soft-deleted school is not a school here", async () => {
-    expect((await call("Nobody")).data).toEqual({ baselinename: undefined, curriculumbaselineid: undefined, baselinepass: false });
-    schoolRows = [{ schoolid: A, schoolname: NAME_A, isdeleted: true }];
-    expect((await call(NAME_A)).data).toEqual({ baselinename: undefined, curriculumbaselineid: undefined, baselinepass: false });
+  it("the school in the path is not read: whatever it says, the token's school decides", async () => {
+    const own = await call(NAME_A);
+    await expect(call(NAME_B)).resolves.toEqual(own);
+    await expect(call("Nobody")).resolves.toEqual(own);
+    await expect(call(NAME_A, learnerOf(B))).resolves.toEqual(await call(NAME_B, learnerOf(B)));
+    expect((await call(NAME_A, learnerOf(B))).data).toEqual(NONE);
   });
 
-  it("the route's school-exists rule accepts a live school only, by the same text rule", async () => {
+  it("the path's school is never looked up, so two schools of one name cannot make the answer differ or fail", async () => {
+    schoolRows = [
+      { schoolid: A, schoolname: NAME_A },
+      { schoolid: B, schoolname: NAME_A },
+    ];
+    await expect(call(NAME_A)).resolves.toMatchObject({ data: { curriculumbaselineid: "cb1", baselinepass: true } });
+    expect((schools.findAll as unknown as jest.SpyInstance).mock.calls).toEqual([]);
+  });
+
+  it("the learner is the token's: another learner named in the path is not asked about", async () => {
+    const asked = jest.spyOn(models.studentprogress, "findOne").mockResolvedValue(null as never);
+    await call(NAME_A, learnerOf(A), "somebody-else");
+    expect(asked.mock.calls.map((c) => (c[0] as { where: { studentid: string } }).where.studentid)).toEqual(["s1"]);
+  });
+
+  it("the route's rule that the token's own school exists is live-only", async () => {
+    const business = new CurriculumBusiness();
+    jest.spyOn(schools, "count").mockResolvedValueOnce(1 as never).mockResolvedValueOnce(0 as never);
+    await expect(business.isOwnSchoolLive(learnerOf(A))).resolves.toBe(true);
+    await expect(business.isOwnSchoolLive(learnerOf(A))).resolves.toBe(false);
+    expect((schools.count as unknown as jest.SpyInstance).mock.calls[0][0]).toEqual({ where: { schoolid: A, isdeleted: false } });
+    await expect(business.isOwnSchoolLive({ schooluserid: "u1" } as Token)).resolves.toBe(false);
+  });
+
+  it("the by-name school-exists rule (kept for callers that still name a school) accepts a live school only, by the same text rule", async () => {
     const business = new CurriculumBusiness();
     await expect(business.isexitsSchoolName(NAME_A)).resolves.toBe(true);
     await expect(business.isexitsSchoolName(` ${NAME_A.toUpperCase()}`)).resolves.toBe(true);
     await expect(business.isexitsSchoolName("Nobody")).resolves.toBe(false);
     schoolRows = [{ schoolid: A, schoolname: NAME_A, isdeleted: true }];
     await expect(business.isexitsSchoolName(NAME_A)).resolves.toBe(false);
-  });
-
-  it("two live schools of the name is a 400 rather than a guess", async () => {
     schoolRows = [
       { schoolid: A, schoolname: NAME_A },
       { schoolid: B, schoolname: NAME_A },
     ];
-    await expect(call(NAME_A)).rejects.toBeInstanceOf(ApiError);
-    await expect(new CurriculumBusiness().isexitsSchoolName(NAME_A)).rejects.toBeInstanceOf(ApiError);
+    await expect(business.isexitsSchoolName(NAME_A)).rejects.toBeInstanceOf(ApiError);
   });
 });
 
@@ -508,9 +564,9 @@ describe("what the reads still do not do", () => {
     (schools.findAll as unknown as jest.SpyInstance).mockClear();
     await run(() => new TeacherBusiness().getTeacherStandard({ schoolid: A }));
     await run(() => new StudentBusiness().getstudentbyschool({ schoolid: A }));
-    await run(() => new StudentBusiness().getStudentsWithFilter("", undefined, A));
-    await run(() => new GradeBusiness().getGradesWithFilter("", "", "4A", undefined, A));
-    await run(() => new CurriculumBusiness().getCurriculumsWithFilter("", "", "4A", undefined, A));
+    await run(() => new StudentBusiness().getStudentsWithFilter("", undefined, A, { schoolid: A }));
+    await run(() => new GradeBusiness().getGradesWithFilter("", "", "4A", undefined, A, TEACHER_A));
+    await run(() => new CurriculumBusiness().getCurriculumsWithFilter("", "", "4A", undefined, A, TEACHER_A));
     expect(schools.findAll).not.toHaveBeenCalled();
   });
 });

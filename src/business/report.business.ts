@@ -25,6 +25,7 @@ import { Default_Test_Student_ID } from "src/models/enums/user.enum";
 import { IMultiPaging } from "src/models/IPaging";
 import { buildCustomWhere } from "src/services/util.service";
 import { findSchoolIdByName, resolveSchoolScope, schoolOfStudent, studentsOfSchool } from "./school-identity";
+import { contentFiltersInScope, learnersInScope, ReportScope } from "./report-scope";
 
 export interface ChartItemFormat {
     name: Date | string;
@@ -38,10 +39,15 @@ export interface LineChartFormat {
 
 export class ReportBusiness {
 
+    // `scope` (see report-scope.ts): whose learners and which content this answer may cover. Undefined or null: no
+    // limit (the platform's view, and the business' own tests); the controller always passes one.
     getStudentsScoresData = async (
         paging: IMultiPaging,
-        download: boolean = false
+        download: boolean = false,
+        scope?: ReportScope | null
     ) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
+        const mine = learnersInScope(scope);
         // const limit = paging.pagesize || 20;
         // let offset = 0;
         // if ((paging.pageindex || 1) > 1) {
@@ -58,7 +64,7 @@ export class ReportBusiness {
         let student: students | null = null;
         if(!where.standard && !where.studentid) {
             student = await students.findOne({
-                where: { studentid: Default_Test_Student_ID },
+                where: { studentid: Default_Test_Student_ID, ...mine },
                 include: [
                     {
                         model: schoolusers,
@@ -73,7 +79,7 @@ export class ReportBusiness {
             where.studentid = student.studentid;
         } else if(!where.studentid) {
             student = await students.findOne({
-                where: { standard: where.standard },
+                where: { standard: where.standard, ...mine },
                 include: [
                     {
                         model: schoolusers,
@@ -86,7 +92,7 @@ export class ReportBusiness {
             if(student) where.studentid = student.studentid;
         } else if (where.studentid) {
             student = await students.findOne({
-                where: { studentid: where.studentid },
+                where: { studentid: where.studentid, ...mine },
                 include: [
                     {
                         model: schoolusers,
@@ -244,15 +250,19 @@ export class ReportBusiness {
 
     getClassScoresData = async (
         paging: IMultiPaging,
-        download: boolean = false
+        download: boolean = false,
+        scope?: ReportScope | null
     ) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
+        const mine = learnersInScope(scope);
         const limit = paging.pagesize || 20;
         let offset = 0;
         if ((paging.pageindex || 1) > 1) {
             offset = limit * ((paging.pageindex || 1) - 1);
         }
         const where: any = {
-            is_teacher_acc: false
+            is_teacher_acc: false,
+            ...mine
         };
         const lessonwhere: any = {};
         buildCustomWhere(paging.filter ?? [], {fields: 'standard', where: where});
@@ -262,19 +272,19 @@ export class ReportBusiness {
         let student: students | null = null;
         if(!where.standard && !where.studentid) {
             student = await students.findOne({
-                where: { studentid: Default_Test_Student_ID }
+                where: { studentid: Default_Test_Student_ID, ...mine }
             });
             if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
             where.standard = student?.standard;
             // where.studentid = student.studentid;
         } else if(!where.studentid) {
             student = await students.findOne({
-                where: { standard: where.standard }
+                where: { standard: where.standard, ...mine }
             });
             if(student) where.standard = student?.standard;
         } else if (where.studentid) {
             student = await students.findOne({
-                where: { studentid: where.studentid }
+                where: { studentid: where.studentid, ...mine }
             });
             if(student) where.standard = student?.standard;
         }
@@ -441,9 +451,10 @@ export class ReportBusiness {
         return alllessons;
     };
 
-    getAllStudentsWithProgress = async (type: number, paging?: {where: any, order: any, limit: any, offset: any}) => {
+    getAllStudentsWithProgress = async (type: number, paging?: {where: any, order: any, limit: any, offset: any}, scope?: ReportScope | null) => {
         const where: any = {
             ...paging?.where,
+            ...learnersInScope(scope),
         }
         if(!where.studentid && !where.standard) where.studentid = Default_Test_Student_ID;
         const progress = await students.findAndCountAll({
@@ -533,7 +544,8 @@ export class ReportBusiness {
         return {progress, curriculum};
     }
 
-    getStudentLastCompletedQuiz = async (paging: IMultiPaging, download: boolean = false, type: number) => {
+    getStudentLastCompletedQuiz = async (paging: IMultiPaging, download: boolean = false, type: number, scope?: ReportScope | null) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { lastcompletedlessonquiz: [], count: 0 };
         const where: WhereOptions<studentsAttributes> = {
             is_teacher_acc: false,
         };
@@ -551,7 +563,7 @@ export class ReportBusiness {
         buildCustomWhere(paging.filter ?? [], {key: 'schoolid', fields: '$school.schoolid$', where: where});
         buildCustomWhere(paging.filter ?? [], {fields: 'studentid', where: where});
         buildCustomWhere(paging.filter ?? [], {fields: 'standard', where: where});
-        const {progress, curriculum} = await this.getAllStudentsWithProgress(type, {where, order, limit, offset});
+        const {progress, curriculum} = await this.getAllStudentsWithProgress(type, {where, order, limit, offset}, scope);
         const lastcompletedlessonquiz: Array<students | undefined> = [];
         for (const student of progress.rows) {
             student.setDataValue('curriculum', curriculum ?? undefined);
@@ -589,10 +601,13 @@ export class ReportBusiness {
 
     getStudentStatus = async (
         paging: IMultiPaging,
-        download: boolean = false
+        download: boolean = false,
+        scope?: ReportScope | null
     ) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
         const where: WhereOptions<studentsAttributes> = {
             is_teacher_acc: false,
+            ...learnersInScope(scope),
         };
         let whereUsage: any = {};
         const limit = paging.pagesize || 20;
@@ -688,7 +703,9 @@ export class ReportBusiness {
         return allstudents;
     }
 
-    getStudentGradeProgress = async (paging: IMultiPaging) => {
+    getStudentGradeProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
+        const mine = learnersInScope(scope);
         students.hasMany(studentgradesprogress, {
             foreignKey: "studentid",
             sourceKey: "studentid",
@@ -701,26 +718,26 @@ export class ReportBusiness {
         if ((paging.pageindex || 1) > 1) {
             offset = limit * ((paging.pageindex || 1) - 1);
         }
-        const where: any = {};
+        const where: any = { ...mine };
         const gradewhere: any = {};
         buildCustomWhere(paging.filter ?? [], {fields: 'standard', where: where});
         buildCustomWhere(paging.filter ?? [], {fields: 'gradeid', where: gradewhere});
         let student: students | null = null;
         if(!where.standard && !where.studentid) {
             student = await students.findOne({
-                where: { studentid: Default_Test_Student_ID }
+                where: { studentid: Default_Test_Student_ID, ...mine }
             });
             if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
             where.standard = student?.standard;
             // where.studentid = student.studentid;
         } else if(!where.studentid) {
             student = await students.findOne({
-                where: { standard: where.standard }
+                where: { standard: where.standard, ...mine }
             });
             // if(student) where.studentid = student.studentid;
         } else if (where.studentid) {
             student = await students.findOne({
-                where: { studentid: where.studentid }
+                where: { studentid: where.studentid, ...mine }
             });
         }
         // find a lesson to show
@@ -850,7 +867,8 @@ export class ReportBusiness {
         return stds;
     }
 
-    getStudentGradeProgress2 = async (paging: IMultiPaging) => {
+    getStudentGradeProgress2 = async (paging: IMultiPaging, scope?: ReportScope | null) => {
+        const mine = learnersInScope(scope);
         const limit = paging.pagesize || 20;
         let offset = 0;
         if ((paging.pageindex || 1) > 1) {
@@ -863,7 +881,8 @@ export class ReportBusiness {
         }
         const student = await students.findOne({
             where: {
-                studentid: where.studentid
+                studentid: where.studentid,
+                ...mine
             },
             attributes: ['studentfirstname'],
             include: [
@@ -903,7 +922,9 @@ export class ReportBusiness {
         return {...studentgradeprogresses, student};
     }
 
-    getStudentLevelProgress = async (paging: IMultiPaging) => {
+    getStudentLevelProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0, student: null };
+        const mine = learnersInScope(scope);
         const limit = paging.pagesize || 20;
         let offset = 0;
         if ((paging.pageindex || 1) > 1) {
@@ -918,7 +939,8 @@ export class ReportBusiness {
         }
         const student = await students.findOne({
             where: {
-                studentid: where.studentid
+                studentid: where.studentid,
+                ...mine
             },
             attributes: ['studentfirstname'],
             include: [
@@ -966,7 +988,9 @@ export class ReportBusiness {
         return {...studentlevelprogresses, student};
     }
 
-    getStudentLessonProgress = async (paging: IMultiPaging) => {
+    getStudentLessonProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0, student: null };
+        const mine = learnersInScope(scope);
         const limit = paging.pagesize || 20;
         let offset = 0;
         if ((paging.pageindex || 1) > 1) {
@@ -983,7 +1007,8 @@ export class ReportBusiness {
         }
         const student = await students.findOne({
             where: {
-                studentid: where.studentid
+                studentid: where.studentid,
+                ...mine
             },
             attributes: ['studentfirstname'],
             include: [
@@ -1042,13 +1067,15 @@ export class ReportBusiness {
 
     // The school is a name (as ever) or an id; a name is resolved once. A name no school
     // has yet filters by the name, as it always did.
-    getStudentsOfflineOnline = async (schoolname: unknown, countryid: string, schoolid?: unknown) => {
+    getStudentsOfflineOnline = async (schoolname: unknown, countryid: string, schoolid?: unknown, scope?: ReportScope | null) => {
         const where: WhereOptions<studentsAttributes> = {
             isactive: 1,
         }
         const wherecountry: any = {};
         const school = await resolveSchoolScope({ schoolid, schoolname });
         if(school !== undefined) Object.assign(where, studentsOfSchool(school));
+        // The scope is a further condition, never replaced by the school the request names (both must hold).
+        if(scope) (where as any)[Op.and] = [learnersInScope(scope)];
         if(countryid && countryid !== 'all') wherecountry.countryid = countryid;
         const numberOfOnline = await students.count({
             where,
@@ -1067,8 +1094,11 @@ export class ReportBusiness {
 
     getLevelQuizScoresData = async (
         paging: IMultiPaging,
-        download: boolean = false
+        download: boolean = false,
+        scope?: ReportScope | null
     ) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
+        const mine = learnersInScope(scope);
         levels.hasMany(studentprogress, {
             foreignKey: "studentprogressreferenceid",
             sourceKey: "levelid",
@@ -1097,7 +1127,7 @@ export class ReportBusiness {
         let student: students | null = null;
         if(!where.standard && !where.studentid) {
             student = await students.findOne({
-                where: { studentid: Default_Test_Student_ID },
+                where: { studentid: Default_Test_Student_ID, ...mine },
                 include: [
                     {
                         model: schoolusers,
@@ -1112,7 +1142,7 @@ export class ReportBusiness {
             where.studentid = student.studentid;
         } else if(!where.studentid) {
             student = await students.findOne({
-                where: { standard: where.standard },
+                where: { standard: where.standard, ...mine },
                 include: [
                     {
                         model: schoolusers,
@@ -1125,7 +1155,7 @@ export class ReportBusiness {
             if(student) where.studentid = student.studentid;
         } else if (where.studentid) {
             student = await students.findOne({
-                where: { studentid: where.studentid },
+                where: { studentid: where.studentid, ...mine },
                 include: [
                     {
                         model: schoolusers,
@@ -1265,8 +1295,11 @@ export class ReportBusiness {
 
     getClassLevelQuizScoresData = async (
         paging: IMultiPaging,
-        download: boolean = false
+        download: boolean = false,
+        scope?: ReportScope | null
     ) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
+        const mine = learnersInScope(scope);
         levels.hasMany(studentprogress, {
             foreignKey: "studentprogressreferenceid",
             sourceKey: "levelid",
@@ -1280,7 +1313,8 @@ export class ReportBusiness {
             offset = limit * ((paging.pageindex || 1) - 1);
         }
         const where: any = {
-            is_teacher_acc: false
+            is_teacher_acc: false,
+            ...mine
         };
         const levelwhere: any = {};
         buildCustomWhere(paging.filter ?? [], {fields: 'standard', where: where});
@@ -1288,18 +1322,18 @@ export class ReportBusiness {
         let student: students | null = null;
         if(!where.standard && !where.studentid) {
             student = await students.findOne({
-                where: { studentid: Default_Test_Student_ID },
+                where: { studentid: Default_Test_Student_ID, ...mine },
             });
             if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
             where.standard = student?.standard;
         } else if(!where.studentid) {
             student = await students.findOne({
-                where: { standard: where.standard },
+                where: { standard: where.standard, ...mine },
             });
             // if(student) where.studentid = student.studentid;
         } else if (where.studentid) {
             student = await students.findOne({
-                where: { studentid: where.studentid },
+                where: { studentid: where.studentid, ...mine },
             });
             if(student) where.standard = student?.standard;
         }

@@ -14,7 +14,8 @@ import {
 } from "../models/data-models/init-models";
 import { CurriculumBusiness } from "./curriculum.business";
 import { GradeBusiness } from "./grade.business";
-import { resolveSchoolScope, SchoolScope, studentsOfSchool, withImportSchoolIds } from "./school-identity";
+import { learnersInScope, ReportScope } from "./report-scope";
+import { schoolRefIsOwn, SchoolScope, studentsOfSchool, withImportSchoolIds } from "./school-identity";
 
 export interface StudentProgressSummaryCurrentLevel {
   levelid: string;
@@ -71,6 +72,11 @@ export class StudentBusiness {
   studentExists = async (studentid: string) => {
     const student = await students.count({ where: { studentid } });
     return student > 0;
+  };
+  // Is this learner one of the given school's? (A learner of another school is "not found", like one that does not exist.)
+  studentIsInSchool = async (studentid: unknown, school: SchoolScope) => {
+    if (typeof studentid !== "string" || studentid.length === 0) return false;
+    return (await students.count({ where: { studentid, ...studentsOfSchool(school) } })) > 0;
   };
   getstudentbyschool = (school: SchoolScope) => {
     return students.findAll({
@@ -315,14 +321,16 @@ WHERE
 
   // The school filter is a name (as ever) or an id; a name is resolved once. A name no
   // school has yet filters by the name, as it always did.
-  getStudentsWithFilter = async (userid: string, schoolname: unknown, schoolid?: unknown) => {
+  // The learners are the caller's school's (`own`, the token's). A school the request names can only narrow that:
+  // the caller's own school is fine, any other school gives nothing.
+  getStudentsWithFilter = async (userid: string, schoolname: unknown, schoolid: unknown, own: SchoolScope | undefined) => {
+    if(own === undefined || !(await schoolRefIsOwn(own, { schoolid, schoolname }))) return [];
     const where: WhereOptions<studentsAttributes> = {
       "$schooluser.schoolusername$": {
         [Op.like]: `%${userid.trim()}%`
-      }
+      },
+      ...studentsOfSchool(own),
     };
-    const school = await resolveSchoolScope({ schoolid, schoolname });
-    if(school !== undefined) Object.assign(where, studentsOfSchool(school));
 
     return await students.findAll(
       {
@@ -537,8 +545,18 @@ WHERE
     return { curricula: curriculaOut, totals };
   };
 
-  getlogintime = async (schooluserids: string[]) => {
-    const ids = Array.isArray(schooluserids) ? schooluserids : [];
+  // `scope` (see report-scope.ts): only logins of learners and staff in the scope are answered; the rest are left
+  // out, as if they had never signed in. Undefined or null: no limit (the platform's view).
+  getlogintime = async (schooluserids: string[], scope?: ReportScope | null) => {
+    let ids = Array.isArray(schooluserids) ? schooluserids.filter((id) => typeof id === "string") : [];
+    if (scope && ids.length > 0) {
+      const mine = learnersInScope(scope);
+      const named = { schooluserid: { [Op.in]: ids } };
+      const learners = await students.findAll({ where: { [Op.and]: [named, mine] }, attributes: ["schooluserid"], raw: true });
+      const logins = await schoolusers.scope("withOwnership").findAll({ where: { [Op.and]: [named, mine] }, attributes: ["schooluserid"], raw: true });
+      const allowed = new Set([...learners, ...logins].map((r) => String((r as unknown as { schooluserid: string }).schooluserid).toLowerCase()));
+      ids = ids.filter((id) => allowed.has(id.toLowerCase()));
+    }
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => "?").join(",");
     const data = await dbinstance

@@ -3,11 +3,11 @@ import { curriculums } from "src/models/data-models/curriculums";
 import { grades } from "src/models/data-models/grades";
 import { lessons } from "src/models/data-models/lessons";
 import { levels } from "src/models/data-models/levels";
-import { students } from "src/models/data-models/students";
 import { studentgradesprogress } from "src/models/data-models/studentgradesprogress";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { Token } from "src/models/token.model";
+import { enrolledCurriculumIds } from "./content-access";
 
 interface LibraryLevel {
   levelid: string;
@@ -59,16 +59,9 @@ export class LibraryBusiness {
 
     // Curricula the student has access to must come from the DB, not the
     // JWT `curriculumids` claim, which is stale until the student
-    // re-logs-in (see grade/curriculum access checks elsewhere).
-    const student = await students.findOne({
-      where: { studentid: user.studentid },
-      attributes: ["studentid", "curriculumids"],
-    });
-    if (!student) return empty;
-
-    const curriculumids = Array.isArray(student.curriculumids)
-      ? student.curriculumids.filter((c): c is string => typeof c === "string")
-      : [];
+    // re-logs-in (see grade/curriculum access checks elsewhere), and only
+    // curricula the token's organisation owns count.
+    const curriculumids = await enrolledCurriculumIds(user);
     if (curriculumids.length === 0) return empty;
 
     // --- curricula --------------------------------------------------

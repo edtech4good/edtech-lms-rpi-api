@@ -10,6 +10,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import "multer";
 import { NO_SCHOOL_NAME, schoolScopeFromToken } from "src/business/school-identity";
@@ -50,6 +51,7 @@ import { studentstats } from "./teacher.request.validator";
 })
 export class TeacherController {
   @Get("standards")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Teacher standard fetch successfully",
@@ -65,6 +67,7 @@ export class TeacherController {
   }
 
   @Get("stats")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Teacher stats fetch successfully",
@@ -83,6 +86,7 @@ export class TeacherController {
   }
 
   @Get("students")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Teacher students fetch successfully",
@@ -97,6 +101,7 @@ export class TeacherController {
   }
 
   @Get("profile")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Teacher profiles fetch successfully",
@@ -115,6 +120,7 @@ export class TeacherController {
   }
 
   @Get("stats/student/:studentid")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Student stats fetch successfully",
@@ -135,6 +141,7 @@ export class TeacherController {
   }
 
   @Get("stats/student/:studentid/practice")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Student practice stats fetch successfully",
@@ -157,6 +164,7 @@ export class TeacherController {
   }
 
   @Get("stats/student/:studentid/quiz")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Student quiz stats fetch successfully",
@@ -179,6 +187,7 @@ export class TeacherController {
   }
 
   @Get("stats/student/:studentid/level")
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Student level stats fetch successfully",
@@ -201,6 +210,7 @@ export class TeacherController {
   }
 
   @Get('standard/all')
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched standards successfully",
@@ -228,6 +238,7 @@ export class TeacherController {
   }
 
   @Post('studentprogress')
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched students progress successfully",
@@ -259,6 +270,7 @@ export class TeacherController {
   }
 
   @Get('studentinfo')
+  @OrgPolicy("teacher", { enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({
     status: 200,
     description: "Fetched standards successfully",
@@ -276,8 +288,10 @@ export class TeacherController {
   @HttpCode(HttpStatus.OK)
   async getStudentInfo(
     @Query("studentid") studentid: string = '',
+    @User() user: Token
   ): Promise<any> {
-    const data = await new TeacherBusiness().getStudentLastCompletedQuiz(studentid ?? '', 2);
+    // Only a learner of the token's school: any other answers as no learner.
+    const data = await new TeacherBusiness().getStudentLastCompletedQuiz(studentid ?? '', 2, (await schoolScopeFromToken(user)) ?? NO_SCHOOL_NAME);
     return {
         data: data,
         error: false,

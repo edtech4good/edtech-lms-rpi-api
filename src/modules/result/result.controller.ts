@@ -6,6 +6,7 @@ import {
   UseGuards,
   UseInterceptors
 } from "@nestjs/common";
+import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   ApiBearerAuth,
   ApiBody,
@@ -19,6 +20,7 @@ import { ResultBusiness } from "src/business/result.business";
 import { Logger, gradingMode, requireGradedAnswers } from "src/config";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
+import { ContentAccessGuard } from "src/guards/content-access.guard";
 import { SchemaValidationInterceptor } from "src/interceptors";
 import { TokenType } from "src/models/enums";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
@@ -48,6 +50,8 @@ import { gradeSubmissionItems, logGradingDisagreements } from "src/business/grad
 @UseGuards(AccessGuard(TokenType.ACCESS))
 export class ResultController {
   @Post('lesson/practice/:lessonpracticeid')
+  @OrgPolicy("learner", { note: "A submission for content outside the caller's scope writes nothing.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonpractice", "lessonpracticeid"))
   @ApiResponse({
     status: 200,
     description: 'Lesson practice result saved successfully',
@@ -151,6 +155,8 @@ export class ResultController {
   }
 
   @Post('lesson/quiz/:lessonquizid')
+  @OrgPolicy("learner", { note: "A submission for content outside the caller's scope writes nothing.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("lessonquiz", "lessonquizid"))
   @ApiResponse({
     status: 200,
     description: 'Lesson quiz Result saved successfully',
@@ -251,6 +257,8 @@ export class ResultController {
   }
 
   @Post('level/quiz/:levelid')
+  @OrgPolicy("learner", { note: "A submission for content outside the caller's scope writes nothing.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("level", "levelid"))
   @ApiResponse({
     status: 200,
     description: 'Level quiz Result saved successfully',
@@ -347,6 +355,8 @@ export class ResultController {
   }
 
   @Post('baseline/question/:curriculumbaselineid')
+  @OrgPolicy("learner", { note: "A submission for content outside the caller's scope writes nothing.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @UseGuards(ContentAccessGuard("baseline", "curriculumbaselineid"))
   @ApiResponse({
     status: 200,
     description: 'Level quiz Result saved successfully',
