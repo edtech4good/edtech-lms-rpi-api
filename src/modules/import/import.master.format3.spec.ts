@@ -421,6 +421,26 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.standards.find((s) => s.standardid === "x-std-3")).toMatchObject({ schoolid: "x-school-1" });
     });
 
+    it("a grade that moves over from an absent curriculum brings its levels, lessons and the rest: they are replaced by the payload's, and a second identical import changes nothing", async () => {
+      install(dbBefore());
+      const payload = content("x", 1, ORG_X);
+      payload.grades.push({ gradeid: "x-grade-3", curriculumid: "x-cur-1" }); // under the absent x-cur-3 now
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      // the payload carries no level, lesson, learning, plan, practice, quiz or attach row for it, so none is left hanging from it
+      expect(store.grades.find((g) => g.gradeid === "x-grade-3")).toMatchObject({ curriculumid: "x-cur-1" });
+      for (const [table, pk] of [["levels", "levelid"], ["lessons", "lessonid"], ["lessonlearnings", "lessonlearningid"], ["lessonplans", "lessonplanid"], ["lessonpractices", "lessonpracticeid"], ["lessonquizzes", "lessonquizid"], ["lessonpracticequestions", "lessonpracticequestionid"], ["lessonquizquestions", "lessonquizquestionid"], ["levelquizquestions", "levelquizquestionid"]]) {
+        const xs = ids(table, pk).filter((id) => id.startsWith("x-"));
+        expect(xs).toHaveLength(1);
+        expect(xs[0]).toMatch(/-1$/);
+      }
+      expect(result.counts.levels.deleted).toBe(2);
+      // (row order is not content: a row deleted and re-created moves to the end of the table)
+      const canon = (st: Store) => Object.fromEntries(Object.entries(st).map(([t, rs]) => [t, rs.map((r) => JSON.stringify(r)).sort()]));
+      const once = canon(store);
+      await importIt(payloadOf(payload));
+      expect(canon(store)).toEqual(once);
+    });
+
     it("a school or curriculum that was already marked deleted is not counted as marked again", async () => {
       const before = dbBefore();
       before.schools.find((s) => s.schoolid === "x-school-3")!.isdeleted = true;

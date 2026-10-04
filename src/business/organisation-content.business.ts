@@ -221,7 +221,7 @@ export class OrganisationContentImport {
       this.without(ownedCurriculaBefore, payloadCurricula),
       this.without(ownedSchoolsBefore, payloadSchools),
     );
-    await this.deleteCurriculumChildren(payloadCurricula);
+    await this.deleteCurriculumChildren(payloadCurricula, tables);
     await this.deleteWhere("standards", "schoolid", payloadSchools);
     for (const key of ["questions", "documents", "subjects"] as const) {
       this.counts[key].deleted = await MODELS[key].destroy({ where: { organisationid }, transaction: t });
@@ -337,18 +337,25 @@ export class OrganisationContentImport {
     return out;
   };
 
-  /** The ids of the rows that other rows hang from, down from the curricula: what a delete or a stray check needs to know. */
-  private chainOf = async (curriculumIds: string[]) => {
-    const grades = await this.idsWhere("grades", "curriculumid", curriculumIds);
-    const levels = await this.idsWhere("levels", "gradeid", grades);
-    const lessons = await this.idsWhere("lessons", "levelid", levels);
+  /**
+   * The ids of the rows that other rows hang from, down from the curricula: what a delete or
+   * a stray check needs to know. `carried` adds the ids the payload itself carries for a
+   * table, so everything that hangs from a parent the payload names is found, wherever that
+   * parent sits here now.
+   */
+  private chainOf = async (curriculumIds: string[], carried: Partial<Record<TableKey, Row[]>> = {}) => {
+    const plus = (key: TableKey, found: string[]): string[] => [...found, ...(carried[key] ?? []).map((r) => String(r[PKS[key]]))];
+    const baselines = plus("curriculumbaselines", await this.idsWhere("curriculumbaselines", "curriculumid", curriculumIds));
+    const grades = plus("grades", await this.idsWhere("grades", "curriculumid", curriculumIds));
+    const levels = plus("levels", await this.idsWhere("levels", "gradeid", grades));
+    const lessons = plus("lessons", await this.idsWhere("lessons", "levelid", levels));
     return {
-      curriculumbaselines: await this.idsWhere("curriculumbaselines", "curriculumid", curriculumIds),
+      curriculumbaselines: baselines,
       grades,
       levels,
       lessons,
-      lessonpractices: await this.idsWhere("lessonpractices", "lessonid", lessons),
-      lessonquizzes: await this.idsWhere("lessonquizzes", "lessonid", lessons),
+      lessonpractices: plus("lessonpractices", await this.idsWhere("lessonpractices", "lessonid", lessons)),
+      lessonquizzes: plus("lessonquizzes", await this.idsWhere("lessonquizzes", "lessonid", lessons)),
     };
   };
 
@@ -365,9 +372,13 @@ export class OrganisationContentImport {
     return sets;
   };
 
-  /** What is under the curricula of the payload (replaced by the payload's own rows of the same ids), children first. */
-  private deleteCurriculumChildren = async (curriculumIds: string[]): Promise<void> => {
-    const chain = await this.chainOf(curriculumIds);
+  /**
+   * What is under the curricula of the payload, and under every parent row the payload
+   * carries (a grade that moved over from another curriculum brings its levels, lessons and
+   * the rest with it): all of it is replaced by the payload's own rows, children first.
+   */
+  private deleteCurriculumChildren = async (curriculumIds: string[], carried: Record<TableKey, Row[]>): Promise<void> => {
+    const chain = await this.chainOf(curriculumIds, carried);
     const baselineIds = chain.curriculumbaselines;
 
     await this.deleteWhere("lessonquizquestions", "lessonquizid", chain.lessonquizzes);
