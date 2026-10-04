@@ -10,20 +10,16 @@ import {
   studentprogressquestions,
 } from "src/models/data-models/init-models";
 import { studentappusages } from "src/models/data-models/studentappusage";
-import { SyncBusiness } from "./sync.business";
 import { SyncReport } from "./sync.report";
 import { LogBusiness } from "./log.business";
 
 /**
  * workspace#79 step 2: the raw learner `answer` (studentprogressquestions.answer
  * — free-text JSON that can carry PII) must never leave this API via
- * `GET export/report-data` (SyncReport.getreportdata, the payload central
- * actually pulls) or `GET export/log` (LogBusiness.exportlog, the log zip).
- * `SyncBusiness.getreportdata`/`getstudentdata` are covered too, but that's
- * unused-code hygiene, not a live payload: nothing in this codebase calls
- * them (`SyncBusiness` is only ever constructed for the content-import
- * transaction in import.controller.ts, whose methods are unrelated) — see
- * the mirrored, actually-used code in sync.report.ts for the real route.
+ * `GET export/report-data` (SyncReport.getreportdata, the report payload) or `GET export/log` (LogBusiness.exportlog, the log zip).
+ * (`SyncBusiness` once carried an unused copy of the payload builders; it was
+ * removed so that an unscoped copy cannot be wired back. `SyncReport` is the
+ * only builder.)
  * `clientiscorrect` and `servergrade` (also added by #94) are NOT privacy
  * sensitive and must still make the trip, same as `verified` on
  * studentprogress itself.
@@ -119,15 +115,8 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     expect(data.studentresult[0].verified).toBe(true);
   };
 
-  it("SyncReport.getreportdata() (GET export/report-data, served to central) strips answer", async () => {
+  it("SyncReport.getreportdata() (GET export/report-data) strips answer", async () => {
     const payload = await new SyncReport().getreportdata(null);
-    assertPayloadIsClean(payload);
-    const options = spqSpy.mock.calls[0][0];
-    expect(options.attributes).toEqual({ exclude: ["answer"] });
-  });
-
-  it("SyncBusiness.getreportdata() strips answer (unused-code hygiene: no caller uses this method today)", async () => {
-    const payload = await new SyncBusiness(undefined as never).getreportdata();
     assertPayloadIsClean(payload);
     const options = spqSpy.mock.calls[0][0];
     expect(options.attributes).toEqual({ exclude: ["answer"] });

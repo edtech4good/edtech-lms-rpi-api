@@ -56,10 +56,22 @@ export const byLogin = (keys: ExportKeys | null, column: string): WhereOptions =
 
 /**
  * May the caller take the server's own log files (the API's error and info logs, which hold the ids and addresses of
- * every user the server has seen)? Only the platform view, and a classroom Pi, whose server is one school's own
- * machine. An organisation's caller never takes them.
+ * every user the server has seen)? Only the platform view, and a classroom Pi on which the caller's scope covers EVERY
+ * school that is not deleted: a Pi is one school's own machine, but roster imports are one school per call, so a Pi can
+ * hold several, and then one school's staff must not take what the others' users left in the logs. An organisation's
+ * caller online never takes them.
  */
-export const mayTakeServerLogs = (scope: ReportScope | null): boolean => scope === null || Config.fortyk.api.rpi.offline;
+export async function mayTakeServerLogs(scope: ReportScope | null): Promise<boolean> {
+  if (scope === null) {
+    return true;
+  }
+  if (!Config.fortyk.api.rpi.offline) {
+    return false;
+  }
+  const live = (await schools.findAll({ attributes: ["schoolid"], where: { isdeleted: false }, raw: true })) as unknown as Array<{ schoolid: string }>;
+  const mine = new Set(scope.schoolids.map((id) => id.toLowerCase()));
+  return live.every((school) => mine.has(String(school.schoolid).toLowerCase()));
+}
 
 /** The stored name of a scope's school, for a download's file name ("" when there is none or more than one). */
 export async function storedSchoolNameOf(scope: ReportScope | null): Promise<string> {

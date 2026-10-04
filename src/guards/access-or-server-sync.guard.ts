@@ -16,11 +16,10 @@ import { isServerSyncKey } from "./server-sync-key.util";
 /**
  * For the small, named allow-list of routes central calls server-to-server
  * with the sync key (see edtech4good/workspace#45): `report/*`,
- * `student/logintime`, `curriculum/:id/getstudentresult` and `export/report-data`
- * (the nightly report pull). The other two `export/*` routes were dropped from
- * the allow-list after review — no caller sends the key there, so they are on
- * plain `AccessGuard` — and `import/*` is scoped separately (it already has its
- * own `ServerSyncGuard`).
+ * `student/logintime`, and `curriculum/:id/getstudentresult`. `export/*` was
+ * dropped from the allow-list after review — no caller sends the key there,
+ * so it is back on plain `AccessGuard` — and `import/*` is scoped
+ * separately (it already has its own `ServerSyncGuard`).
  *
  * - The server sync key (the raw Authorization header, exactly as central
  *   sends it, constant-time compared) is always accepted, and the request

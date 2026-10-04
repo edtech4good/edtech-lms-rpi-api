@@ -6,6 +6,8 @@ import { Op, Sequelize } from "sequelize";
 import request from "supertest";
 import { Config } from "src/config";
 import { mayTakeServerLogs } from "src/business/export-scope";
+import { resolveReportScope, SERVER_USER_ID } from "src/business/report-scope";
+import { SyncReport } from "src/business/sync.report";
 import { checkTokenClaims, unownedPiSchoolOf } from "src/business/token-claims";
 import { initModels } from "src/models/data-models/init-models";
 import { organisations } from "src/models/data-models/organisations";
@@ -183,6 +185,12 @@ const install = () => {
     findOne: (options: unknown) => schools.findOne(options as never),
     findAll: (options: unknown) => schools.findAll(options as never),
   } as never);
+};
+
+/** A Pi that holds one school: every other school is gone from the table, except the deleted one (deleted schools do not count). */
+const piWithOnly = (schoolid: string) => {
+  seed();
+  tables.set(schools, rowsOf(schools).filter((s) => s.schoolid === schoolid || s.isdeleted));
 };
 
 const RECENT = () => new Date(Date.now() - 24 * 3600 * 1000);
@@ -365,35 +373,42 @@ describe("the data exports are confined to the caller's scope (organisations pac
       expect(idsIn(json(res.body, "syncfile.ini"))).toEqual(sorted(SCHOOL_Y_ONLY));
     });
 
-    it("GET /export/report-data: the server key with an organisation's id gets every school of that organisation and no other", async () => {
-      const res = await get("/export/report-data", { key: true, org: ORG_X }).expect(200);
-      expect(entryNames(res.body)).toEqual(["syncfile.ini"]);
-      expect(idsIn(json(res.body, "syncfile.ini"))).toEqual(sorted(WHOLE_X));
-      const y = await get("/export/report-data", { key: true, org: ORG_Y }).expect(200);
-      expect(idsIn(json(y.body, "syncfile.ini"))).toEqual(sorted(SCHOOL_Y_ONLY));
-    });
-
-    it("GET /export/report-data: the server key with an organisation id that names no organisation here, or a suspended one, gets nothing", async () => {
-      for (const org of [ORG_NOWHERE, ORG_Z]) {
-        const res = await get("/export/report-data", { key: true, org }).expect(200);
-        expect(idsIn(json(res.body, "syncfile.ini"))).toEqual({ studentids: [], logins: [] });
-      }
-    });
-
-    it("GET /export/report-data: the server key with platform gets the whole server, including rows that belong to no school", async () => {
-      const res = await get("/export/report-data", { key: true, org: "platform" }).expect(200);
-      expect(idsIn(json(res.body, "syncfile.ini"))).toEqual(sorted(EVERYTHING));
-    });
-
-    it("GET /export/report-data: the server key without the header, or with one that is blank, in another case or not an identifier, is refused (400) with one answer", async () => {
-      const answers: unknown[] = [];
-      for (const org of [undefined, "", "   ", "PLATFORM", "Platform", "everything", "not an id", "'; drop table students; --"]) {
+    it("GET /export/report-data: the server key is not admitted (nothing calls it with the key), with any header or none", async () => {
+      for (const org of [undefined, ORG_X, "platform", "", "PLATFORM", "not an id"]) {
         const res = await get("/export/report-data", { key: true, ...(org === undefined ? {} : { org }) });
-        expect({ org, status: res.status }).toEqual({ org, status: 400 });
-        answers.push(JSON.parse(res.body.toString("utf8")));
+        expect({ org, status: res.status }).toEqual({ org, status: 401 });
       }
-      expect(new Set(answers.map((a) => JSON.stringify(a))).size).toBe(1);
-      expect(answers[0]).toEqual({ statusCode: 400, message: "The organisation header is missing or not valid." });
+    });
+
+    // The scope still knows the key's views, and the payload is what it was for the platform; no route hands them
+    // out today, so they are proved where they are built.
+    const serverScope = (header?: string) => resolveReportScope({ headers: header === undefined ? {} : { "x-organisation-id": header }, user: { schooluserid: SERVER_USER_ID } as never });
+    const payloadFor = async (scope: Awaited<ReturnType<typeof serverScope>>) => idsIn(JSON.parse(await new SyncReport().getreportdata(scope)));
+
+    it("GET /export/report-data: the payload for the key's organisation scope carries every school of that organisation and no other", async () => {
+      expect(await payloadFor(await serverScope(ORG_X))).toEqual(sorted(WHOLE_X));
+      expect(await payloadFor(await serverScope(ORG_Y))).toEqual(sorted(SCHOOL_Y_ONLY));
+    });
+
+    it("GET /export/report-data: the payload for an organisation that is not here, or a suspended one, carries nothing", async () => {
+      for (const org of [ORG_NOWHERE, ORG_Z]) {
+        expect(await payloadFor(await serverScope(org))).toEqual({ studentids: [], logins: [] });
+      }
+    });
+
+    it("GET /export/report-data: the payload for the platform scope is the whole server, including rows that belong to no school", async () => {
+      expect(await serverScope("platform")).toBeNull();
+      expect(await payloadFor(null)).toEqual(sorted(EVERYTHING));
+    });
+
+    it("GET /export/report-data: a key scope with no header, a blank one, another case or one that is not an identifier is refused (400) with one answer", async () => {
+      const answers = new Set<string>();
+      for (const org of [undefined, "", "   ", "PLATFORM", "Platform", "everything", "not an id", "'; drop table students; --"]) {
+        const refusal = await serverScope(org).catch((e) => e);
+        expect({ org, status: refusal.status ?? refusal.getStatus?.() }).toEqual({ org, status: 400 });
+        answers.add(JSON.stringify({ message: refusal.message, fields: refusal.fields }));
+      }
+      expect(answers.size).toBe(1);
     });
 
     it("GET /export/report-data: a token's own scope wins over any header it sends", async () => {
@@ -445,14 +460,25 @@ describe("the data exports are confined to the caller's scope (organisations pac
       expect(entryNames(y.body)).toEqual(["log.ini"]);
     });
 
-    it("GET /export/log: on a classroom Pi (one school, the operator's own machine) the log files are included as before, with the school's rows", async () => {
+    it("GET /export/log: on a classroom Pi that holds one school (the operator's own machine) the log files are included as before, with the school's rows", async () => {
       Config.fortyk.api.rpi.offline = true;
+      piWithOnly(SCH_X);
       const owned = await get("/export/log", { bearer: X_TEACHER }).expect(200);
       expect(entryNames(owned.body)).toEqual(["RPI-API-error-1.log", "RPI-API-info-1.log", "log.ini"]);
       expect(logIdsIn(owned.body)).toEqual(inLog(SCHOOL_X));
+      piWithOnly(SCH_L);
       const window = await get("/export/log", { bearer: PI_WINDOW_TEACHER }).expect(200);
       expect(entryNames(window.body)).toEqual(["RPI-API-error-1.log", "RPI-API-info-1.log", "log.ini"]);
-      expect(logIdsIn(window.body)).toEqual(sorted(SCHOOL_L_ONLY));
+      expect(logIdsIn(window.body)).toEqual(inLog(SCHOOL_L_ONLY));
+    });
+
+    it("GET /export/log: on a classroom Pi that holds several schools, a school's teacher gets log.ini only, with their school's rows", async () => {
+      Config.fortyk.api.rpi.offline = true; // the fixtures hold five live schools
+      const res = await get("/export/log", { bearer: X_TEACHER }).expect(200);
+      expect(entryNames(res.body)).toEqual(["log.ini"]);
+      expect(logIdsIn(res.body)).toEqual(inLog(SCHOOL_X));
+      const window = await get("/export/log", { bearer: PI_WINDOW_TEACHER }).expect(200);
+      expect(entryNames(window.body)).toEqual(["log.ini"]);
     });
 
     it("GET /export/log: the server key is not admitted (nothing sends it here), with or without a header", async () => {
@@ -466,11 +492,15 @@ describe("the data exports are confined to the caller's scope (organisations pac
       await get("/export/log", { bearer: X_PUPIL }).expect(403);
     });
 
-    it("GET /export/log: the server's log files are for the platform view and a Pi only", () => {
-      expect(mayTakeServerLogs(null)).toBe(true); // platform
-      expect(mayTakeServerLogs({ organisationid: ORG_X, schoolids: [SCH_X] })).toBe(false); // an organisation's caller, online
+    it("GET /export/log: the server's log files are for the platform view, and a Pi whose scope covers every school on it", async () => {
+      const x = { organisationid: ORG_X, schoolids: [SCH_X] };
+      expect(await mayTakeServerLogs(null)).toBe(true); // platform
+      expect(await mayTakeServerLogs(x)).toBe(false); // an organisation's caller, online
       Config.fortyk.api.rpi.offline = true;
-      expect(mayTakeServerLogs({ organisationid: ORG_X, schoolids: [SCH_X] })).toBe(true); // a Pi
+      expect(await mayTakeServerLogs(x)).toBe(false); // a Pi with several schools
+      expect(await mayTakeServerLogs({ organisationid: ORG_X, schoolids: [SCH_X, SCH_X2, SCH_Y, SCH_L, SCH_Z] })).toBe(true); // a scope that covers them all
+      piWithOnly(SCH_X);
+      expect(await mayTakeServerLogs(x)).toBe(true); // a Pi with one (a deleted school does not count)
     });
   });
 
@@ -489,13 +519,26 @@ describe("the data exports are confined to the caller's scope (organisations pac
 
     it("GET /export/system-log/files: on a classroom Pi the log files are served, named by the school's stored name and not by the token's", async () => {
       Config.fortyk.api.rpi.offline = true;
+      piWithOnly(SCH_X);
       const res = await get("/export/system-log/files", { bearer: X_TEACHER }).expect(200);
       expect(entryNames(res.body)).toEqual(["RPI-API-error-1.log", "RPI-API-info-1.log"]);
       const disposition = String(res.headers["content-disposition"]);
       expect(disposition).toContain("logfiles-School X-");
       expect(disposition).not.toContain("forged");
+      piWithOnly(SCH_L);
       const window = await get("/export/system-log/files", { bearer: PI_WINDOW_TEACHER }).expect(200);
       expect(String(window.headers["content-disposition"])).toContain("logfiles-Legacy School-");
+    });
+
+    it("GET /export/system-log/files: on a classroom Pi that holds several schools, a school's staff get the answer for a role that is not allowed", async () => {
+      Config.fortyk.api.rpi.offline = true;
+      const reference = await get("/export/system-log/files", { bearer: X_PUPIL });
+      expect(reference.status).toBe(403);
+      for (const who of [X_TEACHER, X_ADMIN, PI_WINDOW_TEACHER]) {
+        const res = await get("/export/system-log/files", { bearer: who });
+        expect(res.status).toBe(403);
+        expect(res.headers["content-type"]).toBe(reference.headers["content-type"]);
+      }
     });
 
     it("GET /export/system-log/files: the server key is not admitted, and no claims is refused (401)", async () => {

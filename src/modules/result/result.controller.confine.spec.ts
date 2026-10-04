@@ -3,6 +3,8 @@ import { LessonBusiness } from "src/business/lesson.business";
 import { ResultBusiness } from "src/business/result.business";
 import { baselinequestion, lessonpracticequestions, lessonquizquestions, levelquizquestions } from "src/models/data-models/init-models";
 import { Logger } from "src/config";
+import * as practicescore from "src/business/practicescore";
+import * as quizscore from "src/business/quizscore";
 import { ResultController } from "./result.controller";
 
 /**
@@ -46,6 +48,10 @@ interface Kind {
   containerKey: string;
   call: (items: any[], mode?: string) => Promise<unknown>; // eslint-disable-line @typescript-eslint/no-explicit-any
   created: () => jest.Mock;
+  /** the points calculation the route hands the correct items to (its second argument) */
+  calc: () => jest.Mock;
+  /** the scorer the route hands the items to (its second argument) */
+  scorer: () => jest.SpyInstance;
   /** the property on a joined row that carries the question */
   joined: "question" | "scorerquestion";
 }
@@ -56,16 +62,21 @@ const body = (items: unknown[], idKey: string, container: string) => ({
   endtime: new Date("2026-10-04T10:05:00Z"),
 }) as never;
 
+const scorerSpies = {} as Record<"practice" | "quiz" | "level" | "baseline", jest.SpyInstance>;
 let createpractice: jest.Mock, createquiz: jest.Mock, createlevel: jest.Mock, createbaseline: jest.Mock;
 const KINDS: Kind[] = [
   { name: "lesson practice", idKey: "lessonpracticequestionid", model: lessonpracticequestions, containerKey: "lessonpracticeid", joined: "question",
-    call: (items) => new ResultController().savelessonpracticeresult("c1", body(items, "lessonpracticequestionid", "lessonpracticeid"), user), created: () => createpractice },
+    call: (items) => new ResultController().savelessonpracticeresult("c1", body(items, "lessonpracticequestionid", "lessonpracticeid"), user), created: () => createpractice,
+    calc: () => (MockedLessonBusiness.prototype as any).calculatePracticeScore, scorer: () => scorerSpies.practice }, // eslint-disable-line @typescript-eslint/no-explicit-any
   { name: "lesson quiz", idKey: "lessonquizquestionid", model: lessonquizquestions, containerKey: "lessonquizid", joined: "question",
-    call: (items) => new ResultController().savelessonquizresult("c1", body(items, "lessonquizquestionid", "lessonquizid"), user), created: () => createquiz },
+    call: (items) => new ResultController().savelessonquizresult("c1", body(items, "lessonquizquestionid", "lessonquizid"), user), created: () => createquiz,
+    calc: () => (MockedLessonBusiness.prototype as any).calculateQuizScore, scorer: () => scorerSpies.quiz }, // eslint-disable-line @typescript-eslint/no-explicit-any
   { name: "level quiz", idKey: "levelquizquestionid", model: levelquizquestions, containerKey: "levelid", joined: "question",
-    call: (items) => new ResultController().savelevelquizresult("c1", body(items, "levelquizquestionid", "levelid"), user), created: () => createlevel },
+    call: (items) => new ResultController().savelevelquizresult("c1", body(items, "levelquizquestionid", "levelid"), user), created: () => createlevel,
+    calc: () => (MockedLessonBusiness.prototype as any).calculateLevelQuizScore, scorer: () => scorerSpies.level }, // eslint-disable-line @typescript-eslint/no-explicit-any
   { name: "baseline", idKey: "baselinequestionid", model: baselinequestion, containerKey: "curriculumbaselineid", joined: "scorerquestion",
-    call: (items) => new ResultController().savebaselineresult("c1", body(items, "baselinequestionid", "curriculumbaselineid"), user), created: () => createbaseline },
+    call: (items) => new ResultController().savebaselineresult("c1", body(items, "baselinequestionid", "curriculumbaselineid"), user), created: () => createbaseline,
+    calc: () => (MockedBaseline.prototype as any).calculateBaselineQuestionScore, scorer: () => scorerSpies.baseline }, // eslint-disable-line @typescript-eslint/no-explicit-any
 ];
 
 describe("POST /result/...: a result keeps only the items that answer one of its container's questions", () => {
@@ -91,6 +102,11 @@ describe("POST /result/...: a result keeps only the items that answer one of its
     lb.calculateQuizScore = jest.fn().mockResolvedValue({ marks: 999, userpoints: 10, fullpoints: 10, lesson: { lessonid: "l1" } });
     lb.calculateLevelQuizScore = jest.fn().mockResolvedValue({ marks: 999, userpoints: 10, fullpoints: 10, level: { levelid: "lv1" } });
     (MockedBaseline.prototype as any).calculateBaselineQuestionScore = jest.fn().mockResolvedValue({ userpoints: 0, fullpoints: 0, baseline: {} }); // eslint-disable-line @typescript-eslint/no-explicit-any
+    // the real scorers, watched: what they are handed is what scoring can read
+    scorerSpies.practice = jest.spyOn(practicescore, "scorepractice");
+    scorerSpies.quiz = jest.spyOn(quizscore, "scorelessonquiz");
+    scorerSpies.level = jest.spyOn(quizscore, "scorelevelquiz");
+    scorerSpies.baseline = jest.spyOn(quizscore, "scorebaseline");
     for (const k of KINDS) {
       spies.push(
         jest.spyOn(k.model as typeof lessonquizquestions, "findAll").mockImplementation(((options: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -150,6 +166,23 @@ describe("POST /result/...: a result keeps only the items that answer one of its
         await k.call([...own(k), foreign(k), { ...foreign(k), [k.idKey]: "foreign-2", iscorrect: true }]);
         const [without, withForeign] = k.created().mock.calls.map((c) => c[0]);
         expect(JSON.parse(withForeign.actualanswers)).toEqual(JSON.parse(without.actualanswers));
+      });
+    }
+
+    for (const mode of ["shadow", "enforce"]) {
+      it(`${mode}: no item outside the container's own questions reaches the scorer or the points calculation`, async () => {
+        process.env.GRADING_MODE = mode;
+        await k.call([...own(k), foreign(k), { ...foreign(k), [k.idKey]: "foreign-2" }]);
+        const idsOf = (items: Array<Record<string, unknown>>) => items.map((x) => x[k.idKey]);
+        const container = new Set<unknown>([...ACTIVE, OFF]);
+        const scored = idsOf(k.scorer().mock.calls[0][1]);
+        const correct = idsOf(k.calc().mock.calls[0][1]);
+        expect(scored.length).toBeGreaterThan(0);
+        expect(correct.length).toBeGreaterThan(0);
+        expect(scored.filter((id) => !container.has(id))).toEqual([]);
+        expect(correct.filter((id) => !container.has(id))).toEqual([]);
+        expect(scored).not.toContain(FOREIGN);
+        expect(correct).not.toContain(FOREIGN);
       });
     }
 

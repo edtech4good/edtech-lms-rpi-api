@@ -188,10 +188,9 @@ describe("route inventory (real application wiring)", () => {
       expect(pi[0].rolesRequired).toBe(true);
     });
 
-    it("the routes that admit central's server key besides the imports are the 15 proxied reports, login time, the baseline results and the nightly report pull", () => {
+    it("the routes that admit central's server key besides the imports are the 15 proxied reports, login time and the baseline results", () => {
       expect(routes.filter((r) => r.admitsServerKey && r.policy !== "server").map(key).sort()).toEqual([
         "GET /curriculum/:curriculumbaselineid/getstudentresult",
-        "GET /export/report-data",
         "POST /report/student-grade-progress",
         "POST /report/student-lesson-progress",
         "POST /report/student-level-progress",

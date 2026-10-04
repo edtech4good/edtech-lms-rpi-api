@@ -68,6 +68,7 @@ describe("GET /export/system-log/files: the file name for a school with a Khmer 
 
   /** The download for a school whose stored name is `schoolname` (undefined: no such school). */
   const download = (schoolname: string | undefined) => {
+    jest.spyOn(schools, "findAll").mockResolvedValue([{ schoolid: "s-1" }] as never); // the one school this Pi holds
     jest.spyOn(schools, "findOne").mockResolvedValue((schoolname === undefined ? null : { schoolname }) as never);
     return request(app.getHttpServer()).get("/export/system-log/files").set("Authorization", tokenFor());
   };
