@@ -95,6 +95,19 @@ describe("PUT /import/students for one school", () => {
     }
   });
 
+  it("before its school has reached this server: rows that carry the school id pass, rows with only a name are refused (the name cannot resolve yet)", async () => {
+    schoolRows = [];
+    mockZipContaining({ schoolid: A, studentusers: [learner(1), learner(2, { schoolid: A, schoolname: "សាលា A" })] });
+    await expect(new ImportController().studentsimport(file, user)).resolves.toEqual({ error: false, data: true });
+    expect(students.bulkCreate).toHaveBeenCalled();
+    jest.clearAllMocks();
+    tnx.commit.mockResolvedValue(undefined);
+    tnx.rollback.mockResolvedValue(undefined);
+    mockZipContaining({ schoolid: A, studentusers: [learner(3, { schoolname: "សាលា A" })] });
+    await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
+    nothingWritten();
+  });
+
   it("a schoolid that is not a school id is refused", async () => {
     for (const schoolid of ["", "  ", null, 7]) {
       jest.clearAllMocks();

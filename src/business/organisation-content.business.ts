@@ -66,10 +66,8 @@ import { SyncBusiness } from "./sync.business";
 export interface TableCounts {
   /** Rows deleted from the table. */
   deleted: number;
-  /** Rows written after the delete. */
-  inserted: number;
-  /** Rows written by upsert (the table's rows are never all deleted first). */
-  upserted: number;
+  /** Rows sent to the database for this table: inserted, or updated where the id was already here. (Not a count of rows the database changed.) */
+  written: number;
   /** Rows kept but marked `isdeleted` because the payload no longer has them. */
   markedDeleted: number;
   /** Rows written over an existing row with no owner, which now has the organisation. */
@@ -163,7 +161,7 @@ const OWNED_UPDATE: Partial<Record<TableKey, string[]>> = {
 
 const OWNED: TableKey[] = ["schools", "curriculums", "questions", "documents", "subjects"];
 
-const emptyCounts = (): TableCounts => ({ deleted: 0, inserted: 0, upserted: 0, markedDeleted: 0, adopted: 0 });
+const emptyCounts = (): TableCounts => ({ deleted: 0, written: 0, markedDeleted: 0, adopted: 0 });
 const lower = (value: string) => value.toLowerCase();
 const rows = (n: number) => (n === 1 ? "1 row" : `${n} rows`);
 
@@ -211,7 +209,7 @@ export class OrganisationContentImport {
     await this.refuseRowsOfOtherOrganisations(content);
 
     await organisations.bulkCreate([{ ...content.organisation }] as never, { transaction: t, updateOnDuplicate: ORGANISATION_UPDATE as never });
-    this.counts.organisations.upserted = 1;
+    this.counts.organisations.written = 1;
 
     // ---- delete this organisation's content --------------------------------
     // Only what is replaced is deleted. A curriculum or school this organisation owned that the
@@ -234,13 +232,13 @@ export class OrganisationContentImport {
 
     // ---- write the payload ---------------------------------------------------
     const owned = (key: TableKey): Row[] => tables[key].map((r) => ({ ...r, organisationid }));
-    await this.write("documents", owned("documents"), "inserted");
-    await this.write("questions", owned("questions"), "inserted");
-    await this.write("subjects", owned("subjects"), "inserted");
-    await this.write("countries", tables.countries, "upserted");
-    await this.write("schools", owned("schools"), "upserted");
-    await this.write("standards", tables.standards, "inserted");
-    await this.write("curriculums", owned("curriculums"), "upserted");
+    await this.write("documents", owned("documents"));
+    await this.write("questions", owned("questions"));
+    await this.write("subjects", owned("subjects"));
+    await this.write("countries", tables.countries);
+    await this.write("schools", owned("schools"));
+    await this.write("standards", tables.standards);
+    await this.write("curriculums", owned("curriculums"));
     for (const key of [
       "curriculumbaselines",
       "baselinequestion",
@@ -255,7 +253,7 @@ export class OrganisationContentImport {
       "lessonquizquestions",
       "levelquizquestions",
     ] as const) {
-      await this.write(key, tables[key], "inserted");
+      await this.write(key, tables[key]);
     }
 
     // ---- what the payload no longer has ---------------------------------------
@@ -437,12 +435,12 @@ export class OrganisationContentImport {
     }
   };
 
-  private write = async (key: TableKey, list: Row[], as: "inserted" | "upserted"): Promise<void> => {
+  private write = async (key: TableKey, list: Row[]): Promise<void> => {
     const update = OWNED_UPDATE[key];
     for (const part of chunk(list, WRITE_CHUNK[key] ?? CHUNK)) {
       await this.bulkWrite(key, part, update);
     }
-    this.counts[key][as] += list.length;
+    this.counts[key].written += list.length;
   };
 
   private bulkWrite = async (key: TableKey, part: Row[], update: string[] | undefined): Promise<void> => {

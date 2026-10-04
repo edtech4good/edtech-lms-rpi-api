@@ -301,11 +301,11 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.grades.map((r) => r.gradeid)).toEqual(["x-grade-1"]);
       expect(store.lessonquizquestions).toHaveLength(1);
       expect(store.standards).toHaveLength(1);
-      expect(result.counts.organisations.upserted).toBe(1);
-      expect(result.counts.questions).toMatchObject({ deleted: 0, inserted: 2, adopted: 0 });
-      expect(result.counts.schools).toMatchObject({ upserted: 1, markedDeleted: 0 });
-      expect(result.counts.countries.upserted).toBe(1);
-      expect(result.counts.grades.inserted).toBe(1);
+      expect(result.counts.organisations.written).toBe(1);
+      expect(result.counts.questions).toMatchObject({ deleted: 0, written: 2, adopted: 0 });
+      expect(result.counts.schools).toMatchObject({ written: 1, markedDeleted: 0 });
+      expect(result.counts.countries.written).toBe(1);
+      expect(result.counts.grades.written).toBe(1);
       expect(queries[0]).toMatch(/FOREIGN_KEY_CHECKS = 0/);
       expect(queries[queries.length - 1]).toMatch(/FOREIGN_KEY_CHECKS = 1/);
       expect(tnx.commit).toHaveBeenCalledTimes(1);
@@ -359,8 +359,8 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.students).toEqual(learners);
       // its standards stay with it: only the standards of schools IN the payload are replaced
       expect(store.standards.find((s) => s.standardid === "x-std-3")).toMatchObject({ schoolid: "x-school-3" });
-      expect(result.counts.standards).toMatchObject({ deleted: 1, inserted: 1 });
-      expect(result.counts.schools).toMatchObject({ upserted: 1, markedDeleted: 1 });
+      expect(result.counts.standards).toMatchObject({ deleted: 1, written: 1 });
+      expect(result.counts.schools).toMatchObject({ written: 1, markedDeleted: 1 });
       // a school of another organisation, and an unowned one, are not marked
       expect(store.schools.find((s) => s.schoolid === "y-school-1")?.isdeleted).toBe(false);
       expect(store.schools.find((s) => s.schoolid === "u-school-1")?.isdeleted).toBe(false);
@@ -393,12 +393,12 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.grades.some((g) => g.gradeid === learner?.gradeid)).toBe(true);
       expect(store.curriculums.some((c) => c.curriculumid === learner?.curriculumid)).toBe(true);
       expect(store.curriculums.find((c) => c.curriculumid === "y-cur-1")?.isdeleted).toBe(false);
-      expect(result.counts.curriculums).toMatchObject({ upserted: 1, markedDeleted: 1 });
+      expect(result.counts.curriculums).toMatchObject({ written: 1, markedDeleted: 1 });
       // only the children of the curriculum that IS in the payload were deleted and re-created
-      expect(result.counts.grades).toMatchObject({ deleted: 1, inserted: 1 });
-      expect(result.counts.lessonquizquestions).toMatchObject({ deleted: 1, inserted: 1 });
+      expect(result.counts.grades).toMatchObject({ deleted: 1, written: 1 });
+      expect(result.counts.lessonquizquestions).toMatchObject({ deleted: 1, written: 1 });
       // the owner-scoped tables are still replaced whole
-      expect(result.counts.questions).toMatchObject({ deleted: 4, inserted: 2 });
+      expect(result.counts.questions).toMatchObject({ deleted: 4, written: 2 });
     });
 
     it("an attach row of the absent curriculum keeps naming its question: the question is re-created by id, and if it left the payload the row is left dangling (package 7's export decides what is sent)", async () => {
@@ -633,6 +633,28 @@ describe("PUT /import/master with a format-3 payload", () => {
       const s = content("x", 1, ORG_X);
       s.schools[0].countryid = "c-zz";
       await invalid(payloadOf(s), /schools: 1 row points at a countries row/);
+    });
+    it("a list of ids that names a curriculum or a school that is not in the payload (a school's curricula, a baseline's schools)", async () => {
+      const p = content("x", 1, ORG_X);
+      p.schools[0].curriculums = ["x-cur-1", "y-cur-1"];
+      await invalid(payloadOf(p), /schools: 1 row lists a curriculums row \(curriculums\) that is not in the payload/);
+      const q = content("x", 1, ORG_X);
+      q.curriculumbaselines[0].schoolid = ["y-school-1"];
+      await invalid(payloadOf(q), /curriculumbaselines: 1 row lists a schools row \(schoolid\) that is not in the payload/);
+      const r = content("x", 1, ORG_X);
+      r.schools[0].curriculums = "x-cur-1"; // not a list
+      await invalid(payloadOf(r), /schools: 1 row lists a curriculums row/);
+    });
+    it("lists that are all in the payload, empty, or absent are accepted", async () => {
+      install({});
+      const p = content("x", 1, ORG_X);
+      p.schools[0].curriculums = ["x-cur-1"];
+      p.curriculumbaselines[0].schoolid = ["x-school-1"];
+      await expect(importIt(payloadOf(p))).resolves.toMatchObject({ error: false });
+      const q = content("x", 1, ORG_X);
+      q.schools[0].curriculums = [];
+      q.curriculumbaselines[0].schoolid = null;
+      await expect(importIt(payloadOf(q))).resolves.toMatchObject({ error: false });
     });
     it("learners or logins in the payload", async () => {
       await invalid({ ...base(), studentusers: [{ schooluserid: "u1" }] }, /studentusers: learners and logins are not part of a content payload/);

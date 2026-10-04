@@ -80,18 +80,30 @@ export interface TableSpec {
   parent?: Reference;
   /** Other ids the row holds, which must also be rows of this payload (so one organisation's content never points into another's). */
   refs?: Reference[];
+  /** Columns holding a LIST of ids (a JSON array), each of which must be a row of this payload. */
+  lists?: Array<{ fk: string; to: TableKey }>;
 }
 
 /** Every table of the payload, parents before children. */
 export const CONTENT_TABLES: Record<TableKey, TableSpec> = {
   countries: { pk: "countryid", kind: "global" },
-  schools: { pk: "schoolid", kind: "owned", refs: [{ fk: "countryid", to: "countries", optional: true }] },
+  schools: {
+    pk: "schoolid",
+    kind: "owned",
+    refs: [{ fk: "countryid", to: "countries", optional: true }],
+    lists: [{ fk: "curriculums", to: "curriculums" }],
+  },
   standards: { pk: "standardid", kind: "inherited", parent: { fk: "schoolid", to: "schools" } },
   subjects: { pk: "subjectid", kind: "owned" },
   curriculums: { pk: "curriculumid", kind: "owned", refs: [{ fk: "subjectid", to: "subjects", optional: true }] },
   questions: { pk: "questionid", kind: "owned" },
   documents: { pk: "documentid", kind: "owned" },
-  curriculumbaselines: { pk: "curriculumbaselineid", kind: "inherited", parent: { fk: "curriculumid", to: "curriculums" } },
+  curriculumbaselines: {
+    pk: "curriculumbaselineid",
+    kind: "inherited",
+    parent: { fk: "curriculumid", to: "curriculums" },
+    lists: [{ fk: "schoolid", to: "schools" }],
+  },
   baselinequestion: {
     pk: "baselinequestionid",
     kind: "inherited",
@@ -344,6 +356,28 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
             ? `${key}: ${rows(missing)} ${missing === 1 ? "hangs" : "hang"} from a ${ref.to} row (${ref.fk}) that is not in the payload.`
             : `${key}: ${rows(missing)} point${missing === 1 ? "s" : ""} at a ${ref.to} row (${ref.fk}) that is not in the payload.`,
         );
+      }
+    }
+  }
+
+  // Lists of ids (a school's curricula, the schools a baseline is for): each must be a row of the payload.
+  for (const key of TABLE_KEYS) {
+    const list = tables[key];
+    if (!list) continue;
+    for (const { fk, to } of CONTENT_TABLES[key].lists ?? []) {
+      const targets = idsOf[to];
+      if (!targets) continue;
+      let bad = 0;
+      for (const row of list) {
+        if (!isRow(row)) continue;
+        const value = row[fk];
+        if (value === undefined || value === null) continue;
+        if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !targets.has(lower(id)))) {
+          bad += 1;
+        }
+      }
+      if (bad) {
+        problems.add(key, `${key}: ${rows(bad)} list${bad === 1 ? "s" : ""} a ${to} row (${fk}) that is not in the payload.`);
       }
     }
   }
