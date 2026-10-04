@@ -317,6 +317,18 @@ describe("PUT /import/ownership", () => {
       expect(res.body.applied.questions).toBe(1);
     });
 
+    it("never overwrites a row that gained an owner between the read and the write: the write itself only touches NULL rows", async () => {
+      // The read sees school 1 as unowned (stale), but by the time of the write it belongs to B.
+      store.schools[0].organisationid = ORG_B;
+      jest.spyOn(schools, "scope").mockReturnValue({
+        findAll: jest.fn(async () => [{ schoolid: SCHOOL(1), organisationid: null }]),
+      } as never);
+      const body = validBody({ schools: { [SCHOOL(1)]: ORG_A }, content: { curriculums: {}, questions: {}, documents: {}, subjects: {} } });
+      const res = await put(body).expect(200);
+      expect(res.body.applied.schools).toBe(0);
+      expect(owners("schools")[SCHOOL(1)]).toBe(ORG_B);
+    });
+
     it("lists ids it has no row for under unknown, and creates nothing for them", async () => {
       const ghost = SCHOOL(99);
       const body = validBody({ schools: { [SCHOOL(1)]: ORG_A, [ghost]: ORG_A } });
