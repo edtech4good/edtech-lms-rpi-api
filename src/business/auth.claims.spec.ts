@@ -29,6 +29,8 @@ import { TokenBusiness } from "./token.business";
 
 const SCHOOL_X = { schoolid: "5c000000-0000-4000-8000-0000000000a1", schoolname: "School X", uitheme: "corporate", organisationid: "0a000000-0000-4000-8000-00000000000a" };
 const SCHOOL_Y = { schoolid: "5c000000-0000-4000-8000-0000000000b2", schoolname: "School Y", uitheme: "kids", organisationid: "0b000000-0000-4000-8000-00000000000b" };
+const SCHOOL_X_DELETED = { ...SCHOOL_X, isdeleted: true };
+const SCHOOL_NO_ORG_DELETED = { schoolid: "5c000000-0000-4000-8000-0000000000c4", schoolname: "School Z2", uitheme: "kids", organisationid: null, isdeleted: true };
 const SCHOOL_NO_ORG = { schoolid: "5c000000-0000-4000-8000-0000000000c3", schoolname: "School Z", uitheme: "kids", organisationid: null };
 
 type Stubs = {
@@ -239,6 +241,32 @@ describe("login token claims: schoolid and organisationid", () => {
     }
   });
 
+  it("a login whose school is deleted cannot sign in, online or on a Pi, owned or not, with the answer for a school that is not here", async () => {
+    // the reference answer: a login whose school is not here at all
+    stub({ studentSchoolId: null, userSchoolId: null, user: { schoolname: "Nowhere" }, schools: [SCHOOL_X] });
+    Config.fortyk.api.rpi.offline = false;
+    const missing = await signIn().catch((e) => e);
+    jest.restoreAllMocks();
+    for (const [school, name] of [[SCHOOL_X_DELETED, "School X"], [SCHOOL_NO_ORG_DELETED, "School Z2"]] as const) {
+      stub({ user: { schoolname: name }, schools: [school] });
+      for (const offline of [false, true]) {
+        Config.fortyk.api.rpi.offline = offline;
+        const refusal = await signIn().catch((e) => e);
+        expect({ code: refusal.code, status: refusal.status, message: refusal.message, hint: refusal.hint }).toEqual({
+          code: missing.code, status: missing.status, message: missing.message, hint: missing.hint,
+        });
+        expect(refusal).toMatchObject(REFUSED);
+      }
+      jest.restoreAllMocks();
+    }
+  });
+
+  it("the same school, not deleted, does sign in (so the refusal above is the deletion)", async () => {
+    stub({ user: { schoolname: "School Z" }, schools: [SCHOOL_NO_ORG] });
+    Config.fortyk.api.rpi.offline = true;
+    expect((await signIn()).schoolid).toBe(SCHOOL_NO_ORG.schoolid);
+  });
+
   it("a login of an active organisation's school signs in on a Pi too (the exception is only for a school with no organisation)", async () => {
     stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X] });
     Config.fortyk.api.rpi.offline = true;
@@ -282,6 +310,7 @@ describe("a database the organisations migration has not reached (MySQL 1054 on 
       uitheme: "corporate",
       schoolid: SCHOOL_X.schoolid,
       organisationid: null,
+      isdeleted: false,
     });
     expect(plain).toHaveBeenCalledWith({ where: { schoolname: "School X" } });
   });

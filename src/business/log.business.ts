@@ -1,106 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { subMonths } from "date-fns";
-import { groupBy } from "lodash";
 import { Op } from "sequelize";
-import { rpiuseraccess, studentactives, studentgradesprogress, studentlearningprogress, studentlessonsprogress, studentlevelsprogress, studentpoints, studentprogress, studentprogressquestions } from "src/models/data-models/init-models";
-import { studentappusages } from "src/models/data-models/studentappusage";
+import { rpiuseraccess, studentprogress, studentprogressquestions } from "src/models/data-models/init-models";
+import { ReportScope } from "./report-scope";
+import { SyncReport } from "./sync.report";
 export class LogBusiness {
-    exportlog = async () => {
-        const limitdate = subMonths(new Date(), 6);
-        const sp = (
-            await studentprogress.findAll({
-                where: {
-                    starttime: { [Op.gt]: limitdate },
-                },
-            })
-        ).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const spqo = await studentprogressquestions.findAll({
-            // The raw learner `answer` never leaves this API for central or the
-            // reporting pipeline (privacy: free-text answers can contain PII).
-            attributes: { exclude: ["answer"] },
-            where: {
-                studentprogressid: {
-                    [Op.in]: sp.map((x) => x.studentprogressid),
-                },
-            },
-        });
-        const spq = spqo.map((x) => x.get({ plain: true }));
-        const gspq = groupBy(spq, 'studentprogressid');
-        const sa = await rpiuseraccess.findAll({
-            where: {
-                logintime: { [Op.gt]: limitdate },
-            },
-        });
-        const stactives = (await studentactives.findAll({
-            where: {
-                created_at: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const stlp = (await studentlearningprogress.findAll({
-            where: {
-                lastupdated: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const stgp = (await studentgradesprogress.findAll({
-            where: {
-                lastupdated: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const stlvp = (await studentlevelsprogress.findAll({
-            where: {
-                lastupdated: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const stlsp = (await studentlessonsprogress.findAll({
-            where: {
-                lastupdated: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const stpoints = (await studentpoints.findAll({
-            where: {
-                created_at: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        const stpusages = (await studentappusages.findAll({
-            where: {
-                created_at: { [Op.gt]: limitdate },
-            }
-        })).map((x) => ({
-            ...x.get({ plain: true }),
-        }));
-        return {
-            log: {
-                result: sp.map((x) => ({
-                    ...x,
-                    studentprogressquestions: gspq[x.studentprogressid],
-                })),
-                progress: {
-                    studentactives: stactives,
-                    studentlearningprogress: stlp,
-                    studentgradesprogress: stgp,
-                    studentlevelsprogress: stlvp,
-                    studentlessonsprogress: stlsp,
-                    studentpoints: stpoints,
-                    studentappusages: stpusages,
-                },
-                access: sa.map((x) => x.get({ plain: true })),
-            },
-        };
-    };
+    /**
+     * The six months of progress, results, sign-ins and usage in the log zip (`GET export/log`): the same rows the report
+     * data carries, from the same reader, so the two cannot drift apart. `scope` is whose rows they may be (`null` is the
+     * whole server; see export-scope.ts).
+     */
+    exportlog = async (scope: ReportScope | null) => ({
+        log: await new SyncReport().getstudentdata(scope),
+    });
     cleanlog = async () => {
         const limitdate = subMonths(new Date(), 6);
         const sp = (

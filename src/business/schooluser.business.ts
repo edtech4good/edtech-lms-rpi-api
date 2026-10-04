@@ -10,6 +10,7 @@ import {
   schoolusersAttributes,
   students,
 } from "../models/data-models/init-models";
+import { byLogin, ExportKeys } from "./export-scope";
 import { withImportSchoolIds } from "./school-identity";
 
 export class SchoolUserBusiness {
@@ -116,7 +117,8 @@ export class SchoolUserBusiness {
   getuserbyname = (schoolusername: string) =>
     schoolusers.findOne({ where: { schoolusername } });
 
-  getschoolusers = async () => {
+  /** The active school logins with their learner rows, for the report data (`keys` limits them to a scope; `null` is every one). */
+  getschoolusers = async (keys: ExportKeys | null) => {
     schoolusers.hasOne(students, {
       foreignKey: "schooluserid",
       sourceKey: "schooluserid",
@@ -128,6 +130,7 @@ export class SchoolUserBusiness {
     return schoolusers.findAll({
       where: {
         schooluserstatus: true,
+        ...byLogin(keys, "schooluserid"),
       },
       attributes: {
         exclude: ["schooluserpasswordhash"],

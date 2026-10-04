@@ -137,7 +137,7 @@ export class ImportController {
   // Roster imports: central's server sync key only, online and on a Pi. No
   // client sends these with a user token.
   @Put("students")
-  @OrgPolicy("server", { note: "Roster for one school; refuses rows of any other school (5c)." })
+  @OrgPolicy("server", { note: "Roster for one school; refuses rows of any other school (5c).", enforcedBy: "src/modules/import/import.roster.school.spec.ts" })
   @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
@@ -270,7 +270,7 @@ export class ImportController {
   }
 
   @Put("teachers")
-  @OrgPolicy("server", { note: "Roster for one school; refuses rows of any other school (5c)." })
+  @OrgPolicy("server", { note: "Roster for one school; refuses rows of any other school (5c).", enforcedBy: "src/modules/import/import.roster.school.spec.ts" })
   @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,
@@ -361,7 +361,7 @@ export class ImportController {
   // of any role, because it assigns ownership. It writes `organisationid` and
   // the `organisations` rows and nothing else (no deletes, no logins).
   @Put("ownership")
-  @OrgPolicy("server", { note: "Central's ownership push." })
+  @OrgPolicy("server", { note: "Central's ownership push.", enforcedBy: "src/modules/import/import.ownership.spec.ts" })
   @UseGuards(ServerSyncGuard())
   @ApiResponse({
     status: 200,

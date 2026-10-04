@@ -119,7 +119,7 @@ describe("ownership columns stay out of everything that leaves the API (step 5a)
 
   it("the school-login export (what GET export/report-data sends central) selects neither schoolid column", async () => {
     // SyncReport.getreportdata maps SchoolUserBusiness.getschoolusers() rows with get({ plain: true }).
-    const sql = await sqlThrown(() => new SchoolUserBusiness().getschoolusers());
+    const sql = await sqlThrown(() => new SchoolUserBusiness().getschoolusers(null));
     expect(mentions(sql, "schoolid")).toBe(false);
     expect(mentions(sql, "organisationid")).toBe(false);
   });

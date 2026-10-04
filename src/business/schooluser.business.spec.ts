@@ -25,7 +25,7 @@ describe("SchoolUserBusiness.getschoolusers", () => {
   });
 
   it("asks Sequelize to exclude schooluserpasswordhash from the result set", async () => {
-    await new SchoolUserBusiness().getschoolusers();
+    await new SchoolUserBusiness().getschoolusers(null);
 
     expect(findAllSpy).toHaveBeenCalledTimes(1);
     const options = findAllSpy.mock.calls[0][0];

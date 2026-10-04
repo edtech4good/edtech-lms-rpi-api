@@ -24,6 +24,32 @@ import { gradingMode, requireGradedAnswers } from "src/config";
 export const countedpassclause = (): { verified?: true } =>
     gradingMode() === "enforce" && requireGradedAnswers() ? { verified: true } : {};
 
+/**
+ * The columns of a stored answer. Only these are written, from the submitted item: every other property the
+ * client sent is ignored, and the row's own ids are the server's. (An absent value is left out so that the
+ * column keeps its default.)
+ */
+const answerrow = (x: any, studentprogressid: string, referencequestionkey: string) => {
+    const known: Record<string, unknown> = {
+        tries: x.tries,
+        iscorrect: x.iscorrect,
+        answer: x.answer,
+        clientiscorrect: x.clientiscorrect,
+        servergrade: x.servergrade,
+    };
+    for (const key of Object.keys(known)) {
+        if (known[key] === undefined) {
+            delete known[key];
+        }
+    }
+    return {
+        ...known,
+        studentprogressid,
+        studentprogressquestionid: uuidv4(),
+        referencequestionid: x[referencequestionkey],
+    };
+};
+
 const insertquestion = async (
     studentprogressid: string,
     resultprogressquestions: any,
@@ -32,12 +58,7 @@ const insertquestion = async (
 ) => {
     await forkJoin(
         JSON.parse(resultprogressquestions).map((x: any) => from(
-            studentprogressquestions.create({
-                ...x,
-                studentprogressid,
-                studentprogressquestionid: uuidv4(),
-                referencequestionid: x[referencequestionkey],
-            }, {transaction})
+            studentprogressquestions.create(answerrow(x, studentprogressid, referencequestionkey) as any, {transaction})
         ))
     ).toPromise();
 };

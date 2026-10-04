@@ -4,9 +4,3 @@
 # One route per line, sorted by path then method: METHOD /path  policy
 # `+key` marks a route whose guards also admit central's server sync key.
 # Generated: `npm run routes:policy -- --write`. Checked by route-inventory.spec.ts.
-GET /export/log  teacher
-GET /export/report-data  teacher
-GET /export/system-log/files  teacher
-PUT /import/ownership  server+key
-PUT /import/students  server+key
-PUT /import/teachers  server+key
