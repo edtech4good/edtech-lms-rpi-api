@@ -328,3 +328,25 @@ export async function assertRosterBelongsToSchool(
     throw new RosterSchoolError(ErrorCode.INVALID_INPUT, { message, fields: [{ field: "schoolid", message }] });
   }
 }
+
+/**
+ * Does a school a request names (query parameter, filter: an id or a name) mean the caller's own school?
+ * Nothing named: yes (there is no filter to widen anything). Named: only when it is the same school. A name
+ * that no school has here is not the caller's school.
+ */
+export async function schoolRefIsOwn(own: SchoolScope | undefined, ref: { schoolid?: unknown; schoolname?: unknown }): Promise<boolean> {
+  const given = await resolveSchoolScope(ref);
+  if (given === undefined) {
+    return true;
+  }
+  if (own === undefined) {
+    return false;
+  }
+  if ("schoolid" in given && "schoolid" in own) {
+    return given.schoolid.toLowerCase() === own.schoolid.toLowerCase();
+  }
+  if ("schoolname" in given && "schoolname" in own) {
+    return isSameSchoolName(own.schoolname, given.schoolname);
+  }
+  return false;
+}
