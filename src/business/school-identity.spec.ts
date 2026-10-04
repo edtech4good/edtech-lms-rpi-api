@@ -226,9 +226,21 @@ describe("withImportSchoolIds: the id written with a roster row", () => {
     expect(rows).toEqual([{ studentid: "1", schoolname: " school a ", schoolid: A }]);
   });
 
-  it("a payload that carries an id of a school that exists keeps it, even when the name names another", async () => {
-    const rows = await withImportSchoolIds([{ schoolname: "School A", schoolid: B }]);
+  it("a payload that carries an id and the name of the same school keeps the id (the name may differ in case or spaces)", async () => {
+    const rows = await withImportSchoolIds([{ schoolname: " school b ", schoolid: B }]);
     expect(rows[0].schoolid).toBe(B);
+  });
+
+  it("a payload that carries only an id of a school that exists keeps it", async () => {
+    const rows = await withImportSchoolIds([{ schoolid: B }]);
+    expect(rows[0]).toEqual({ schoolid: B });
+  });
+
+  it("a payload whose id and name name different schools fails the write with a 400", async () => {
+    const error = await withImportSchoolIds([{ schoolname: "School A", schoolid: B }]).catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.getStatus()).toBe(400);
+    expect(error.code).toBe(ErrorCode.INVALID_INPUT);
   });
 
   it("a name changed in the payload moves the id with it (the id is not left stale)", async () => {

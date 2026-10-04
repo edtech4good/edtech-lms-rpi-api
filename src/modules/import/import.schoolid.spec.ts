@@ -82,11 +82,37 @@ describe("PUT /import/students", () => {
 
   it("a payload that carries schoolid stores it", async () => {
     mockZipContaining({
-      studentusers: [learner(1, { schoolid: B, student: { studentid: "s1", schooluserid: "su1", schoolname: "School B", schoolid: B } })],
+      studentusers: [learner(1, { schoolid: B, schoolname: "School B", student: { studentid: "s1", schooluserid: "su1", schoolname: "School B", schoolid: B } })],
     });
     await new ImportController().studentsimport(file, user);
     expect(learnerRows()[0]).toMatchObject({ schoolname: "School B", schoolid: B });
     expect(loginRows()[0]).toMatchObject({ schoolid: B });
+  });
+
+  it("a payload with only an id (no name) stores the id", async () => {
+    mockZipContaining({
+      studentusers: [learner(1, { schoolid: B, schoolname: undefined, student: { studentid: "s1", schooluserid: "su1", schoolid: B } })],
+    });
+    await new ImportController().studentsimport(file, user);
+    expect(learnerRows()[0]).toMatchObject({ schoolid: B });
+    expect(loginRows()[0]).toMatchObject({ schoolid: B });
+  });
+
+  it("a payload whose id and name name different schools fails: 400, rolled back, nothing written", async () => {
+    mockZipContaining({
+      studentusers: [learner(1, { schoolid: B, student: { studentid: "s1", schooluserid: "su1", schoolname: "School A", schoolid: B } })],
+    });
+    await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
+    expect(students.bulkCreate).not.toHaveBeenCalled();
+    expect(tnx.rollback).toHaveBeenCalledTimes(1);
+    expect(tnx.commit).not.toHaveBeenCalled();
+  });
+
+  it("a teacher payload whose id and name name different schools fails with a 400", async () => {
+    mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher1", schoolname: "School A", schoolid: B }]);
+    await expect(new ImportController().teachersimport(file, user)).rejects.toMatchObject({ status: 400 });
+    expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
+    expect(tnx.rollback).toHaveBeenCalledTimes(1);
   });
 
   it("a learner who moves school gets the new id with the new name (the id is rewritten, not left stale)", async () => {

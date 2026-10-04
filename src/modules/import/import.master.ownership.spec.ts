@@ -59,13 +59,20 @@ let store: Store;
 let events: string[];
 const tnx = { commit: jest.fn(), rollback: jest.fn() };
 
-// A `where(cast(col("schoolname"), "BINARY"), name)` carries the exact name as `logic`.
-const isNameWhere = (cond: unknown): cond is { logic: string } => typeof (cond as { logic?: unknown })?.logic === "string";
+// What the column collation calls equal: case, trailing spaces, and the Khmer marks that have no weight.
+const collate = (name: string) => name.trim().toLowerCase().replace(/[\u17c6\u17c9\u17cb]/g, "");
+
+// A `where(cast(col("schoolname"), "BINARY"), name)` carries the exact name as `logic`: a BINARY compare is
+// exact. The same where without the cast is a collation compare.
+const isNameWhere = (cond: unknown): cond is { logic: string; attribute: { constructor: { name: string } } } =>
+  typeof (cond as { logic?: unknown })?.logic === "string";
+const nameMatches = (row: Row, part: { logic: string; attribute: { constructor: { name: string } } }) =>
+  part.attribute?.constructor?.name === "Cast" ? row.schoolname === part.logic : collate(String(row.schoolname)) === collate(part.logic);
 
 const matches = (row: Row, where: Row): boolean => {
   const and = (where as Record<symbol, unknown[]>)[Op.and as unknown as symbol];
   if (and) {
-    return and.every((part) => (isNameWhere(part) ? row.schoolname === part.logic : matches(row, part as Row)));
+    return and.every((part) => (isNameWhere(part) ? nameMatches(row, part) : matches(row, part as Row)));
   }
   return matchesColumns(row, where);
 };
@@ -115,7 +122,7 @@ const install = (initial: Store) => {
   // narrowing (`TRIM(schoolname) = ?`) gets the schools the column collation calls equal.
   jest.spyOn(schools, "findAll").mockImplementation((async (opts: { where?: { logic?: string } }) => {
     const given = opts?.where?.logic;
-    const rows = typeof given === "string" ? store.schools.filter((r) => String(r.schoolname).trim().toLowerCase() === given.trim().toLowerCase()) : store.schools;
+    const rows = typeof given === "string" ? store.schools.filter((r) => collate(String(r.schoolname)) === collate(given)) : store.schools;
     return cloneDeep(rows).map((r) => ({ isdeleted: false, ...r }));
   }) as never);
   for (const model of [students, schoolusers]) {
@@ -280,6 +287,7 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
         { studentid: "n2", schoolname: "School New ", schoolid: null }, // same name with a trailing space
         { studentid: "n3", schoolname: "School Unknown", schoolid: null },
         { studentid: "n4", schoolname: "School Twin", schoolid: null },
+        { studentid: "n6", schoolname: "School Ne\u17c6w", schoolid: null }, // the column collation calls it equal to "School New"; the text rule does not
         { studentid: "s1", schoolname: "School A", schoolid: S(1) },
       ],
       schoolusers: [
@@ -304,6 +312,8 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
       await new ImportController().completesync(file, user);
       const ids = (rows: Row[], pk: string) => Object.fromEntries(rows.map((r) => [r[pk], r.schoolid]));
       expect(ids(store.students, "studentid")).toMatchObject({ n1: S(9), n2: S(9), s1: S(1) });
+      // a different name that only the column collation calls the same is not given that school
+      expect(ids(store.students, "studentid").n6).toBeNull();
       expect(ids(store.schoolusers, "schooluserid")).toMatchObject({ nu1: S(9) });
     });
 
@@ -317,7 +327,7 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
       const studentsLog = logged.find((l) => l.includes("students with no school id")) ?? "";
       expect(studentsLog).toContain("2 filled");
       expect(studentsLog).toContain("1 names skipped (not unique)");
-      expect(studentsLog).toContain("1 names skipped (no school of that name)");
+      expect(studentsLog).toContain("2 names skipped (no school of that name)");
       expect(logged.find((l) => l.includes("schoolusers with no school id"))).toContain("1 filled");
       expect(logged.join("\n")).not.toMatch(/School (New|Twin|Unknown)/);
     });
@@ -328,6 +338,65 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
       await new ImportController().completesync(file, user);
       expect(students.update).not.toHaveBeenCalled();
       expect(logged.some((l) => l.includes("with no school id"))).toBe(false);
+    });
+  });
+
+  describe("a school that arrives under a new id is matched by a name that is unique on both sides", () => {
+    const moved = (id: string) => store.students.find((r) => r.studentid === id)?.schoolid;
+
+    it("two old schools with one name: neither is moved, and it is logged", async () => {
+      install({
+        ...before(),
+        schools: [
+          { schoolid: S(1), schoolname: "Twin", organisationid: ORG_A },
+          { schoolid: S(2), schoolname: "twin ", organisationid: ORG_B },
+        ],
+        students: [
+          { studentid: "t1", schoolname: "Twin", schoolid: S(1) },
+          { studentid: "t2", schoolname: "twin ", schoolid: S(2) },
+        ],
+        schoolusers: [],
+      });
+      mockZipContaining(payload({ schools: [{ schoolid: S(5), schoolname: "Twin" }] }));
+      await new ImportController().completesync(file, user);
+      expect([moved("t1"), moved("t2")]).toEqual([S(1), S(2)]);
+      expect(owners(store.schools, "schoolid")).toEqual({ [S(5)]: null });
+      expect(logged.find((l) => l.includes("schools under a new id"))).toContain("0 moved, 2 skipped (name not unique)");
+    });
+
+    it("a vanished school whose name a school still here also has is not merged into it", async () => {
+      install({
+        ...before(),
+        schools: [
+          { schoolid: S(1), schoolname: "School B", organisationid: ORG_A },
+          { schoolid: S(2), schoolname: "school b ", organisationid: ORG_B },
+        ],
+        students: [
+          { studentid: "t1", schoolname: "School B", schoolid: S(1) },
+          { studentid: "t2", schoolname: "school b ", schoolid: S(2) },
+        ],
+        schoolusers: [{ schooluserid: "tu2", schoolname: "school b ", schoolid: S(2) }],
+      });
+      mockZipContaining(payload({ schools: [{ schoolid: S(1), schoolname: "School B" }] })); // S(2) is gone
+      await new ImportController().completesync(file, user);
+      expect([moved("t1"), moved("t2")]).toEqual([S(1), S(2)]); // t2 is left as it was, not moved onto S(1)
+      expect(store.schoolusers[0].schoolid).toBe(S(2));
+    });
+
+    it("two schools in the payload with the name: the old school's learners are not moved to either", async () => {
+      install(before());
+      mockZipContaining(
+        payload({
+          schools: [
+            { schoolid: S(1), schoolname: "School A" },
+            { schoolid: S(31), schoolname: "School B" },
+            { schoolid: S(32), schoolname: "school b" },
+          ],
+        }),
+      );
+      await new ImportController().completesync(file, user);
+      expect(moved("s2")).toBe(S(2));
+      expect(logged.find((l) => l.includes("schools under a new id"))).toContain("skipped (name not unique)");
     });
   });
 

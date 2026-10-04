@@ -218,13 +218,17 @@ export const schoolOfStudent = (studentid: unknown): WhereOptions =>
  * school its name says it is in (a learner who moves school gets the new id with
  * the new name, and the id is never left stale).
  *
- *  - a row that carries a `schoolid` of a school that exists keeps it;
+ *  - a row that carries BOTH a `schoolid` of a school that exists and a
+ *    `schoolname`: the name must be that school's name under the text rule above,
+ *    or the whole write fails with a 400 (the payload contradicts itself);
+ *  - a row that carries only a `schoolid` of a school that exists keeps it;
  *  - otherwise the row's `schoolname` is resolved (once per distinct name) to a
  *    school's id; a name that matches two schools fails the whole write;
  *  - otherwise (no school given, a name that matches none here, an id of a
  *    school this server does not have yet) the row is written with a NULL
  *    `schoolid`, as it was before ids existed. Rows are never refused for this:
- *    a classroom server may receive its roster before its schools.
+ *    a classroom server may receive its roster before its schools, and the master
+ *    import fills the ids in when the schools arrive.
  *
  * The name is stored as it was sent; only the id is added.
  */
@@ -232,19 +236,28 @@ export async function withImportSchoolIds<T extends { schoolid?: string | null; 
   rows: T[],
   transaction?: Transaction,
 ): Promise<Array<T & { schoolid: string | null }>> {
-  const byId = new Map<string, boolean>();
+  const byId = new Map<string, string | null>();
   const byName = new Map<string, string | null>();
   const out: Array<T & { schoolid: string | null }> = [];
   for (const row of rows) {
     let schoolid: string | null = null;
     if (isGiven(row.schoolid)) {
       const id = row.schoolid.trim();
-      let exists = byId.get(id);
-      if (exists === undefined) {
-        exists = Boolean(await schools.findOne({ where: { schoolid: id }, attributes: ["schoolid"], transaction }));
-        byId.set(id, exists);
+      let storedName = byId.get(id);
+      if (storedName === undefined) {
+        const found = await schools.findOne({ where: { schoolid: id }, attributes: ["schoolid", "schoolname"], transaction });
+        storedName = found ? found.schoolname : null;
+        byId.set(id, storedName);
       }
-      schoolid = exists ? id : null;
+      if (storedName !== null) {
+        if (isGiven(row.schoolname) && !isSameSchoolName(storedName, row.schoolname)) {
+          throw new ApiError(ErrorCode.INVALID_INPUT, {
+            message: "The school id and the school name name different schools.",
+            fields: [{ field: "schoolid", message: "The school id and the school name name different schools." }],
+          });
+        }
+        schoolid = id;
+      }
     }
     if (!schoolid && isGiven(row.schoolname)) {
       if (!byName.has(row.schoolname)) {

@@ -37,7 +37,7 @@ import { lessonplans } from "src/models/data-models/lessonplan";
 import { subjects } from "src/models/data-models/subjects";
 import { Logger } from "src/config";
 import { ApiError } from "src/models/ApiError";
-import { findSchoolIdByName, isSameSchoolName } from "./school-identity";
+import { findSchoolIdByName, isSameSchoolName, normaliseSchoolName } from "./school-identity";
 
 /** The tables whose rows have an owning organisation and are wiped and re-created by a master import. */
 const OWNED_BY_ORGANISATION = [
@@ -372,17 +372,33 @@ export class SyncBusiness {
   private repointRenamedSchools = async () => {
     const current = await schools.findAll({ attributes: ["schoolid", "schoolname"], transaction: this._transaction });
     const currentIds = new Set(current.map((c) => c.schoolid));
+    const count = (names: string[]) => {
+      const counts = new Map<string, number>();
+      for (const name of names) counts.set(normaliseSchoolName(name), (counts.get(normaliseSchoolName(name)) ?? 0) + 1);
+      return counts;
+    };
+    const oldCounts = count(this._schoolsBefore.map((b) => b.schoolname));
+    const newCounts = count(current.map((c) => c.schoolname));
+    let moved = 0;
+    let skippedAmbiguous = 0;
+    let skippedUnmatched = 0;
     for (const before of this._schoolsBefore) {
       if (currentIds.has(before.schoolid)) {
         continue;
       }
-      const sameName = current.filter((c) => isSameSchoolName(c.schoolname, before.schoolname));
-      if (sameName.length !== 1) {
+      const key = normaliseSchoolName(before.schoolname);
+      if ((oldCounts.get(key) ?? 0) > 1 || (newCounts.get(key) ?? 0) > 1) {
+        skippedAmbiguous += 1;
+        continue;
+      }
+      const match = current.find((c) => isSameSchoolName(c.schoolname, before.schoolname));
+      if (!match) {
+        skippedUnmatched += 1;
         continue;
       }
       for (const model of [students, schoolusers]) {
         await (model as typeof students).update(
-          { schoolid: sameName[0].schoolid },
+          { schoolid: match.schoolid },
           { where: { schoolid: before.schoolid }, transaction: this._transaction },
         );
       }
@@ -390,9 +406,13 @@ export class SyncBusiness {
       if (owner) {
         await schools.update(
           { organisationid: owner },
-          { where: { schoolid: sameName[0].schoolid, organisationid: null }, transaction: this._transaction },
+          { where: { schoolid: match.schoolid, organisationid: null }, transaction: this._transaction },
         );
       }
+      moved += 1;
+    }
+    if (moved + skippedAmbiguous + skippedUnmatched > 0) {
+      Logger.info(`master import: schools under a new id: ${moved} moved, ${skippedAmbiguous} skipped (name not unique), ${skippedUnmatched} skipped (no school of that name)`);
     }
   };
 
