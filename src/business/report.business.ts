@@ -37,6 +37,18 @@ export interface LineChartFormat {
     series: Array<ChartItemFormat>;
 }
 
+/**
+ * A report reads one learner's progress row by row. Once the (scoped) lookup has found that learner, the
+ * per-row reads use the id on the row it found, not the filter value. `hide` removes the id again from the row
+ * when the lookup asked for it only for this purpose (the answer's shape is unchanged).
+ */
+export const pinStudent = (where: any, student: students, hide = false) => {
+    const id = student.studentid;
+    where.studentid = id;
+    const raw = (student as any).dataValues;
+    if (hide && raw) delete raw.studentid;
+};
+
 export class ReportBusiness {
 
     // `scope` (see report-scope.ts): whose learners and which content this answer may cover. Undefined or null: no
@@ -102,6 +114,7 @@ export class ReportBusiness {
                     }
                 ]
             });
+            if(student) pinStudent(where, student);
         }
         if(!student) return { rows: [], count: 0};
         const curwhere: any = {};
@@ -884,7 +897,7 @@ export class ReportBusiness {
                 studentid: where.studentid,
                 ...mine
             },
-            attributes: ['studentfirstname'],
+            attributes: ['studentid', 'studentfirstname'],
             include: [
                 {
                     model: curriculums,
@@ -895,6 +908,7 @@ export class ReportBusiness {
             ]
         });
         if(!student) return { rows: [], count: 0, student: null };
+        pinStudent(where, student, true);
         const studentgradeprogresses = await grades.findAndCountAll({
             where: { gradestatus: true, isdeleted: false },
             order: ['gradename'],
@@ -942,7 +956,7 @@ export class ReportBusiness {
                 studentid: where.studentid,
                 ...mine
             },
-            attributes: ['studentfirstname'],
+            attributes: ['studentid', 'studentfirstname'],
             include: [
                 {
                     model: curriculums,
@@ -953,6 +967,7 @@ export class ReportBusiness {
             ]
         });
         if(!student) return { rows: [], count: 0, student: null };
+        pinStudent(where, student, true);
         const studentlevelprogresses = await levels.findAndCountAll({
             where: levelwhere,
             order: ['levelname'],
@@ -1010,7 +1025,7 @@ export class ReportBusiness {
                 studentid: where.studentid,
                 ...mine
             },
-            attributes: ['studentfirstname'],
+            attributes: ['studentid', 'studentfirstname'],
             include: [
                 {
                     model: curriculums,
@@ -1021,6 +1036,7 @@ export class ReportBusiness {
             ]
         });
         if(!student) return { rows: [], count: 0, student: null };
+        pinStudent(where, student, true);
         const studentlessonprogresses = await lessons.findAndCountAll({
             where: lessonwhere,
             order: ['lessonname'],

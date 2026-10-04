@@ -11,6 +11,8 @@ import { curriculumbaseline } from "src/models/data-models/curriculumbaseline";
 import { curriculums } from "src/models/data-models/curriculums";
 import { documents } from "src/models/data-models/documents";
 import { grades } from "src/models/data-models/grades";
+import * as reportScope from "src/business/report-scope";
+import { pinStudent, ReportBusiness } from "src/business/report.business";
 import { initModels, setuprelationshipforreport } from "src/models/data-models/init-models";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
 import { lessonplans } from "src/models/data-models/lessonplan";
@@ -69,7 +71,7 @@ import { stubCalls, stubLog } from "src/test-support/stub-business";
  * What is real: the strategy (claims, organisation, school), the guards, `content-access`, the report scope, and
  * every query a people, list or report route makes. What is faked: the database (an in-memory table per model,
  * with a `where` evaluator: equality, lists, `LIKE`, `AND`/`OR`; joins are not evaluated, a model's includes are
- * ignored, and a list of any table but `students` answers with no rows for `findAndCountAll`), and, for the
+ * ignored, and a list of any table but learners, levels, lessons and grades answers with no rows for `findAndCountAll`), and, for the
  * routes that name a piece of content, the business class behind the route (a marker row carries the ids the route
  * asked for; the queries behind those routes filter by parent id and are proved live). The marker is
  * `src/test-support/stub-business.ts`.
@@ -299,7 +301,10 @@ const install = () => {
     const name = model.name;
     const read = (method: string, options: any, rows: Row[]) => { // eslint-disable-line @typescript-eslint/no-explicit-any
       reads.push({ model: name, method, options });
-      if (model === (students as unknown)) for (const id of idsOf(rows)) seen.add(id);
+      // the learners a request touched: those the students table handed out, and those whose progress any student*progress table did
+      // (not the scope check's own look at the learner a body names: it reads who that is, and hands nothing out)
+      const scopeCheck = JSON.stringify(options?.attributes) === JSON.stringify(["studentid", "schoolid", "schooluserid"]);
+      if ((model === (students as unknown) || name.startsWith("student")) && !scopeCheck) for (const id of idsOf(rows)) seen.add(id);
       return rows;
     };
     const filtered = (options: any) => rowsOf(model).filter((r) => matchesWhere(r, options?.where)); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -308,8 +313,8 @@ const install = () => {
     jest.spyOn(model, "findOne").mockImplementation((async (options: any) => out(read("findOne", options, filtered(options).slice(0, 1)), options)[0] ?? null) as never);
     jest.spyOn(model, "count").mockImplementation((async (options: any) => read("count", options, filtered(options)).length) as never);
     jest.spyOn(model, "findAndCountAll").mockImplementation((async (options: any) => {
-      // Only learners are listed for real: a joined list of any other table has no rows here.
-      const rows = model === (students as unknown) ? filtered(options) : [];
+      // Learners, levels, lessons and grades are listed for real (so that the per-row loops of the reports run); a joined list of any other table has no rows here.
+      const rows = [students, levels, lessons, grades].includes(model as never) ? filtered(options) : [];
       const page = options?.limit ? rows.slice(options.offset ?? 0, (options.offset ?? 0) + options.limit) : rows;
       read("findAndCountAll", options, page);
       return { rows: out(page, options), count: rows.length };
@@ -369,8 +374,8 @@ const treeRows = (t: Tree & { org: string | null }) => {
       },
     ],
     [grades, { gradeid: t.grade, curriculumid: t.curriculum, gradename: "Grade", gradeorder: 1, gradestatus: true, points: 100, ...status }],
-    [levels, { levelid: t.level, gradeid: t.grade, levelname: "Level", levelorder: 1, levelstatus: true, points: 100, ...status }],
-    [lessons, { lessonid: t.lesson, levelid: t.level, lessonname: "Lesson", lessonorder: 1, lessonstatus: true, total_points: 10, ...status }],
+    [levels, { levelid: t.level, gradeid: t.grade, levelname: "Level", levelorder: 1, levelstatus: true, points: 100, studentlevelsprogresses: [], ...status }],
+    [lessons, { lessonid: t.lesson, levelid: t.level, lessonname: "Lesson", lessonorder: 1, lessonstatus: true, total_points: 10, studentlessonsprogresses: [], ...status }],
     [lessonlearnings, { lessonlearningid: t.learning, lessonid: t.lesson, documentid: t.document, lessonlearningstatus: true }],
     [lessonplans, { lessonplanid: t.plan, lessonid: t.lesson, documentid: t.document, lessonplanstatus: true }],
     [lessonpractices, { lessonpracticeid: t.practice, lessonid: t.lesson, lessonpracticestatus: true }],
@@ -470,6 +475,17 @@ const seedData = () => {
   put(studentprogress, [
     { studentprogressid: uid("f1", 1), studentid: ST_X2, studentprogressreferenceid: T_X1.baseline, progresstype: 5, ispass: 1 },
     { studentprogressid: uid("f1", 2), studentid: ST_Y1, studentprogressreferenceid: T_Y1.baseline, progresstype: 5, ispass: 1 },
+  ]);
+  // Progress per level and lesson. X's learner 1 has none on X's level and lesson; Y's learner 1 has some on X's own.
+  put(studentlevelsprogress, [
+    { studentlevelprogressid: uid("f2", 1), studentid: ST_X2, levelid: T_X1.level, points: 10 },
+    { studentlevelprogressid: uid("f2", 2), studentid: ST_Y1, levelid: T_Y1.level, points: 20 },
+    { studentlevelprogressid: uid("f2", 3), studentid: ST_Y1, levelid: T_X1.level, points: 30 },
+  ]);
+  put(studentlessonsprogress, [
+    { studentlessonprogressid: uid("f3", 1), studentid: ST_X2, lessonid: T_X1.lesson, points: 10 },
+    { studentlessonprogressid: uid("f3", 2), studentid: ST_Y1, lessonid: T_Y1.lesson, points: 20 },
+    { studentlessonprogressid: uid("f3", 3), studentid: ST_Y1, lessonid: T_X1.lesson, points: 30 },
   ]);
   // each baseline is for its own organisation's school
   for (const [tree, school] of [[T_X1, SCH_X], [T_Y1, SCH_Y], [T_L, SCH_L], [T_L2, SCH_L2]] as Array<[Tree, string]>) {
@@ -593,6 +609,9 @@ interface ContentCase {
   body?: unknown;
   /** A write route: what its allowed call must do. */
   writes?: string;
+  /** For a route with no marker of its own: the stub that is handed the container id, or the model whose read must name it. */
+  idArg?: string;
+  idRead?: string;
 }
 const NOW = new Date().toISOString();
 const RESULT_BODY = { result: [], starttime: NOW, endtime: NOW };
@@ -605,7 +624,14 @@ const runContent = async (c: ContentCase) => {
   const legacy = c.pick(T_L);
   const notEnrolled = c.pick(T_X2);
   const call = (auth: Auth, id: string) => send(c.method, c.path(id), auth, c.body);
-  const asked = (id: string) => (c.ran ? stubLog.some((m) => m.ran === c.ran && m.args.includes(id)) : true);
+  const asked = (id: string) =>
+    c.ran
+      ? stubLog.some((m) => m.ran === c.ran && m.args.includes(id))
+      : c.idArg
+      ? stubLog.some((m) => m.ran === c.idArg && m.args.includes(id))
+      : c.idRead
+      ? reads.some((r) => r.model === c.idRead && JSON.stringify(r.options?.where ?? {}).toLowerCase().includes(id.toLowerCase()))
+      : false;
 
   // own content answers, and is what was asked for
   reset();
@@ -688,18 +714,22 @@ describe("content routes: another organisation's content is absent, and a refuse
     "POST /result/lesson/practice/:lessonpracticeid": content("post", (id) => `/result/lesson/practice/${id}`, (t) => t.practice, undefined, {
       body: RESULT_BODY,
       writes: "ResultBusiness.updatePracticePoints",
+      idArg: "LessonBusiness.getlessonpractice",
     }),
     "POST /result/lesson/quiz/:lessonquizid": content("post", (id) => `/result/lesson/quiz/${id}`, (t) => t.quiz, undefined, {
       body: RESULT_BODY,
       writes: "ResultBusiness.updateQuizPoints",
+      idArg: "LessonBusiness.getlessonquiz",
     }),
     "POST /result/level/quiz/:levelid": content("post", (id) => `/result/level/quiz/${id}`, (t) => t.level, undefined, {
       body: RESULT_BODY,
       writes: "ResultBusiness.updateLevelQuizPoints",
+      idArg: "LessonBusiness.getlevelquiz",
     }),
     "POST /result/baseline/question/:curriculumbaselineid": content("post", (id) => `/result/baseline/question/${id}`, (t) => t.baseline, undefined, {
       body: RESULT_BODY,
       writes: "ResultBusiness.createbaselinequestionprogress",
+      idRead: "baselinequestion",
     }),
   } as Record<string, ContentCase>;
 
@@ -996,7 +1026,7 @@ describe("list routes: the scope is the token's, and what the query names can on
     check("X learner's own record has the new image", row(ST_X1).profileimage === "me.png");
     check("no other learner's record changed", [ST_X2, ST_Y1, ST_Y2, ST_Y3, ST_L1].every((id) => row(id).profileimage === null));
     r = await send("post", "/student/profile", X_TEACHER, { filename: "t.png" });
-    check(`X teacher (no learner record) -> ${r.status} (wanted an error, nothing written)`, r.status >= 400);
+    check(`X teacher (no learner record) -> ${r.status} (wanted 400, nothing written)`, r.status === 400);
     check("no learner record changed for the teacher", [ST_X2, ST_Y1].every((id) => row(id).profileimage === null) && row(ST_X1).profileimage === "me.png");
     for (const [name, auth] of REFUSED_TOKENS) {
       const before2 = snapshot();
@@ -1431,6 +1461,21 @@ describe("report-style routes: the scope is X's header (central), or the token's
       check(`[${key}] server key + X's header, Y's ${key}: read ${JSON.stringify([...r.seen])} (wanted no learner of Y)`, r.seen.size === 0);
       r = await run(SERVER_X, bodyOf(key, key === "studentid" ? [ST_X1, ST_Y1] : [OWN[key].value, OTHER[key].value as string]));
       check(`[${key}] server key + X's header, both X's and Y's ${key}: read ${JSON.stringify([...r.seen])} (wanted X's learners only)`, r.status === 200 && subset(r.seen, X_LEARNERS));
+      if (key === "studentid" || key === "standard") {
+        // a report is about one learner or one class: a filter that names one of Y's is outside the scope, whole (the empty answer)
+        check(`[${key}] server key + X's header, X's and Y's ${key} together: read ${JSON.stringify([...r.seen])} (wanted nothing)`, r.seen.size === 0);
+      }
+      if (key === "studentid") {
+        for (const odd of [42, { x: 1 }, [ST_X1], [ST_X1, ST_X1]]) {
+          r = await run(SERVER_X, bodyOf(key, odd as never));
+          check(`[${key}] server key + X's header, studentid ${JSON.stringify(odd)} (not one text): read ${JSON.stringify([...r.seen])} (wanted nothing)`, r.status === 200 && r.seen.size === 0);
+          r = await run(X_TEACHER, bodyOf(key, odd as never));
+          check(`[${key}] X teacher, studentid ${JSON.stringify(odd)} (not one text): read ${JSON.stringify([...r.seen])} (wanted nothing)`, r.status === 200 && r.seen.size === 0);
+        }
+        // another school's learner is outside a teacher's scope
+        r = await run(X_TEACHER, bodyOf(key, ST_Y1));
+        check(`[${key}] X teacher, Y's learner: read ${JSON.stringify([...r.seen])} (wanted nothing)`, r.status === 200 && r.seen.size === 0);
+      }
       r = await run(SERVER_PLATFORM, other);
       check(`[${key}] server key + header platform, Y's ${key}: read ${JSON.stringify([...r.seen])} (pinned: unscoped, so Y's learners)`, r.status === 200 && r.seen.size > 0 && subset(r.seen, OTHER[key].learners));
       r = await run(SERVER_NOHEADER, other);
@@ -1851,5 +1896,58 @@ describe("a classroom Pi whose school has no organisation yet keeps working, one
     const foreign = await send("get", `/Lesson/level/${T_L.level}`, X_LEARNER);
     check(`Pi, X learner: own -> ${own.status}, an unowned school's level -> ${foreign.status} (wanted 200, 404)`, own.status === 200 && foreign.status === 404);
     expect(failures).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// progress reads are for the learner the report resolved
+// ---------------------------------------------------------------------------------------------------------
+describe("progress reads carry the resolved learner's id", () => {
+  const scopeX = { organisationid: ORG_X, schoolids: [SCH_X] };
+  const listOf = (key: string, value: unknown) => ({ pageindex: 1, pagesize: 50, filter: [{ key, value: value as string }] });
+  const progressReads = (table: string) => reads.filter((r) => r.model === table && r.method === "findOne").map((r) => r.options?.where?.studentid);
+
+  // The scope check is set aside here so that the reads after the lookup are seen on their own.
+  const cases: Array<[string, "getStudentLevelProgress" | "getStudentLessonProgress", string]> = [
+    ["POST /report/student-level-progress", "getStudentLevelProgress", "studentlevelsprogress"],
+    ["POST /report/student-lesson-progress", "getStudentLessonProgress", "studentlessonsprogress"],
+  ];
+  it.each(cases)("%s (business, scope check set aside): progress is read for the resolved learner only, and no other learner's row comes back", async (_route, method, table) => {
+    jest.spyOn(reportScope, "contentFiltersInScope").mockResolvedValue(true);
+    reset();
+    const answer = await new ReportBusiness()[method](listOf("studentid", [ST_X1, ST_Y1]), scopeX);
+    const asked = progressReads(table);
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((id) => id === ST_X1)).toBe(true);
+    expect(JSON.stringify(answer.rows)).not.toContain(ST_Y1);
+    expect([...seen].every((id) => id === ST_X1)).toBe(true);
+  });
+
+  it.each(cases)("%s (business, scope check set aside): another school's learner named alone is nobody's", async (_route, method, table) => {
+    jest.spyOn(reportScope, "contentFiltersInScope").mockResolvedValue(true);
+    reset();
+    const answer = await new ReportBusiness()[method](listOf("studentid", ST_Y1), scopeX);
+    expect(answer.rows).toEqual([]);
+    expect(progressReads(table)).toEqual([]);
+  });
+
+  it("POST /report/studentprogress (business, scope check set aside): the lesson-progress join of the scores report carries the resolved learner's id", async () => {
+    jest.spyOn(reportScope, "contentFiltersInScope").mockResolvedValue(true);
+    reset();
+    await new ReportBusiness().getStudentsScoresData(listOf("studentid", [ST_X1, ST_Y1]), false, scopeX);
+    const joins = reads.filter((r) => r.model === "lessons" && r.method === "findAndCountAll").flatMap((r) => (r.options?.include ?? []).map((i: { where?: { studentid?: unknown } }) => i.where?.studentid));
+    expect(joins.filter((id: unknown) => id !== undefined)).toEqual([ST_X1]);
+  });
+
+  it("the id the lookup asked for in addition is not added to the learner in the answer", () => {
+    const row = students.build({ studentid: ST_X1, studentfirstname: "A" } as never);
+    const where: Row = { studentid: [ST_X1, ST_Y1] };
+    pinStudent(where, row, true);
+    expect(where.studentid).toBe(ST_X1);
+    expect(JSON.parse(JSON.stringify(row))).not.toHaveProperty("studentid");
+    expect(JSON.parse(JSON.stringify(row)).studentfirstname).toBe("A");
+    const kept = students.build({ studentid: ST_X1, studentfirstname: "A" } as never);
+    pinStudent({}, kept);
+    expect(JSON.parse(JSON.stringify(kept)).studentid).toBe(ST_X1);
   });
 });

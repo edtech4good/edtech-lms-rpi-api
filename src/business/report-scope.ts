@@ -3,6 +3,7 @@ import { ApiError } from "src/models/ApiError";
 import { organisations } from "src/models/data-models/organisations";
 import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
+import { students } from "src/models/data-models/students";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { IMultiFilter } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
@@ -110,7 +111,7 @@ const FILTER_KINDS: Record<string, ContentKind> = {
 
 /**
  * Do the content ids a report body names (curriculum, grade, level, lesson) all belong to curricula in the
- * scope, and the classes it names to schools in the scope? A report shows the names of the content it is asked about, so one outside the scope must not be asked
+ * scope, the classes it names to schools in the scope, and the learner it names (one, as text) to a learner of the scope? A report shows the names of the content it is asked about, so one outside the scope must not be asked
  * about. Blank values name nothing (the reports ignore them) and are skipped. Unscoped: always yes.
  */
 export async function contentFiltersInScope(scope: ReportScope | null | undefined, filters: IMultiFilter[] | undefined): Promise<boolean> {
@@ -128,6 +129,28 @@ export async function contentFiltersInScope(scope: ReportScope | null | undefine
         const found = await standards.findAll({ where: { standardid: { [Op.in]: named as string[] } }, attributes: ["standardid", "schoolid"], raw: true });
         const mine = new Set(scope.schoolids.map((id) => id.toLowerCase()));
         if (found.some((c) => !mine.has(String((c as unknown as { schoolid: string }).schoolid).toLowerCase()))) {
+          return false;
+        }
+      }
+      continue;
+    }
+    if (filter && filter.key === "studentid" && filter.value) {
+      // a report is about one learner: the filter must name one, as text, in the scope
+      // (a learner that is not there names nothing, and reveals nothing)
+      if (typeof filter.value !== "string") {
+        return false;
+      }
+      const learner = (await students.scope("withOwnership").findOne({
+        where: { studentid: filter.value },
+        attributes: ["studentid", "schoolid", "schooluserid"],
+        raw: true,
+      })) as unknown as { schoolid: string | null; schooluserid: string } | null;
+      if (learner) {
+        const mine = new Set(scope.schoolids.map((id) => id.toLowerCase()));
+        if (!learner.schoolid || !mine.has(String(learner.schoolid).toLowerCase())) {
+          return false;
+        }
+        if (scope.schooluserid !== undefined && String(learner.schooluserid).toLowerCase() !== scope.schooluserid.toLowerCase()) {
           return false;
         }
       }
