@@ -25,7 +25,7 @@ const SCHOOL = "5c000000-0000-4000-8000-0000000000a1";
 const UNOWNED = "5c000000-0000-4000-8000-0000000000c3";
 
 let orgs: Record<string, { organisationstatus: boolean; isdeleted: boolean }>;
-let schoolRows: Record<string, { schoolid: string; organisationid: string | null }>;
+let schoolRows: Record<string, { schoolid: string; organisationid: string | null; isdeleted?: boolean }>;
 let schoolByName: Record<string, string>;
 
 beforeAll(() => {
@@ -115,6 +115,11 @@ describe("JwtAccessStrategy: a token must prove its school and organisation", ()
 
   it("refuses a token whose school now belongs to another organisation (the school moved since sign-in)", async () => {
     schoolRows[SCHOOL].organisationid = OTHER_ORG;
+    await refused({ schoolid: SCHOOL, organisationid: ORG });
+  });
+
+  it("refuses a token whose school is soft-deleted (as it refuses a deleted organisation)", async () => {
+    schoolRows[SCHOOL].isdeleted = true;
     await refused({ schoolid: SCHOOL, organisationid: ORG });
   });
 

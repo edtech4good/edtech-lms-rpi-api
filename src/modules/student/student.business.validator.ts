@@ -7,7 +7,9 @@ export const StudentExist = async (
   request: IRequest,
   data: any
 ): Promise<Array<ValidationError | null | undefined>> => {
-  const studentexists = await new StudentBusiness().studentExists(request.user.studentid);
+  // a token with no learner record of its own (staff) has no profile to update
+  const studentid = request.user?.studentid;
+  const studentexists = typeof studentid === "string" && studentid.length > 0 && (await new StudentBusiness().studentExists(studentid));
   if (!studentexists) {
     const error = new ValidationError("Validation", {}, {});
     error.details = [];

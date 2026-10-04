@@ -36,7 +36,7 @@ import { SyncReport } from 'src/business/sync.report';
 )
 export class ExportController {
   @Get("log")
-  @OrgPolicy("teacher", { note: "Whole-server pull (not scoped by organisation yet)." })
+  @OrgPolicy("teacher", { note: "Organisation scoping in a later step." })
   @HttpCode(HttpStatus.OK)
   async exportlog(
     @Response({ passthrough: true }) res: any,
@@ -66,7 +66,7 @@ export class ExportController {
   }
 
   @Get("system-log/files")
-  @OrgPolicy("teacher", { note: "Server log files (not scoped by organisation yet)." })
+  @OrgPolicy("teacher", { note: "Organisation scoping in a later step." })
   @HttpCode(HttpStatus.OK)
   async exportfiles(
     @Response({ passthrough: true }) res: any,
@@ -93,7 +93,7 @@ export class ExportController {
   }
 
   @Get("report-data")
-  @OrgPolicy("teacher", { note: "Whole-server report pull (not scoped by organisation yet)." })
+  @OrgPolicy("teacher", { note: "Organisation scoping in a later step." })
   @ApiResponse({
     status: 200,
     description: "Sync exported sucesfully",

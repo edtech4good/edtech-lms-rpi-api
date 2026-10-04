@@ -15,7 +15,7 @@ import { findSchoolIdByName, isGiven } from "./school-identity";
  *  - either claim is missing or null (a token from before the claims existed, or a
  *    sign-in that could not resolve a school or an organisation);
  *  - the organisation is not here, is suspended or is deleted;
- *  - the school is not here, or is no longer the organisation's.
+ *  - the school is not here, is deleted, or is no longer the organisation's.
  *
  * The one exception is a classroom Pi (`RPI_OFFLINE`) whose own school has no
  * organisation yet (the window between a code update and the first format-3 zip).
@@ -115,10 +115,11 @@ export async function checkTokenClaims(claims: TokenClaims): Promise<void> {
   }
 
   const school = await schools.scope("withOwnership").findOne({
-    attributes: ["schoolid", "organisationid"],
+    attributes: ["schoolid", "organisationid", "isdeleted"],
     where: { schoolid: schoolid.trim() },
   });
-  if (!school || !school.organisationid || school.organisationid.toLowerCase() !== organisationid.trim().toLowerCase()) {
+  // a school that is soft-deleted is gone, like an organisation that is deleted
+  if (!school || school.isdeleted || !school.organisationid || school.organisationid.toLowerCase() !== organisationid.trim().toLowerCase()) {
     return refuse();
   }
 }
