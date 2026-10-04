@@ -102,8 +102,10 @@ import { studenttrash } from "./studenttrash";
 import { baselinequestion } from "./baselinequestion";
 import { lessonplans } from "./lessonplan";
 import { subjects } from "./subjects";
+import { organisations } from "./organisations";
 
 export {
+  organisations,
   baselinequestion,
   curriculumbaseline,
   curriculums,
@@ -206,6 +208,31 @@ export function initModels(sequelize: Sequelize) {
   baselinequestion.initModel(sequelize);
   lessonplans.initModel(sequelize);
   subjects.initModel(sequelize);
+  organisations.initModel(sequelize);
+
+  // Ownership links (organisations package, step 5a). Added ALONGSIDE the
+  // existing by-name join (`students.belongsTo(schools, { foreignKey: "schoolname" })`
+  // in setuprelationshipforreport), which keeps its default alias `school`;
+  // nothing reads these yet. The aliases are distinct so the two cannot replace
+  // one another.
+  students.belongsTo(schools, {
+    as: "schoolbyid",
+    foreignKey: "schoolid",
+    targetKey: "schoolid",
+    constraints: false,
+  });
+  schoolusers.belongsTo(schools, {
+    as: "schoolbyid",
+    foreignKey: "schoolid",
+    targetKey: "schoolid",
+    constraints: false,
+  });
+  schools.belongsTo(organisations, {
+    as: "organisation",
+    foreignKey: "organisationid",
+    targetKey: "organisationid",
+    constraints: false,
+  });
 
   grades.belongsTo(curriculums, {
     as: "curriculum",

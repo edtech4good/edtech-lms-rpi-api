@@ -41,12 +41,18 @@ export class AuthBusiness {
     const schooluser = await new StudentBusiness().getstudentbyschooluserid(
       user.schooluserid
     );
-    const schoolTheme = await new SchoolBusiness().getTheme(user.schoolname);
+    // const studenttype = Config.fortyk.api.rpi.offline ? 'offline' : 'online';
+    // Only reached after a correct password, so this can safely say more
+    // than LOGIN_FAILED without leaking account existence to a guesser.
+    if (schooluser && !schooluser.isactive) throw new ApiError(ErrorCode.NOT_ALLOWED, { message: "This account has been removed." });
+    // The school the login belongs to (by name, as before; by the stored id only
+    // when the name finds none) and that school's organisation, for the JWT claims. Either may be
+    // null; nothing is refused on them here.
+    const schoolBusiness = new SchoolBusiness();
+    const schoolTheme = await schoolBusiness.getTheme(user.schoolname, () =>
+      schoolBusiness.getLinkedSchoolId(user.schooluserid)
+    );
     if (schooluser) {
-      // const studenttype = Config.fortyk.api.rpi.offline ? 'offline' : 'online';
-      // Only reached after a correct password, so this can safely say more
-      // than LOGIN_FAILED without leaking account existence to a guesser.
-      if(!schooluser.isactive) throw new ApiError(ErrorCode.NOT_ALLOWED, { message: "This account has been removed." });
       // if(schooluser.type !== 'all' && schooluser.type !== studenttype) throw new BadRequestException("User/Password not matching");
       schooluser.schooluser = user;
       // The students row's schoolname can be null (demo seed, and any student

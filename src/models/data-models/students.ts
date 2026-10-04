@@ -5,6 +5,7 @@ import type { grades, gradesId } from "./grades";
 import type { lessons, lessonsId } from "./lessons";
 import type { levels, levelsId } from "./levels";
 import { schools } from "./school";
+import { ownershipDefaultScope } from "./ownership-scope";
 import type { schoolusers, schoolusersId } from "./schoolusers";
 import { standards } from "./standards";
 import { studentprogress } from "./studentprogress";
@@ -31,6 +32,9 @@ export interface studentsAttributes {
   standard?: string;
   schooltype?: string;
   schoolname?: string;
+  // The school by id (NULL until backfilled or written by a roster import that carries it).
+  // Left out of every query by default: see ownership-scope.ts.
+  schoolid?: string | null;
   city: string;
   country: string;
   state: string;
@@ -73,7 +77,7 @@ export interface studentsAttributes {
 
   // Runtime-only, attached by AuthBusiness.login for JWT claim generation —
   // not a column, never persisted.
-  schoolTheme?: { uitheme: string; schoolid: string | null };
+  schoolTheme?: { uitheme: string; schoolid: string | null; organisationid?: string | null };
 }
 
 export type studentsPk = "studentid";
@@ -97,6 +101,7 @@ export type studentsOptionalAttributes =
   | "standard"
   | "schooltype"
   | "schoolname"
+  | "schoolid"
   | "dateofjoin"
   | "gradeid"
   | "startinglevelid"
@@ -132,6 +137,7 @@ export class students
   standard?: string;
   schooltype?: string;
   schoolname?: string;
+  schoolid?: string | null;
   city!: string;
   country!: string;
   state!: string;
@@ -276,6 +282,13 @@ export class students
           type: DataTypes.STRING(250),
           allowNull: true,
         },
+        // No `references`: the migration owns the foreign key (it reads the
+        // real column collation; the model and the table can differ).
+        schoolid: {
+          type: DataTypes.STRING(36),
+          allowNull: true,
+          defaultValue: null,
+        },
         city: {
           type: DataTypes.STRING(250),
           allowNull: false,
@@ -371,6 +384,8 @@ export class students
         sequelize,
         tableName: "students",
         timestamps: false,
+        defaultScope: ownershipDefaultScope("schoolid"),
+        scopes: { withOwnership: {} },
         indexes: [
           {
             name: "PRIMARY",

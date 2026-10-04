@@ -3,6 +3,7 @@ import * as Sequelize from "sequelize";
 import { DataTypes, Model, Optional } from "sequelize";
 import type { grades, gradesId } from "./grades";
 import type { students, studentsId } from "./students";
+import { ownershipDefaultScope } from "./ownership-scope";
 
 export interface curriculumsAttributes {
   curriculumid: string;
@@ -11,6 +12,7 @@ export interface curriculumsAttributes {
   curriculumdescription?: string;
   subjectid?: string;
   isdeleted?: boolean;
+  organisationid?: string | null;
 }
 
 export type curriculumsPk = "curriculumid";
@@ -30,6 +32,7 @@ export class curriculums
   curriculumdescription?: string;
   isdeleted!: boolean;
   subjectid?: string;
+  organisationid!: string | null;
 
   // curriculums hasMany grades via curriculumid
   grades!: grades[];
@@ -89,11 +92,19 @@ export class curriculums
           type: DataTypes.STRING(36),
           allowNull: true,
         },
+        // See ownership-scope.ts; no `references` (the migration owns the key).
+        organisationid: {
+          type: DataTypes.STRING(36),
+          allowNull: true,
+          defaultValue: null,
+        },
       },
       {
         sequelize,
         tableName: "curriculums",
         timestamps: false,
+        defaultScope: ownershipDefaultScope('organisationid'),
+        scopes: { withOwnership: {} },
         indexes: [
           {
             name: "PRIMARY",

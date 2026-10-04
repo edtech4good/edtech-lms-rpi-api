@@ -30,4 +30,7 @@ export interface Token {
   curriculumids?: Array<string>;
   uitheme?: string;
   schoolid?: string | null;
+  // The school's organisation, null when the school has none (or cannot be
+  // resolved). Carried in the token only: nothing refuses on it yet.
+  organisationid?: string | null;
 }

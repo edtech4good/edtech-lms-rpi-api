@@ -1,6 +1,7 @@
 /* eslint-disable camelcase */
 import * as Sequelize from "sequelize";
 import { DataTypes, Model, Optional } from "sequelize";
+import { ownershipDefaultScope } from "./ownership-scope";
 
 export interface subjectsAttributes {
   subjectid: string;
@@ -8,6 +9,7 @@ export interface subjectsAttributes {
   subjectstatus?: boolean;
   subjectdescription?: string;
   isdeleted?: boolean;
+  organisationid?: string | null;
 }
 
 export type subjectsPk = "subjectid";
@@ -26,6 +28,7 @@ export class subjects
   subjectstatus!: boolean;
   subjectdescription?: string;
   isdeleted!: boolean;
+  organisationid!: string | null;
 
   static initModel(sequelize: Sequelize.Sequelize): typeof subjects {
     subjects.init(
@@ -53,11 +56,19 @@ export class subjects
           allowNull: false,
           defaultValue: 0,
         },
+        // See ownership-scope.ts; no `references` (the migration owns the key).
+        organisationid: {
+          type: DataTypes.STRING(36),
+          allowNull: true,
+          defaultValue: null,
+        },
       },
       {
         sequelize,
         tableName: "subjects",
         timestamps: false,
+        defaultScope: ownershipDefaultScope('organisationid'),
+        scopes: { withOwnership: {} },
         indexes: [
           {
             name: "PRIMARY",

@@ -2,6 +2,7 @@
 import * as Sequelize from 'sequelize';
 import { DataTypes, Model, Optional } from 'sequelize';
 import { countries, countriesId } from './countries';
+import { ownershipDefaultScope } from './ownership-scope';
 
 export interface schoolsAttributes {
   schoolid: string;
@@ -13,11 +14,12 @@ export interface schoolsAttributes {
   isdeleted?: Boolean;
   uitheme?: string;
   brandingconfig?: object | null;
+  organisationid?: string | null;
 }
 
 export type schoolsPk = "schoolid";
 export type schoolsId = schools[schoolsPk];
-export type schoolsOptionalAttributes = "schoolid" | "isdeleted" | "uitheme" | "brandingconfig";
+export type schoolsOptionalAttributes = "schoolid" | "isdeleted" | "uitheme" | "brandingconfig" | "organisationid";
 export type schoolsCreationAttributes = Optional<schoolsAttributes, schoolsOptionalAttributes>;
 
 export class schools extends Model<schoolsAttributes, schoolsCreationAttributes> implements schoolsAttributes {
@@ -30,6 +32,7 @@ export class schools extends Model<schoolsAttributes, schoolsCreationAttributes>
   isdeleted!: Boolean;
   uitheme!: string;
   brandingconfig!: object | null;
+  organisationid!: string | null;
 
   // grades belongsTo curriculums via curriculumid
   countries!: countries;
@@ -86,10 +89,19 @@ export class schools extends Model<schoolsAttributes, schoolsCreationAttributes>
         allowNull: true,
         defaultValue: null
       },
+      // No `references` here: the foreign key is owned by the migration, which
+      // reads the real column collation (the model and the table can differ).
+      organisationid: {
+        type: DataTypes.STRING(36),
+        allowNull: true,
+        defaultValue: null
+      },
     }, {
       sequelize,
       tableName: 'schools',
       timestamps: false,
+      defaultScope: ownershipDefaultScope('organisationid'),
+      scopes: { withOwnership: {} },
       indexes: [
         {
           name: "PRIMARY",
