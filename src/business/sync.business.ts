@@ -332,8 +332,8 @@ export class SyncBusiness {
    *  2. A school the payload carries under a DIFFERENT id than this server had for
    *     it (matched by name) takes over the learners and school logins of the old
    *     id, so `students.schoolid` and `schoolusers.schoolid` still name a school
-   *     that exists. A school whose id did not change needs nothing: the learners
-   *     keep pointing at it.
+   *     that exists, and its owner (unless the payload gave it one). A school whose
+   *     id did not change needs nothing: the learners keep pointing at it.
    */
   restoreOwnership = async () => {
     for (let i = 0; i < OWNED_BY_ORGANISATION.length; i += 1) {
@@ -368,6 +368,13 @@ export class SyncBusiness {
         await (model as typeof students).update(
           { schoolid: sameName[0].schoolid },
           { where: { schoolid: before.schoolid }, transaction: this._transaction },
+        );
+      }
+      const owner = this._owners[0]?.get(before.schoolid);
+      if (owner) {
+        await schools.update(
+          { organisationid: owner },
+          { where: { schoolid: sameName[0].schoolid, organisationid: null }, transaction: this._transaction },
         );
       }
     }

@@ -208,7 +208,7 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
     expect(Object.values(owners(store.schools, "schoolid"))).toEqual([null, null, null]);
   });
 
-  it("a school the payload carries under a new id takes over the learners and logins of the old id, matched by name", async () => {
+  it("a school the payload carries under a new id takes over the learners, logins and owner of the old id, matched by name", async () => {
     install(before());
     const snapshot = cloneDeep(store);
     mockZipContaining(
@@ -232,6 +232,16 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
     ]);
     // names are never rewritten
     expect(store.students.map((r) => r.schoolname)).toEqual(snapshot.students.map((r) => r.schoolname));
+    // the school under its new id has the owner of the old one; School A is unchanged
+    expect(owners(store.schools, "schoolid")).toEqual({ [S(1)]: ORG_A, [S(22)]: ORG_B });
+  });
+
+  it("a school under a new id keeps the owner the payload gave it, not the old one", async () => {
+    install(before());
+    mockZipContaining(payload({ schools: [{ schoolid: S(1), schoolname: "School A" }, { schoolid: S(22), schoolname: "School B", organisationid: ORG_C }] }));
+    await new ImportController().completesync(file, user);
+    expect(owners(store.schools, "schoolid")).toEqual({ [S(1)]: ORG_A, [S(22)]: ORG_C });
+    expect(store.students.find((r) => r.studentid === "s2")?.schoolid).toBe(S(22));
   });
 
   it("a school id that did not change touches no learner at all", async () => {
