@@ -17,6 +17,7 @@ import {
   levels,
   questions,
   rpiuseraccess,
+  schoolusers,
   studentactives,
   studentgradesprogress,
   studentlearningprogress,
@@ -34,9 +35,24 @@ import { SchoolUserBusiness } from "./schooluser.business";
 import { baselinequestion } from "src/models/data-models/baselinequestion";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import { subjects } from "src/models/data-models/subjects";
+import { isSameSchoolName } from "./school-identity";
+
+/** The tables whose rows have an owning organisation and are wiped and re-created by a master import. */
+const OWNED_BY_ORGANISATION = [
+  { model: schools, pk: "schoolid" },
+  { model: questions, pk: "questionid" },
+  { model: documents, pk: "documentid" },
+  { model: subjects, pk: "subjectid" },
+] as const;
+
+const OWNER_CHUNK = 1000;
 
 export class SyncBusiness {
   private _transaction: Transaction;
+  // What `cleanup()` saw before it wiped the tables: each owned row's organisation
+  // (by table, then row id), and each school's id and name.
+  private _owners: Array<Map<string, string>> = [];
+  private _schoolsBefore: Array<{ schoolid: string; schoolname: string }> = [];
   constructor(transaction: Transaction) {
     this._transaction = transaction;
   }
@@ -281,7 +297,84 @@ export class SyncBusiness {
       ],
     });
 
+  /**
+   * Called once, before `cleanup()` wipes the tables: remembers which organisation
+   * owned each school, question, document and subject, and each school's id and
+   * name, so `restoreOwnership()` can put them back. Without this a master import
+   * (which deletes and re-creates those rows) would leave every one of them with
+   * no owner.
+   */
+  private rememberOwnership = async () => {
+    this._owners = [];
+    for (const { model, pk } of OWNED_BY_ORGANISATION) {
+      const rows = (await (model as typeof schools).scope("withOwnership").findAll({
+        attributes: [pk, "organisationid"],
+        where: { organisationid: { [Op.ne]: null } },
+        transaction: this._transaction,
+        raw: true,
+      })) as unknown as Array<Record<string, string>>;
+      this._owners.push(new Map(rows.map((r) => [r[pk], r.organisationid])));
+    }
+    const before = await schools.findAll({
+      attributes: ["schoolid", "schoolname"],
+      transaction: this._transaction,
+      raw: true,
+    });
+    this._schoolsBefore = before.map((r) => ({ schoolid: r.schoolid, schoolname: r.schoolname }));
+  };
+
+  /**
+   * Called once, after the content tables are re-created from the payload.
+   *
+   *  1. An owner a row had before the import is put back on the row with the same
+   *     id, unless the payload itself gave the row an owner. (Content ids are
+   *     central's, so they are the same across imports.)
+   *  2. A school the payload carries under a DIFFERENT id than this server had for
+   *     it (matched by name) takes over the learners and school logins of the old
+   *     id, so `students.schoolid` and `schoolusers.schoolid` still name a school
+   *     that exists. A school whose id did not change needs nothing: the learners
+   *     keep pointing at it.
+   */
+  restoreOwnership = async () => {
+    for (let i = 0; i < OWNED_BY_ORGANISATION.length; i += 1) {
+      const { model, pk } = OWNED_BY_ORGANISATION[i];
+      const byOwner = new Map<string, string[]>();
+      for (const [id, organisationid] of this._owners[i] ?? []) {
+        byOwner.set(organisationid, [...(byOwner.get(organisationid) ?? []), id]);
+      }
+      for (const [organisationid, ids] of byOwner) {
+        for (let start = 0; start < ids.length; start += OWNER_CHUNK) {
+          await (model as typeof schools).update(
+            { organisationid },
+            {
+              where: { [pk]: { [Op.in]: ids.slice(start, start + OWNER_CHUNK) }, organisationid: null },
+              transaction: this._transaction,
+            },
+          );
+        }
+      }
+    }
+    const current = await schools.findAll({ attributes: ["schoolid", "schoolname"], transaction: this._transaction });
+    const currentIds = new Set(current.map((c) => c.schoolid));
+    for (const before of this._schoolsBefore) {
+      if (currentIds.has(before.schoolid)) {
+        continue;
+      }
+      const sameName = current.filter((c) => isSameSchoolName(c.schoolname, before.schoolname));
+      if (sameName.length !== 1) {
+        continue;
+      }
+      for (const model of [students, schoolusers]) {
+        await (model as typeof students).update(
+          { schoolid: sameName[0].schoolid },
+          { where: { schoolid: before.schoolid }, transaction: this._transaction },
+        );
+      }
+    }
+  };
+
   cleanup = async () => {
+    await this.rememberOwnership();
     await lessonquizquestions.destroy({
       where: {},
       transaction: this._transaction,
