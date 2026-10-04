@@ -9,7 +9,7 @@ import { studenttrash } from "src/models/data-models/studenttrash";
 import { COMPLETED_PERCENTAGE } from "src/models/enums/constant.enum";
 import { Token } from "src/models/token.model";
 import { v4 as uuidv4 } from "uuid";
-import { resolveSchoolRef, studentsOfSchool } from "./school-identity";
+import { resolveSchoolScope, studentsOfSchool } from "./school-identity";
 
 export class GradeBusiness {
   getgradesbycurriculumid = async (curriculumid: string, user: Token) => {
@@ -151,8 +151,8 @@ export class GradeBusiness {
     return { gradesresult, total_points };
   };
 
-  // The school is a name (as ever) or an id; a name is resolved once. A school that
-  // is unknown matches no learner, so the class is not narrowed to a curriculum.
+  // The school is a name (as ever) or an id; a name is resolved once. A name no school
+  // has yet filters learners by the name, as it always did.
   getGradesWithFilter = async (gradename: string, curid: string, standardid: string, schoolname: unknown, schoolid?: unknown) => {
     const where: WhereOptions<gradesAttributes> = {
       isdeleted: false,
@@ -163,7 +163,7 @@ export class GradeBusiness {
     if(curid){
       where.curriculumid = curid;
     }
-    const school = standardid ? await resolveSchoolRef({ schoolid, schoolname }) : undefined;
+    const school = standardid ? await resolveSchoolScope({ schoolid, schoolname }) : undefined;
     if(standardid && school !== undefined) {
       const student = await students.findOne({
         where: {

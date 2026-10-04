@@ -14,7 +14,7 @@ import {
 } from "../models/data-models/init-models";
 import { CurriculumBusiness } from "./curriculum.business";
 import { GradeBusiness } from "./grade.business";
-import { resolveSchoolRef, studentsOfSchool, withImportSchoolIds } from "./school-identity";
+import { resolveSchoolScope, SchoolScope, studentsOfSchool, withImportSchoolIds } from "./school-identity";
 
 export interface StudentProgressSummaryCurrentLevel {
   levelid: string;
@@ -72,9 +72,9 @@ export class StudentBusiness {
     const student = await students.count({ where: { studentid } });
     return student > 0;
   };
-  getstudentbyschool = (schoolid: string | null | undefined) => {
+  getstudentbyschool = (school: SchoolScope) => {
     return students.findAll({
-      where: studentsOfSchool(schoolid),
+      where: studentsOfSchool(school),
     });
   };
   getstudentbyschooluserid = (schooluserid: string) => {
@@ -313,15 +313,15 @@ WHERE
     return;
   }
 
-  // The school filter is a name (as ever) or an id; a name is resolved once, and an
-  // unknown one matches no learners.
+  // The school filter is a name (as ever) or an id; a name is resolved once. A name no
+  // school has yet filters by the name, as it always did.
   getStudentsWithFilter = async (userid: string, schoolname: unknown, schoolid?: unknown) => {
     const where: WhereOptions<studentsAttributes> = {
       "$schooluser.schoolusername$": {
         [Op.like]: `%${userid.trim()}%`
       }
     };
-    const school = await resolveSchoolRef({ schoolid, schoolname });
+    const school = await resolveSchoolScope({ schoolid, schoolname });
     if(school !== undefined) Object.assign(where, studentsOfSchool(school));
 
     return await students.findAll(

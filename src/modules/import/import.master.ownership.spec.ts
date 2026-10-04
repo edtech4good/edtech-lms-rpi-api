@@ -9,6 +9,7 @@ import { standards } from "src/models/data-models/standards";
 import { subjects } from "src/models/data-models/subjects";
 import { schools } from "src/models/data-models/school";
 import { Token } from "src/models/token.model";
+import { Logger } from "src/config";
 import { dbinstance } from "src/services/dbservice";
 import { ImportController } from "./import.controller";
 
@@ -58,7 +59,18 @@ let store: Store;
 let events: string[];
 const tnx = { commit: jest.fn(), rollback: jest.fn() };
 
-const matches = (row: Row, where: Row): boolean =>
+// A `where(cast(col("schoolname"), "BINARY"), name)` carries the exact name as `logic`.
+const isNameWhere = (cond: unknown): cond is { logic: string } => typeof (cond as { logic?: unknown })?.logic === "string";
+
+const matches = (row: Row, where: Row): boolean => {
+  const and = (where as Record<symbol, unknown[]>)[Op.and as unknown as symbol];
+  if (and) {
+    return and.every((part) => (isNameWhere(part) ? row.schoolname === part.logic : matches(row, part as Row)));
+  }
+  return matchesColumns(row, where);
+};
+
+const matchesColumns = (row: Row, where: Row): boolean =>
   Object.entries(where).every(([key, cond]) => {
     if (cond === null) return row[key] === null || row[key] === undefined;
     if (cond && typeof cond === "object" && (cond as Record<symbol, unknown>)[Op.in as unknown as symbol]) {
@@ -99,9 +111,19 @@ const install = (initial: Store) => {
       findAll: async () => cloneDeep(rows().filter((r) => r.organisationid !== null && r.organisationid !== undefined)),
     } as never);
   }
-  // the school list the snapshot and the re-pointing read (plain, default scope)
-  jest.spyOn(schools, "findAll").mockImplementation((async () => cloneDeep(store.schools)) as never);
+  // the school list the snapshot and the re-pointing read (plain, default scope); a by-name
+  // narrowing (`TRIM(schoolname) = ?`) gets the schools the column collation calls equal.
+  jest.spyOn(schools, "findAll").mockImplementation((async (opts: { where?: { logic?: string } }) => {
+    const given = opts?.where?.logic;
+    const rows = typeof given === "string" ? store.schools.filter((r) => String(r.schoolname).trim().toLowerCase() === given.trim().toLowerCase()) : store.schools;
+    return cloneDeep(rows).map((r) => ({ isdeleted: false, ...r }));
+  }) as never);
   for (const model of [students, schoolusers]) {
+    // the distinct school names of the rows that have no school id (as the binary text, like the real query)
+    jest.spyOn(model, "findAll").mockImplementation((async () => {
+      const names = [...new Set(store[model === students ? "students" : "schoolusers"].filter((r) => !r.schoolid && r.schoolname).map((r) => String(r.schoolname)))];
+      return names.map((n) => ({ schoolname: Buffer.from(n, "utf8") }));
+    }) as never);
     jest.spyOn(model, "update").mockImplementation((async (values: Row, opts: { where: Row }) => {
       let n = 0;
       for (const r of store[model === students ? "students" : "schoolusers"]) if (matches(r, opts.where)) { Object.assign(r, values); n += 1; }
@@ -110,7 +132,13 @@ const install = (initial: Store) => {
   }
 };
 
+let logged: string[];
 beforeEach(() => {
+  logged = [];
+  jest.spyOn(Logger, "info").mockImplementation(((m: unknown) => {
+    logged.push(String(m));
+    return Logger;
+  }) as never);
   tnx.commit.mockResolvedValue(undefined);
   tnx.rollback.mockResolvedValue(undefined);
   jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
@@ -242,6 +270,65 @@ describe("PUT /import/master keeps the owner of every school and piece of conten
     await new ImportController().completesync(file, user);
     expect(owners(store.schools, "schoolid")).toEqual({ [S(1)]: ORG_A, [S(22)]: ORG_C });
     expect(store.students.find((r) => r.studentid === "s2")?.schoolid).toBe(S(22));
+  });
+
+  describe("a roster that arrived before its school", () => {
+    const early = (): Store => ({
+      ...before(),
+      students: [
+        { studentid: "n1", schoolname: "School New", schoolid: null },
+        { studentid: "n2", schoolname: "School New ", schoolid: null }, // same name with a trailing space
+        { studentid: "n3", schoolname: "School Unknown", schoolid: null },
+        { studentid: "n4", schoolname: "School Twin", schoolid: null },
+        { studentid: "s1", schoolname: "School A", schoolid: S(1) },
+      ],
+      schoolusers: [
+        { schooluserid: "nu1", schoolname: "School New", schoolid: null },
+        { schooluserid: "nu3", schoolname: "School Unknown", schoolid: null },
+        { schooluserid: "nu4", schoolname: "School Twin", schoolid: null },
+      ],
+    });
+    const withNewSchool = () =>
+      payload({
+        schools: [
+          { schoolid: S(1), schoolname: "School A" },
+          { schoolid: S(9), schoolname: "School New" },
+          { schoolid: S(11), schoolname: "School Twin" },
+          { schoolid: S(12), schoolname: "school twin" },
+        ],
+      });
+
+    it("learners and logins written with no school id get it when the master import brings their school", async () => {
+      install(early());
+      mockZipContaining(withNewSchool());
+      await new ImportController().completesync(file, user);
+      const ids = (rows: Row[], pk: string) => Object.fromEntries(rows.map((r) => [r[pk], r.schoolid]));
+      expect(ids(store.students, "studentid")).toMatchObject({ n1: S(9), n2: S(9), s1: S(1) });
+      expect(ids(store.schoolusers, "schooluserid")).toMatchObject({ nu1: S(9) });
+    });
+
+    it("a name that matches no school, or more than one, is left empty, counted, and not named in the log", async () => {
+      install(early());
+      mockZipContaining(withNewSchool());
+      await new ImportController().completesync(file, user);
+      const ids = (rows: Row[], pk: string) => Object.fromEntries(rows.map((r) => [r[pk], r.schoolid]));
+      expect(ids(store.students, "studentid")).toMatchObject({ n3: null, n4: null });
+      expect(ids(store.schoolusers, "schooluserid")).toMatchObject({ nu3: null, nu4: null });
+      const studentsLog = logged.find((l) => l.includes("students with no school id")) ?? "";
+      expect(studentsLog).toContain("2 filled");
+      expect(studentsLog).toContain("1 names skipped (not unique)");
+      expect(studentsLog).toContain("1 names skipped (no school of that name)");
+      expect(logged.find((l) => l.includes("schoolusers with no school id"))).toContain("1 filled");
+      expect(logged.join("\n")).not.toMatch(/School (New|Twin|Unknown)/);
+    });
+
+    it("rows that already have a school id are never touched by it", async () => {
+      install(before());
+      mockZipContaining(payload());
+      await new ImportController().completesync(file, user);
+      expect(students.update).not.toHaveBeenCalled();
+      expect(logged.some((l) => l.includes("with no school id"))).toBe(false);
+    });
   });
 
   it("a school id that did not change touches no learner at all", async () => {

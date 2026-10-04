@@ -125,38 +125,74 @@ export async function resolveSchoolRef(
 }
 
 /**
+ * The school a reader scopes its rows by. Normally an id. When the caller's
+ * school resolves to NO school row (a learner whose school has not reached this
+ * server yet: rosters arrive before the master sync that brings the schools), the
+ * reader uses the school NAME exactly as it did before ids existed, so the
+ * window behaves as it always did. When the name DOES resolve to a school, the
+ * id alone is used: never both (a name-or-id filter would merge two schools that
+ * share a name).
+ */
+export type SchoolScope = { schoolid: string } | { schoolname: string | null };
+
+/** What a token with no school at all matched before ids: learners whose name is the empty string. */
+export const NO_SCHOOL_NAME: SchoolScope = { schoolname: "" };
+
+/** The `where` for a scope, on `students` or `standards` (both carry `schoolid` and `schoolname`). */
+export const schoolPredicate = (scope: SchoolScope): WhereOptions =>
+  "schoolid" in scope ? { schoolid: scope.schoolid } : { schoolname: scope.schoolname };
+
+/**
+ * A school named by a request (query parameter, filter) as a scope:
+ *  - a `schoolid` given: that id, which wins when both are sent;
+ *  - else a `schoolname` given: the id of the school it names, or, when it names
+ *    no school, the name itself (the legacy predicate); ambiguous: 400;
+ *  - neither given (absent, blank, or not a string): `undefined`, no school filter.
+ */
+export async function resolveSchoolScope(
+  ref: { schoolid?: unknown; schoolname?: unknown },
+  options: FindByNameOptions = {},
+): Promise<SchoolScope | undefined> {
+  if (isGiven(ref.schoolid)) {
+    return { schoolid: ref.schoolid.trim() };
+  }
+  if (isGiven(ref.schoolname)) {
+    const schoolid = await findSchoolIdByName(ref.schoolname, options);
+    return schoolid ? { schoolid } : { schoolname: ref.schoolname };
+  }
+  return undefined;
+}
+
+/**
  * The school a learner or teacher token belongs to. A token issued since the id
  * claim carries `schoolid`, and that is used as it stands. An older token has
- * only `schoolname`, which is resolved to an id here. `undefined` when the token
- * names no school at all; `null` when its name matches none.
+ * only `schoolname`, which is resolved to an id here (or, if no school has it
+ * yet, used as the name). `undefined` when the token names no school at all.
  */
-export const schoolIdFromToken = (user: Pick<Token, "schoolid" | "schoolname"> | undefined): Promise<string | null | undefined> =>
-  resolveSchoolRef({ schoolid: user?.schoolid, schoolname: user?.schoolname });
+export const schoolScopeFromToken = (user: Pick<Token, "schoolid" | "schoolname"> | undefined): Promise<SchoolScope | undefined> =>
+  resolveSchoolScope({ schoolid: user?.schoolid, schoolname: user?.schoolname });
 
 /**
  * The school a school login belongs to, for a reader that has the login's id
  * and name but not a token: the school id stored on the login row, then on the
- * learner row; only when neither is filled is the login's name resolved.
+ * learner row; only when neither is filled is the login's name resolved (and,
+ * if no school has it yet, used as the name).
  */
-export async function schoolIdOfLogin(schooluserid: string, schoolname?: string | null): Promise<string | null> {
+export async function schoolScopeOfLogin(schooluserid: string, schoolname?: string | null): Promise<SchoolScope> {
   const login = await schoolusers.scope("withOwnership").findOne({ where: { schooluserid }, attributes: ["schoolid"] });
   if (login?.schoolid) {
-    return login.schoolid;
+    return { schoolid: login.schoolid };
   }
   const learner = await students.scope("withOwnership").findOne({ where: { schooluserid }, attributes: ["schoolid"] });
   if (learner?.schoolid) {
-    return learner.schoolid;
+    return { schoolid: learner.schoolid };
   }
-  return findSchoolIdByName(schoolname);
+  const schoolid = await findSchoolIdByName(schoolname);
+  return schoolid ? { schoolid } : { schoolname: schoolname ?? null };
 }
 
-/**
- * The `where` that limits `students` to one school by id. No school (an unknown
- * name, or a token with no school) matches NO rows, which is what filtering by a
- * name nobody has always did.
- */
-export const studentsOfSchool = (schoolid: string | null | undefined): WhereOptions =>
-  schoolid ? { schoolid } : { schoolid: { [Op.in]: [] } };
+/** The `where` that limits `students` to a school (see `SchoolScope`). */
+export const studentsOfSchool = (scope: SchoolScope): WhereOptions => schoolPredicate(scope);
 
 /**
  * The `where` that limits `schools` to the school a learner is in, by the

@@ -9,7 +9,7 @@ import { studentappusages } from "src/models/data-models/studentappusage";
 import { IMultiPaging } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
 import { buildCustomWhere } from "src/services/util.service";
-import { schoolIdFromToken, schoolIdOfLogin, studentsOfSchool } from "./school-identity";
+import { NO_SCHOOL_NAME, SchoolScope, schoolScopeFromToken, schoolScopeOfLogin, studentsOfSchool } from "./school-identity";
 import {
   curriculums,
   grades,
@@ -25,23 +25,23 @@ import {
 } from "../models/data-models/init-models";
 
 export class TeacherBusiness {
-  // The school is given as its id (`null`/`undefined`: no school, no rows). A
-  // caller holding a token resolves it with `schoolIdFromToken`.
-  getTeacherStandard = (schoolid: string | null | undefined) => {
+  // The school is given as a scope (its id, or its name while no school row has
+  // reached this server). A caller holding a token resolves it with `schoolScopeFromToken`.
+  getTeacherStandard = (school: SchoolScope) => {
     return students.findAll({
-      where: studentsOfSchool(schoolid),
+      where: studentsOfSchool(school),
       attributes: ["standard"],
       group: ["standard"],
     });
   };
-  getTeacherStudentsCount = (schoolid: string | null | undefined) => {
+  getTeacherStudentsCount = (school: SchoolScope) => {
     return students.count({
-      where: studentsOfSchool(schoolid),
+      where: studentsOfSchool(school),
     });
   };
-  getTeacherStudentsGenderCount = (schoolid: string | null | undefined) => {
+  getTeacherStudentsGenderCount = (school: SchoolScope) => {
     return students.findAll({
-      where: studentsOfSchool(schoolid),
+      where: studentsOfSchool(school),
       attributes: ["genderid", [fn("COUNT", col("genderid")), "count"]],
       group: ["genderid"],
     });
@@ -66,7 +66,7 @@ export class TeacherBusiness {
     if (!teacher) throw new ApiError(ErrorCode.NOT_FOUND);
     // The teacher's school: the id stored on the login (or learner) row, else the
     // login's name resolved. `teacher` itself is returned as it always was.
-    const schoolid = await schoolIdOfLogin(user.schooluserid ?? "", teacher.schoolname);
+    const school = await schoolScopeOfLogin(user.schooluserid ?? "", teacher.schoolname);
     const teacheraccess = teacher.getDataValue('rpiuseraccesses') ?? null;
     const timeZone = teacheraccess && teacheraccess.length > 1 ? new Date(teacheraccess[1].logintime) : undefined;
     const calender = timeZone ? new Intl.DateTimeFormat("en-US", {
@@ -80,7 +80,7 @@ export class TeacherBusiness {
     }).format(timeZone) : null;
     teacher.setDataValue('logintime', calender ?? '');
     const allstudents = await students.findAndCountAll({
-      where: { ...studentsOfSchool(schoolid), standard: standardid, isactive: 1 },
+      where: { ...studentsOfSchool(school), standard: standardid, isactive: 1 },
       attributes: ['studentid','standard','schooluserid'],
       include: [
         {
@@ -136,8 +136,8 @@ export class TeacherBusiness {
     });
     // The token's school: its id claim, else its name claim resolved. A token
     // naming no school at all is refused, as before.
-    const schoolid = await schoolIdFromToken(user);
-    if (schoolid === undefined) throw new ApiError(ErrorCode.NOT_FOUND);
+    const school = await schoolScopeFromToken(user);
+    if (school === undefined) throw new ApiError(ErrorCode.NOT_FOUND);
     const limit = paging.pagesize || 20;
     let offset = 0;
     if ((paging.pageindex || 1) > 1) {
@@ -152,7 +152,7 @@ export class TeacherBusiness {
     let student: students | null = null;
     if(!where.standard) {
       student = await students.findOne({
-        where: studentsOfSchool(schoolid)
+        where: studentsOfSchool(school)
       });
       if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
       where.standard = student?.standard;
@@ -283,7 +283,7 @@ export class TeacherBusiness {
       order: any;
       limit: any;
       offset: any;
-      schoolid?: string | null;
+      school?: SchoolScope;
     }
   ) => {
     lessonquizzes.hasMany(studentprogress, {
@@ -351,7 +351,7 @@ export class TeacherBusiness {
           model: students,
           required: true,
           attributes: ["studentfirstname", "country", "standard"],
-          where: studentsOfSchool(paging?.schoolid),
+          where: studentsOfSchool(paging?.school ?? NO_SCHOOL_NAME),
           include: [
             {
               model: schoolusers,

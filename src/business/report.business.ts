@@ -24,7 +24,7 @@ import { students, studentsAttributes } from "src/models/data-models/students";
 import { Default_Test_Student_ID } from "src/models/enums/user.enum";
 import { IMultiPaging } from "src/models/IPaging";
 import { buildCustomWhere } from "src/services/util.service";
-import { findSchoolIdByName, resolveSchoolRef, schoolOfStudent, studentsOfSchool } from "./school-identity";
+import { findSchoolIdByName, resolveSchoolScope, schoolOfStudent, studentsOfSchool } from "./school-identity";
 
 export interface ChartItemFormat {
     name: Date | string;
@@ -1040,14 +1040,14 @@ export class ReportBusiness {
         return {...studentlessonprogresses, student};
     }
 
-    // The school is a name (as ever) or an id; a name is resolved once, and an unknown one
-    // counts no learners.
+    // The school is a name (as ever) or an id; a name is resolved once. A name no school
+    // has yet filters by the name, as it always did.
     getStudentsOfflineOnline = async (schoolname: unknown, countryid: string, schoolid?: unknown) => {
         const where: WhereOptions<studentsAttributes> = {
             isactive: 1,
         }
         const wherecountry: any = {};
-        const school = await resolveSchoolRef({ schoolid, schoolname });
+        const school = await resolveSchoolScope({ schoolid, schoolname });
         if(school !== undefined) Object.assign(where, studentsOfSchool(school));
         if(countryid && countryid !== 'all') wherecountry.countryid = countryid;
         const numberOfOnline = await students.count({

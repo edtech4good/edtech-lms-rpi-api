@@ -12,7 +12,7 @@ import {
 import { LessonBusiness } from "src/business/lesson.business";
 import { Token } from "src/models/token.model";
 import { GradeBusiness } from "./grade.business";
-import { findSchoolIdByName, resolveSchoolRef, studentsOfSchool } from "./school-identity";
+import { findSchoolIdByName, resolveSchoolScope, studentsOfSchool } from "./school-identity";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 export class CurriculumBusiness {
@@ -142,9 +142,8 @@ export class CurriculumBusiness {
   isexitsSchoolName = async (schoolname: string) =>
     (await findSchoolIdByName(schoolname, { liveOnly: true })) !== null;
 
-  // The school is a name (as ever) or an id; a name is resolved once, and an
-  // unknown one matches no learner, so the list is not narrowed to a student's
-  // curricula.
+  // The school is a name (as ever) or an id; a name is resolved once. A name no school
+  // has yet filters learners by the name, as it always did.
   getCurriculumsWithFilter = async (cur: string, studentid: string, standardid: string, schoolname: unknown, schoolid?: unknown) => {
     const where: WhereOptions<curriculumsAttributes> = {
       isdeleted: false,
@@ -157,7 +156,7 @@ export class CurriculumBusiness {
       const wherestd: any = {};
       if(studentid) wherestd.studentid = studentid;
       if(standardid) wherestd.standard = standardid;
-      const school = await resolveSchoolRef({ schoolid, schoolname });
+      const school = await resolveSchoolScope({ schoolid, schoolname });
       const std = await students.findOne({
         where: school === undefined ? wherestd : { ...wherestd, ...studentsOfSchool(school) },
         attributes: ['studentid','curriculumids'],

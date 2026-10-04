@@ -12,7 +12,7 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import "multer";
-import { schoolIdFromToken } from "src/business/school-identity";
+import { NO_SCHOOL_NAME, schoolScopeFromToken } from "src/business/school-identity";
 import { StandardBusiness } from "src/business/standard.business";
 import { StudentBusiness } from "src/business/student.business";
 import { TeacherBusiness } from "src/business/teacher.business";
@@ -58,7 +58,7 @@ export class TeacherController {
   async getallstandards(@User() user: Token): Promise<any> {
     return {
       data: await new TeacherBusiness().getTeacherStandard(
-        await schoolIdFromToken(user)
+        (await schoolScopeFromToken(user)) ?? NO_SCHOOL_NAME
       ),
       error: false,
     };
@@ -72,11 +72,11 @@ export class TeacherController {
   @HttpCode(HttpStatus.OK)
   async getallstats(@User() user: Token): Promise<any> {
     const tb = new TeacherBusiness();
-    const schoolid = await schoolIdFromToken(user);
+    const school = (await schoolScopeFromToken(user)) ?? NO_SCHOOL_NAME;
     return {
       data: {
-        total: await tb.getTeacherStudentsCount(schoolid),
-        gendercount: await tb.getTeacherStudentsGenderCount(schoolid),
+        total: await tb.getTeacherStudentsCount(school),
+        gendercount: await tb.getTeacherStudentsGenderCount(school),
       },
       error: false,
     };
@@ -91,7 +91,7 @@ export class TeacherController {
   async getallstudents(@User() user: Token): Promise<any> {
     const tb = new StudentBusiness();
     return {
-      data: await tb.getstudentbyschool(await schoolIdFromToken(user)),
+      data: await tb.getstudentbyschool((await schoolScopeFromToken(user)) ?? NO_SCHOOL_NAME),
       error: false,
     };
   }
@@ -220,7 +220,7 @@ export class TeacherController {
     @Query("standard") standardname: string = '',
     @User() user: Token
   ): Promise<any> {
-    const data = await new StandardBusiness().getStandardsWithFilter(await schoolIdFromToken(user), standardname);
+    const data = await new StandardBusiness().getStandardsWithFilter(await schoolScopeFromToken(user), standardname);
     return {
         data: data,
         error: false,

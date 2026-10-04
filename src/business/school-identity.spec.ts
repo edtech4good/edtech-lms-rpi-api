@@ -10,9 +10,11 @@ import {
   isSameSchoolName,
   normaliseSchoolName,
   resolveSchoolRef,
-  schoolIdFromToken,
-  schoolIdOfLogin,
+  resolveSchoolScope,
   schoolOfStudent,
+  schoolPredicate,
+  schoolScopeFromToken,
+  schoolScopeOfLogin,
   studentsOfSchool,
   withImportSchoolIds,
 } from "./school-identity";
@@ -141,7 +143,27 @@ describe("resolveSchoolRef", () => {
   });
 });
 
-describe("schoolIdFromToken: an old token (name only) and a new one (id) give the same school", () => {
+describe("resolveSchoolScope", () => {
+  beforeEach(() => install([{ schoolid: A, schoolname: "Demo School" }]));
+
+  it("an id wins; a known name is its id alone; an unknown name is the name itself; nothing given is undefined", async () => {
+    await expect(resolveSchoolScope({ schoolid: ` ${B} `, schoolname: "Demo School" })).resolves.toEqual({ schoolid: B });
+    await expect(resolveSchoolScope({ schoolname: "demo school" })).resolves.toEqual({ schoolid: A });
+    await expect(resolveSchoolScope({ schoolname: "Not Here Yet" })).resolves.toEqual({ schoolname: "Not Here Yet" });
+    await expect(resolveSchoolScope({})).resolves.toBeUndefined();
+    await expect(resolveSchoolScope({ schoolname: ["a"] })).resolves.toBeUndefined();
+  });
+
+  it("a name that matches two live schools is a 400, never the name predicate (which would merge them)", async () => {
+    install([
+      { schoolid: A, schoolname: "Twin" },
+      { schoolid: B, schoolname: "Twin" },
+    ]);
+    await expect(resolveSchoolScope({ schoolname: "Twin" })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe("schoolScopeFromToken: an old token (name only) and a new one (id) give the same school", () => {
   beforeEach(() =>
     install([
       { schoolid: A, schoolname: "School A" },
@@ -150,44 +172,44 @@ describe("schoolIdFromToken: an old token (name only) and a new one (id) give th
   );
 
   it("the id claim is used without a lookup", async () => {
-    await expect(schoolIdFromToken({ schoolid: A, schoolname: "School A" })).resolves.toBe(A);
-    await expect(schoolIdFromToken({ schoolid: A })).resolves.toBe(A);
+    await expect(schoolScopeFromToken({ schoolid: A, schoolname: "School A" })).resolves.toEqual({ schoolid: A });
+    await expect(schoolScopeFromToken({ schoolid: A })).resolves.toEqual({ schoolid: A });
     expect(findAll).not.toHaveBeenCalled();
   });
 
   it("an old token has only a name, which is resolved: the same id", async () => {
-    await expect(schoolIdFromToken({ schoolname: "School A" })).resolves.toBe(A);
-    await expect(schoolIdFromToken({ schoolid: null, schoolname: "School B" })).resolves.toBe(B);
+    await expect(schoolScopeFromToken({ schoolname: "School A" })).resolves.toEqual({ schoolid: A });
+    await expect(schoolScopeFromToken({ schoolid: null, schoolname: "School B" })).resolves.toEqual({ schoolid: B });
   });
 
   it("the id claim wins over a name claim that names another school", async () => {
-    await expect(schoolIdFromToken({ schoolid: A, schoolname: "School B" })).resolves.toBe(A);
+    await expect(schoolScopeFromToken({ schoolid: A, schoolname: "School B" })).resolves.toEqual({ schoolid: A });
   });
 
-  it("a token naming no school is undefined, and one whose name matches none is null", async () => {
-    await expect(schoolIdFromToken({})).resolves.toBeUndefined();
-    await expect(schoolIdFromToken({ schoolid: null, schoolname: "" })).resolves.toBeUndefined();
-    await expect(schoolIdFromToken(undefined)).resolves.toBeUndefined();
-    await expect(schoolIdFromToken({ schoolname: "Unknown School" })).resolves.toBeNull();
+  it("a token naming no school is undefined; one whose school is not on this server yet is its name", async () => {
+    await expect(schoolScopeFromToken({})).resolves.toBeUndefined();
+    await expect(schoolScopeFromToken({ schoolid: null, schoolname: "" })).resolves.toBeUndefined();
+    await expect(schoolScopeFromToken(undefined)).resolves.toBeUndefined();
+    await expect(schoolScopeFromToken({ schoolname: "Unknown School" })).resolves.toEqual({ schoolname: "Unknown School" });
   });
 });
 
-describe("schoolIdOfLogin", () => {
+describe("schoolScopeOfLogin", () => {
   const stubRows = (login: unknown, learner: unknown) => {
     jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: jest.fn().mockResolvedValue(login) } as never);
     jest.spyOn(students, "scope").mockReturnValue({ findOne: jest.fn().mockResolvedValue(learner) } as never);
   };
 
-  it("takes the id stored on the login, then on the learner, and only then resolves the name", async () => {
+  it("takes the id stored on the login, then on the learner, then resolves the name, then is the name", async () => {
     install([{ schoolid: C, schoolname: "By Name" }]);
     stubRows({ schoolid: A }, { schoolid: B });
-    await expect(schoolIdOfLogin("u1", "By Name")).resolves.toBe(A);
+    await expect(schoolScopeOfLogin("u1", "By Name")).resolves.toEqual({ schoolid: A });
     stubRows({ schoolid: null }, { schoolid: B });
-    await expect(schoolIdOfLogin("u1", "By Name")).resolves.toBe(B);
+    await expect(schoolScopeOfLogin("u1", "By Name")).resolves.toEqual({ schoolid: B });
     stubRows(null, null);
-    await expect(schoolIdOfLogin("u1", "By Name")).resolves.toBe(C);
-    await expect(schoolIdOfLogin("u1", "Unknown")).resolves.toBeNull();
-    await expect(schoolIdOfLogin("u1", null)).resolves.toBeNull();
+    await expect(schoolScopeOfLogin("u1", "By Name")).resolves.toEqual({ schoolid: C });
+    await expect(schoolScopeOfLogin("u1", "Unknown")).resolves.toEqual({ schoolname: "Unknown" });
+    await expect(schoolScopeOfLogin("u1", null)).resolves.toEqual({ schoolname: null });
   });
 });
 
@@ -216,7 +238,7 @@ describe("withImportSchoolIds: the id written with a roster row", () => {
 
   it("an id of a school this server does not have falls back to the name; a name it does not know, or no school at all, is NULL", async () => {
     const rows = await withImportSchoolIds([
-      { schoolname: "School A", schoolid: C },
+      { schoolname: "School A", schoolid: C }, // C is a school this server does not have
       { schoolname: "Not Here Yet" },
       { schoolid: C },
       {},
@@ -268,10 +290,15 @@ describe("the SQL of the id filters", () => {
     throw new Error("no sql");
   };
 
-  it("studentsOfSchool: an id is an equality; no school matches no row", async () => {
-    expect(await sqlOf(() => students.findAll({ where: studentsOfSchool(A) }))).toMatch(new RegExp(`WHERE \`students\`\\.\`schoolid\` = '${A}'`));
-    expect(await sqlOf(() => students.findAll({ where: studentsOfSchool(null) }))).toMatch(/WHERE `students`\.`schoolid` IN \(NULL\)/);
-    expect(await sqlOf(() => students.findAll({ where: studentsOfSchool(undefined) }))).toMatch(/`schoolid` IN \(NULL\)/);
+  it("studentsOfSchool: an id is an equality on schoolid; a name (no school row yet) is the legacy equality on schoolname, never both", async () => {
+    const byId = await sqlOf(() => students.findAll({ where: studentsOfSchool({ schoolid: A }) }));
+    expect(byId).toMatch(new RegExp(`WHERE \`students\`\\.\`schoolid\` = '${A}';$`));
+    expect(byId).not.toMatch(/WHERE.*schoolname/);
+    const byName = await sqlOf(() => students.findAll({ where: studentsOfSchool({ schoolname: "Not Here Yet" }) }));
+    expect(byName).toMatch(/WHERE `students`\.`schoolname` = 'Not Here Yet';$/);
+    expect(byName).not.toMatch(/WHERE.*schoolid/);
+    expect(await sqlOf(() => students.findAll({ where: studentsOfSchool({ schoolname: null }) }))).toMatch(/`schoolname` IS NULL/);
+    expect(schoolPredicate({ schoolid: A })).toEqual({ schoolid: A });
   });
 
   it("schoolOfStudent reads the learner's school id inside the statement and escapes the id it is given", async () => {

@@ -1,6 +1,6 @@
 import { subMonths } from "date-fns";
 import { groupBy } from "lodash";
-import { Op, Transaction } from "sequelize";
+import { cast, col, fn, Op, Transaction, where as sqlWhere } from "sequelize";
 import { countries } from "src/models/data-models/countries";
 import {
   curriculumbaseline,
@@ -35,7 +35,9 @@ import { SchoolUserBusiness } from "./schooluser.business";
 import { baselinequestion } from "src/models/data-models/baselinequestion";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import { subjects } from "src/models/data-models/subjects";
-import { isSameSchoolName } from "./school-identity";
+import { Logger } from "src/config";
+import { ApiError } from "src/models/ApiError";
+import { findSchoolIdByName, isSameSchoolName } from "./school-identity";
 
 /** The tables whose rows have an owning organisation and are wiped and re-created by a master import. */
 const OWNED_BY_ORGANISATION = [
@@ -334,6 +336,8 @@ export class SyncBusiness {
    *     id, so `students.schoolid` and `schoolusers.schoolid` still name a school
    *     that exists, and its owner (unless the payload gave it one). A school whose
    *     id did not change needs nothing: the learners keep pointing at it.
+   *  3. Learners and logins still without a school id (imported before their school
+   *     reached this server) get it from their school name.
    */
   restoreOwnership = async () => {
     for (let i = 0; i < OWNED_BY_ORGANISATION.length; i += 1) {
@@ -354,6 +358,18 @@ export class SyncBusiness {
         }
       }
     }
+    await this.repointRenamedSchools();
+    await this.linkRosterToSchools();
+  };
+
+  /**
+   * A school the payload carries under a different id than this server had for it
+   * takes over the learners, school logins and owner of the old id. The match is
+   * by normalised name and only when the name is unambiguous on BOTH sides: two
+   * old schools with one name, an old school that is gone whose name a school still
+   * here also has, or two new schools with the name, are all left alone.
+   */
+  private repointRenamedSchools = async () => {
     const current = await schools.findAll({ attributes: ["schoolid", "schoolname"], transaction: this._transaction });
     const currentIds = new Set(current.map((c) => c.schoolid));
     for (const before of this._schoolsBefore) {
@@ -376,6 +392,52 @@ export class SyncBusiness {
           { organisationid: owner },
           { where: { schoolid: sameName[0].schoolid, organisationid: null }, transaction: this._transaction },
         );
+      }
+    }
+  };
+
+  /**
+   * Learners and school logins are imported before their school exists on a new
+   * classroom server (rosters come from one sync, schools from this one), so they
+   * were written without a `schoolid`. Now that the schools are here, every row
+   * whose `schoolid` is still empty gets the id of the school its `schoolname`
+   * names, once per distinct name, by the same text rule every reader uses. A name
+   * that matches no school, or more than one, is left empty (counted, not named).
+   */
+  private linkRosterToSchools = async () => {
+    for (const [table, model] of [["students", students], ["schoolusers", schoolusers]] as const) {
+      // BINARY: the exact stored text, not what the column collation calls equal.
+      const rows = (await (model as typeof students).findAll({
+        attributes: [[fn("DISTINCT", cast(col("schoolname"), "BINARY")), "schoolname"]],
+        where: { schoolid: null, schoolname: { [Op.ne]: null } } as never,
+        raw: true,
+        transaction: this._transaction,
+      })) as unknown as Array<{ schoolname: Buffer | string }>;
+      let filled = 0;
+      let skippedAmbiguous = 0;
+      let skippedUnmatched = 0;
+      for (const row of rows) {
+        const name = Buffer.isBuffer(row.schoolname) ? row.schoolname.toString("utf8") : String(row.schoolname);
+        let schoolid: string | null;
+        try {
+          schoolid = await findSchoolIdByName(name, { strict: true, transaction: this._transaction });
+        } catch (e) {
+          if (!(e instanceof ApiError)) throw e;
+          skippedAmbiguous += 1;
+          continue;
+        }
+        if (!schoolid) {
+          skippedUnmatched += 1;
+          continue;
+        }
+        const [affected] = await (model as typeof students).update(
+          { schoolid },
+          { where: { [Op.and]: [{ schoolid: null }, sqlWhere(cast(col("schoolname"), "BINARY"), name)] }, transaction: this._transaction },
+        );
+        filled += affected;
+      }
+      if (rows.length > 0) {
+        Logger.info(`master import: ${table} with no school id: ${filled} filled, ${skippedAmbiguous} names skipped (not unique), ${skippedUnmatched} names skipped (no school of that name)`);
       }
     }
   };
