@@ -173,6 +173,7 @@ const ST_X2 = uid("a1", 32);
 const ST_Y1 = uid("b2", 31);
 const ST_Y2 = uid("b2", 32);
 const ST_Y3 = uid("b2", 33);
+const ST_R = uid("b2", 34); // a learner of Y whose class is a class of X (a roster that went wrong)
 const ST_L1 = uid("d4", 31);
 const SU_X1 = uid("a1", 41);
 const SU_X2 = uid("a1", 42);
@@ -181,6 +182,7 @@ const SU_AX = uid("a1", 44); // X's admin
 const SU_Y1 = uid("b2", 41);
 const SU_Y2 = uid("b2", 42);
 const SU_Y3 = uid("b2", 44);
+const SU_R = uid("b2", 45);
 const SU_TY = uid("b2", 43);
 const SU_L1 = uid("d4", 41);
 const SU_Z = uid("c3", 41);
@@ -435,6 +437,7 @@ const seedData = () => {
     learner(ST_Y1, SU_Y1, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
     learner(ST_Y2, SU_Y2, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
     learner(ST_Y3, SU_Y3, SCH_Y, "School Y", CLS_Y, [T_Y1.curriculum]),
+    learner(ST_R, SU_R, SCH_Y, "School Y", CLS_X, [T_Y1.curriculum]),
     learner(ST_L1, SU_L1, SCH_L, "Legacy School", CLS_L, [T_L.curriculum]),
   ]);
   put(schoolusers, [
@@ -445,6 +448,7 @@ const seedData = () => {
     login(SU_Y1, "y.learner1", SchoolRole.STUDENT, SCH_Y, "School Y"),
     login(SU_Y2, "y.learner2", SchoolRole.STUDENT, SCH_Y, "School Y"),
     login(SU_Y3, "y.learner3", SchoolRole.STUDENT, SCH_Y, "School Y"),
+    login(SU_R, "y.rogue", SchoolRole.STUDENT, SCH_Y, "School Y"),
     login(SU_TY, "y.teacher", SchoolRole.TEACHER, SCH_Y, "School Y"),
     login(SU_L1, "legacy.learner", SchoolRole.STUDENT, SCH_L, "Legacy School"),
   ]);
@@ -1031,7 +1035,8 @@ describe("teacher routes: only the learners of the token's school", () => {
   it("GET /teacher/standards lists the classes of the token's school's learners only", () =>
     (async () => {
       const { failures, check } = scenario();
-      for (const [name, auth, wanted] of [["X teacher", X_TEACHER, [CLS_X]], ["X admin", X_ADMIN, [CLS_X]], ["Y teacher", Y_TEACHER, [CLS_Y]]] as Array<[string, Auth, string[]]>) {
+      // (the classes the school's own learners hold: the rogue learner of Y holds a class of X, so that value is listed for Y, and no learner of X is read)
+      for (const [name, auth, wanted] of [["X teacher", X_TEACHER, [CLS_X]], ["X admin", X_ADMIN, [CLS_X]], ["Y teacher", Y_TEACHER, [CLS_Y, CLS_X]]] as Array<[string, Auth, string[]]>) {
         const r = await send("get", "/teacher/standards", auth);
         check(`${name} -> ${r.status} (wanted 200)`, r.status === 200);
         check(`${name} got ${JSON.stringify(idsIn(r.body, "standard"))}`, sameSet(idsIn(r.body, "standard"), wanted));
@@ -1043,7 +1048,7 @@ describe("teacher routes: only the learners of the token's school", () => {
   it("GET /teacher/stats counts only the token's school's learners", () =>
     (async () => {
       const { failures, check } = scenario();
-      for (const [name, auth, total] of [["X teacher", X_TEACHER, 2], ["Y teacher", Y_TEACHER, 3]] as Array<[string, Auth, number]>) {
+      for (const [name, auth, total] of [["X teacher", X_TEACHER, 2], ["Y teacher", Y_TEACHER, 4]] as Array<[string, Auth, number]>) {
         const r = await send("get", "/teacher/stats", auth);
         check(`${name} -> ${r.status} (wanted 200)`, r.status === 200);
         check(`${name} counted ${r.body?.data?.total} (wanted ${total})`, r.body?.data?.total === total);
@@ -1058,7 +1063,7 @@ describe("teacher routes: only the learners of the token's school", () => {
       for (const [name, auth, wanted] of [
         ["X teacher", X_TEACHER, [ST_X1, ST_X2]],
         ["X admin", X_ADMIN, [ST_X1, ST_X2]],
-        ["Y teacher", Y_TEACHER, [ST_Y1, ST_Y2, ST_Y3]],
+        ["Y teacher", Y_TEACHER, [ST_Y1, ST_Y2, ST_Y3, ST_R]],
       ] as Array<[string, Auth, string[]]>) {
         const r = await send("get", "/teacher/students", auth);
         check(`${name} -> ${r.status} (wanted 200)`, r.status === 200);
@@ -1076,7 +1081,7 @@ describe("teacher routes: only the learners of the token's school", () => {
         ["X teacher, Y's class", X_TEACHER, CLS_Y, 0],
         ["X teacher, a class that is not there", X_TEACHER, NOWHERE, 0],
         ["Y teacher, own class", Y_TEACHER, CLS_Y, 3],
-        ["Y teacher, X's class", Y_TEACHER, CLS_X, 0],
+        ["Y teacher, X's class (a learner of Y's holds it, but it is not Y's class)", Y_TEACHER, CLS_X, 0],
       ] as Array<[string, Auth, string, number]>) {
         const r = await send("get", `/teacher/profile?standard=${cls}`, auth);
         check(`${name} -> ${r.status} (wanted 200)`, r.status === 200);
@@ -1147,6 +1152,7 @@ describe("teacher routes: only the learners of the token's school", () => {
         ["X teacher, its own class", X_TEACHER, cls(CLS_X), [ST_X1, ST_X2]],
         ["Y teacher, no class", Y_TEACHER, {}, [ST_Y1, ST_Y2, ST_Y3]],
         ["Y teacher, its own class", Y_TEACHER, cls(CLS_Y), [ST_Y1, ST_Y2, ST_Y3]],
+        ["X teacher, its own class (a learner of Y holds the same class id, and is not listed)", X_TEACHER, cls(CLS_X), [ST_X1, ST_X2]],
       ] as Array<[string, Auth, unknown, string[]]>) {
         const r = await rows(auth, body);
         check(`${name} -> ${r.status} (wanted 200)`, r.status === 200);
@@ -1157,7 +1163,7 @@ describe("teacher routes: only the learners of the token's school", () => {
       for (const [name, auth, body] of [
         ["X teacher, Y's class", X_TEACHER, cls(CLS_Y)],
         ["X teacher, the legacy school's class", X_TEACHER, cls(CLS_L)],
-        ["Y teacher, X's class", Y_TEACHER, cls(CLS_X)],
+        ["Y teacher, X's class (a learner of Y's holds it, but it is not Y's class)", Y_TEACHER, cls(CLS_X)],
       ] as Array<[string, Auth, unknown]>) {
         const r = await rows(auth, body);
         check(`${name} -> ${r.status} (wanted 200)`, r.status === 200);
@@ -1344,7 +1350,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
       ["X teacher, its own school", X_TEACHER, `?schoolid=${SCH_X}`, 2],
       ["X teacher, Y's school", X_TEACHER, `?schoolid=${SCH_Y}`, 0],
       ["X teacher, Y's school by name", X_TEACHER, "?schoolname=School%20Y", 0],
-      ["Y teacher", Y_TEACHER, "", 3],
+      ["Y teacher", Y_TEACHER, "", 4],
       ["Y teacher, X's school", Y_TEACHER, `?schoolid=${SCH_X}`, 0],
       ["X admin", X_ADMIN, "", 2],
     ] as Array<[string, Auth, string, number]>) {
@@ -1377,7 +1383,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
   const OTHER: Record<string, { value: string | string[]; learners: string[] }> = {
     studentid: { value: ST_Y1, learners: [ST_Y1] },
     standard: { value: CLS_Y, learners: [ST_Y1, ST_Y2, ST_Y3] },
-    schoolid: { value: SCH_Y, learners: [ST_Y1, ST_Y2, ST_Y3] },
+    schoolid: { value: SCH_Y, learners: [ST_Y1, ST_Y2, ST_Y3, ST_R] },
   };
   const subset = (got: Set<string>, allowed: string[]): boolean => [...got].every((id) => allowed.includes(id));
 
@@ -1525,10 +1531,10 @@ describe("report-style routes: the scope is X's header (central), or the token's
       ["server key + X's header, Y's school", SERVER_X, bodyOf("schoolid", SCH_Y), []],
       ["server key + X's header, both schools", SERVER_X, both, [ST_X1, ST_X2]],
       ["server key + X's header, no filter", SERVER_X, { pageindex: 1, pagesize: 50 }, [ST_X1, ST_X2]],
-      ["server key, no header: both schools (the platform view)", SERVER_PLATFORM, both, [ST_X1, ST_X2, ST_Y1, ST_Y2, ST_Y3]],
+      ["server key, no header: both schools (the platform view)", SERVER_PLATFORM, both, [ST_X1, ST_X2, ST_Y1, ST_Y2, ST_Y3, ST_R]],
       ["X teacher, both schools", X_TEACHER, both, [ST_X1, ST_X2]],
-      ["Y teacher, both schools", Y_TEACHER, both, [ST_Y1, ST_Y2, ST_Y3]],
-      ["Y teacher, no filter", Y_TEACHER, { pageindex: 1, pagesize: 50 }, [ST_Y1, ST_Y2, ST_Y3]],
+      ["Y teacher, both schools", Y_TEACHER, both, [ST_Y1, ST_Y2, ST_Y3, ST_R]],
+      ["Y teacher, no filter", Y_TEACHER, { pageindex: 1, pagesize: 50 }, [ST_Y1, ST_Y2, ST_Y3, ST_R]],
     ] as Array<[string, Auth, unknown, string[]]>) {
       for (const path of ["/report/studentstatus", "/report/studentstatus/download"]) {
         const r = await rows(path, auth, body);

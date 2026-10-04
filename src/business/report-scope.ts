@@ -2,6 +2,7 @@ import { Op, WhereOptions } from "sequelize";
 import { ApiError } from "src/models/ApiError";
 import { organisations } from "src/models/data-models/organisations";
 import { schools } from "src/models/data-models/school";
+import { standards } from "src/models/data-models/standards";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { IMultiFilter } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
@@ -103,7 +104,7 @@ const FILTER_KINDS: Record<string, ContentKind> = {
 
 /**
  * Do the content ids a report body names (curriculum, grade, level, lesson) all belong to curricula in the
- * scope? A report shows the names of the content it is asked about, so one outside the scope must not be asked
+ * scope, and the classes it names to schools in the scope? A report shows the names of the content it is asked about, so one outside the scope must not be asked
  * about. Blank values name nothing (the reports ignore them) and are skipped. Unscoped: always yes.
  */
 export async function contentFiltersInScope(scope: ReportScope | null | undefined, filters: IMultiFilter[] | undefined): Promise<boolean> {
@@ -111,6 +112,21 @@ export async function contentFiltersInScope(scope: ReportScope | null | undefine
     return true;
   }
   for (const filter of Array.isArray(filters) ? filters : []) {
+    if (filter && filter.key === "standard" && filter.value) {
+      // a class is one of the scope's schools' or it is outside (a class that is not there names nothing, and reveals nothing)
+      const named = (Array.isArray(filter.value) ? filter.value : [filter.value]).filter((c) => c !== "" && c !== null && c !== undefined);
+      if (named.some((c) => typeof c !== "string")) {
+        return false;
+      }
+      if (named.length > 0) {
+        const found = await standards.findAll({ where: { standardid: { [Op.in]: named as string[] } }, attributes: ["standardid", "schoolid"], raw: true });
+        const mine = new Set(scope.schoolids.map((id) => id.toLowerCase()));
+        if (found.some((c) => !mine.has(String((c as unknown as { schoolid: string }).schoolid).toLowerCase()))) {
+          return false;
+        }
+      }
+      continue;
+    }
     const kind = filter && typeof filter.key === "string" && Object.prototype.hasOwnProperty.call(FILTER_KINDS, filter.key) ? FILTER_KINDS[filter.key] : undefined;
     if (!kind || !filter.value) {
       continue;

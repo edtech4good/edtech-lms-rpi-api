@@ -9,7 +9,7 @@ import { studentappusages } from "src/models/data-models/studentappusage";
 import { IMultiPaging } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
 import { buildCustomWhere } from "src/services/util.service";
-import { NO_SCHOOL_NAME, SchoolScope, schoolScopeFromToken, schoolScopeOfLogin, studentsOfSchool } from "./school-identity";
+import { NO_SCHOOL_NAME, SchoolScope, schoolPredicate, schoolScopeFromToken, schoolScopeOfLogin, studentsOfSchool } from "./school-identity";
 import {
   curriculums,
   grades,
@@ -47,6 +47,12 @@ export class TeacherBusiness {
     });
   };
 
+  // Is this class one of the given school's? (A class of another school answers as a class that does not exist.)
+  classIsInSchool = async (standardid: unknown, school: SchoolScope) => {
+    if (typeof standardid !== "string" || standardid.length === 0) return false;
+    return (await standards.count({ where: { standardid, ...schoolPredicate(school) } })) > 0;
+  };
+
   getTeacherProfile = async (user: Token, standardid: string) => {
     const teacher = await schoolusers.findOne({
       where: {
@@ -79,8 +85,10 @@ export class TeacherBusiness {
       hour12: true,
     }).format(timeZone) : null;
     teacher.setDataValue('logintime', calender ?? '');
+    // a class that is not one of the school's has no learners here
+    const classInSchool = !standardid || (await this.classIsInSchool(standardid, school));
     const allstudents = await students.findAndCountAll({
-      where: { ...studentsOfSchool(school), standard: standardid, isactive: 1 },
+      where: { ...studentsOfSchool(school), standard: classInSchool ? standardid : { [Op.in]: [] }, isactive: 1 },
       attributes: ['studentid','standard','schooluserid'],
       include: [
         {
@@ -160,6 +168,8 @@ export class TeacherBusiness {
       if(!student) throw new ApiError(ErrorCode.NOT_FOUND);
       where.standard = student?.standard;
     } else {
+      // The class must be one of the school's: any other class (another school's, or none) is an unknown class.
+      if(!(await this.classIsInSchool(where.standard, school))) return { rows: [], count: 0 };
       student = await students.findOne({
         where: { ...studentsOfSchool(school), standard: where.standard }
       });
