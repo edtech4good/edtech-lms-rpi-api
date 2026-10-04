@@ -45,13 +45,12 @@ export class AuthBusiness {
     // Only reached after a correct password, so this can safely say more
     // than LOGIN_FAILED without leaking account existence to a guesser.
     if (schooluser && !schooluser.isactive) throw new ApiError(ErrorCode.NOT_ALLOWED, { message: "This account has been removed." });
-    // The school the login belongs to (by its id when a row has one, else by
-    // name) and that school's organisation, for the JWT claims. Either may be
+    // The school the login belongs to (by name, as before; by the stored id only
+    // when the name finds none) and that school's organisation, for the JWT claims. Either may be
     // null; nothing is refused on them here.
     const schoolBusiness = new SchoolBusiness();
-    const schoolTheme = await schoolBusiness.getTheme(
-      user.schoolname,
-      await schoolBusiness.getLinkedSchoolId(user.schooluserid)
+    const schoolTheme = await schoolBusiness.getTheme(user.schoolname, () =>
+      schoolBusiness.getLinkedSchoolId(user.schooluserid)
     );
     if (schooluser) {
       // if(schooluser.type !== 'all' && schooluser.type !== studenttype) throw new BadRequestException("User/Password not matching");

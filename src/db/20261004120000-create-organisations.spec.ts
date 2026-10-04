@@ -12,7 +12,7 @@ const migration = require("./migrations/20261004120000-create-organisations");
 
 const TX = { id: "the-transaction" };
 
-type State = { tables?: string[]; charset?: string; collate?: string };
+type State = { tables?: string[]; charset?: string; collate?: string; existingCollate?: string; rows?: number };
 
 const makeQI = (state: State = {}) => {
   const tables = new Set(state.tables ?? ["schools"]);
@@ -28,9 +28,18 @@ const makeQI = (state: State = {}) => {
     }),
     sequelize: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      query: jest.fn((_sql: string, _opts?: any): Promise<unknown> =>
-        Promise.resolve([[{ cs: state.charset ?? "utf8mb4", coll: state.collate ?? "utf8mb4_unicode_ci" }]]),
-      ),
+      query: jest.fn((sql: string, opts?: any): Promise<unknown> => {
+        if (/COUNT\(\*\)/.test(sql)) {
+          return Promise.resolve([[{ n: state.rows ?? 0 }]]);
+        }
+        if (/CHARACTER_SET_NAME/.test(sql) && opts.replacements[0] === "organisations") {
+          return Promise.resolve([[{ cs: "utf8mb4", coll: state.existingCollate ?? state.collate ?? "utf8mb4_unicode_ci" }]]);
+        }
+        if (/CHARACTER_SET_NAME/.test(sql)) {
+          return Promise.resolve([[{ cs: state.charset ?? "utf8mb4", coll: state.collate ?? "utf8mb4_unicode_ci" }]]);
+        }
+        return Promise.resolve([[]]);
+      }),
       transaction: jest.fn((cb: (t: unknown) => Promise<void>) => cb(TX)),
     },
   };
@@ -68,11 +77,12 @@ describe("S1 up()", () => {
     expect(options).toMatchObject({ charset: "utf8mb4", collate: "utf8mb4_0900_ai_ci" });
   });
 
-  it("is idempotent: with the table already there it creates nothing and reads nothing", async () => {
+  it("is idempotent: with the table already there and matching it creates and alters nothing", async () => {
     const { qi } = makeQI({ tables: ["schools", "organisations"] });
     await migration.up(qi);
     expect(qi.createTable).not.toHaveBeenCalled();
-    expect(qi.sequelize.query).not.toHaveBeenCalled();
+    const alters = qi.sequelize.query.mock.calls.filter((c) => /^ALTER/.test(c[0]));
+    expect(alters).toEqual([]);
   });
 
   it("running twice creates the table once", async () => {
@@ -80,6 +90,29 @@ describe("S1 up()", () => {
     await migration.up(qi);
     await migration.up(qi);
     expect(qi.createTable).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("S1 up(): a table that boot-time sync() created first", () => {
+  const alters = (qi: ReturnType<typeof makeQI>["qi"]) => qi.sequelize.query.mock.calls.map((c) => c[0] as string).filter((q) => /^ALTER/.test(q));
+
+  it("converts an EMPTY table with the wrong collation to schools.schoolid's charset and collation", async () => {
+    const { qi } = makeQI({ tables: ["schools", "organisations"], existingCollate: "utf8mb4_0900_ai_ci", collate: "utf8mb4_unicode_ci", rows: 0 });
+    await migration.up(qi);
+    expect(alters(qi)).toEqual(["ALTER TABLE `organisations` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"]);
+    expect(qi.createTable).not.toHaveBeenCalled();
+  });
+
+  it("stops with a clear message, changing nothing, when the wrong-collation table already has rows", async () => {
+    const { qi } = makeQI({ tables: ["schools", "organisations"], existingCollate: "utf8mb4_0900_ai_ci", rows: 3 });
+    await expect(migration.up(qi)).rejects.toThrow(/already exists with collation utf8mb4_0900_ai_ci instead of utf8mb4_unicode_ci.*3 row/);
+    expect(alters(qi)).toEqual([]);
+  });
+
+  it("refuses a collation name that is not a plain identifier before altering", async () => {
+    const { qi } = makeQI({ tables: ["schools", "organisations"], collate: "x; DROP TABLE y", existingCollate: "utf8mb4_0900_ai_ci" });
+    await expect(migration.up(qi)).rejects.toThrow(/Unexpected charset/);
+    expect(alters(qi)).toEqual([]);
   });
 });
 

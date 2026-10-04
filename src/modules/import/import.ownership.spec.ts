@@ -308,6 +308,7 @@ describe("PUT /import/ownership", () => {
         ]),
       );
       expect(res.body.disagreements).toHaveLength(2);
+      expect(res.body.disagreementCount).toBe(2);
       expect(owners("schools")[SCHOOL(1)]).toBe(ORG_B);
       expect(owners("questions")[QUES(2)]).toBe(ORG_B);
       // the rest of the map still applied
@@ -327,6 +328,20 @@ describe("PUT /import/ownership", () => {
       const res = await put(body).expect(200);
       expect(res.body.applied.schools).toBe(0);
       expect(owners("schools")[SCHOOL(1)]).toBe(ORG_B);
+    });
+
+    it("lists at most 500 disagreements, with the full count alongside", async () => {
+      const map: Record<string, string> = {};
+      store.schools = [];
+      for (let n = 1; n <= 650; n += 1) {
+        store.schools.push({ schoolid: SCHOOL(n), name: `s${n}`, isdeleted: false, organisationid: ORG_B });
+        map[SCHOOL(n)] = ORG_A;
+      }
+      const res = await put(validBody({ schools: map })).expect(200);
+      expect(res.body.disagreementCount).toBe(650);
+      expect(res.body.disagreements).toHaveLength(500);
+      expect(res.body.applied.schools).toBe(0);
+      expect(store.schools.every((r) => r.organisationid === ORG_B)).toBe(true);
     });
 
     it("lists ids it has no row for under unknown, and creates nothing for them", async () => {
@@ -461,6 +476,29 @@ describe("PUT /import/ownership", () => {
       await put(make()).expect(400);
       expect(store).toEqual(before);
       expect(tnx.commit).not.toHaveBeenCalled();
+    });
+
+    it("refuses a map that names the same uuid in two letter cases, rather than taking the last", async () => {
+      const lower = SCHOOL(1);
+      const upper = SCHOOL(1).toUpperCase();
+      expect(lower).not.toBe(upper);
+      const before = cloneDeep(store);
+      const res = await put(validBody({ schools: { [lower]: ORG_A, [upper]: ORG_B } })).expect(400);
+      expect(res.body.code).toBe("INVALID_INPUT");
+      expect(store).toEqual(before);
+      await put(validBody({ content: { ...validBody().content, curriculums: { [CURR(1)]: ORG_A, [CURR(1).toUpperCase()]: ORG_A } } })).expect(400);
+    });
+
+    it("refuses the same organisation id twice in different letter cases", async () => {
+      await put(validBody({ organisations: [orgRow(ORG_A), orgRow(ORG_A.toUpperCase()), orgRow(ORG_B)] })).expect(400);
+    });
+
+    it("counts settingsconfig in BYTES of its JSON: 25,000 Khmer characters (75 KB) is refused, 60,000 ASCII characters (60 KB) is accepted", async () => {
+      const khmer = { note: "ក".repeat(25000) };
+      expect(JSON.stringify(khmer).length).toBeLessThan(64 * 1024);
+      const refused = await put(validBody({ organisations: [orgRow(ORG_A, { settingsconfig: khmer }), orgRow(ORG_B)] })).expect(400);
+      expect(JSON.stringify(refused.body)).toMatch(/too large/);
+      await put(validBody({ organisations: [orgRow(ORG_A, { settingsconfig: { note: "a".repeat(60000) } }), orgRow(ORG_B)] })).expect(200);
     });
 
     it.each(["A", "ORG", "has space", "toolongcode1234567", "under_score", "ünï", ""])(

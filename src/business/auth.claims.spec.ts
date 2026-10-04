@@ -1,5 +1,6 @@
 import { decode } from "jsonwebtoken";
-import { Sequelize } from "sequelize";
+import { DatabaseError, Sequelize } from "sequelize";
+import { SchoolBusiness } from "./school.business";
 import { initModels } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
 import { schoolusers } from "src/models/data-models/schoolusers";
@@ -113,42 +114,44 @@ afterAll(async () => {
 afterEach(() => jest.restoreAllMocks());
 
 describe("login token claims: schoolid and organisationid", () => {
-  it("takes schoolid from the learner row and organisationid from that school", async () => {
-    stub({ studentSchoolId: SCHOOL_X.schoolid, schools: [SCHOOL_X, SCHOOL_Y] });
+  it("resolves the school by NAME, as before ids existed, and takes organisationid from it", async () => {
+    stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X, SCHOOL_Y] });
     const claims = await signIn();
     expect(claims.schoolid).toBe(SCHOOL_X.schoolid);
     expect(claims.organisationid).toBe(SCHOOL_X.organisationid);
     expect(claims.uitheme).toBe("corporate");
   });
 
-  it("the id wins over the name: a learner whose row points at X but whose school name says Y is X's", async () => {
-    stub({ studentSchoolId: SCHOOL_X.schoolid, user: { schoolname: "School Y" }, schools: [SCHOOL_X, SCHOOL_Y] });
-    const claims = await signIn();
-    expect(claims.schoolid).toBe(SCHOOL_X.schoolid);
-    expect(claims.organisationid).toBe(SCHOOL_X.organisationid);
-    // and the name was never needed
-    expect(schoolFindOne.mock.calls.every((c) => c[0].where.schoolname === undefined)).toBe(true);
-  });
-
-  it("falls back to the school-login row's schoolid when the learner row has none", async () => {
-    stub({ studentSchoolId: null, userSchoolId: SCHOOL_X.schoolid, schools: [SCHOOL_X, SCHOOL_Y] });
-    const claims = await signIn();
-    expect(claims.schoolid).toBe(SCHOOL_X.schoolid);
-    expect(claims.organisationid).toBe(SCHOOL_X.organisationid);
-  });
-
-  it("falls back to the name join while both ids are NULL, and still gets the organisation", async () => {
-    stub({ studentSchoolId: null, userSchoolId: null, user: { schoolname: "School Y" }, schools: [SCHOOL_X, SCHOOL_Y] });
+  it("the name wins over a stored id: a stale id (the learner moved school; the roster import updates the name, not the id) does not change the claims", async () => {
+    // The learner row and the login row still point at the OLD school X; the name says Y.
+    stub({ studentSchoolId: SCHOOL_X.schoolid, userSchoolId: SCHOOL_X.schoolid, user: { schoolname: "School Y" }, schools: [SCHOOL_X, SCHOOL_Y] });
     const claims = await signIn();
     expect(claims.schoolid).toBe(SCHOOL_Y.schoolid);
     expect(claims.organisationid).toBe(SCHOOL_Y.organisationid);
     expect(claims.uitheme).toBe("kids");
+    // the stored id was never even needed
+    expect(schoolFindOne.mock.calls.every((c) => c[0].where.schoolid === undefined)).toBe(true);
   });
 
-  it("falls back to the name when the stored id no longer matches any school", async () => {
-    stub({ studentSchoolId: "5c000000-0000-4000-8000-00000000dead", user: { schoolname: "School Y" }, schools: [SCHOOL_Y] });
+  it("when the name finds no school, falls back to the stored id: the school-login row's first", async () => {
+    stub({ studentSchoolId: SCHOOL_Y.schoolid, userSchoolId: SCHOOL_X.schoolid, user: { schoolname: "Renamed Nowhere" }, schools: [SCHOOL_X, SCHOOL_Y] });
+    const claims = await signIn();
+    expect(claims.schoolid).toBe(SCHOOL_X.schoolid);
+    expect(claims.organisationid).toBe(SCHOOL_X.organisationid);
+  });
+
+  it("when the name finds no school and the login row has no id, falls back to the learner row's", async () => {
+    stub({ studentSchoolId: SCHOOL_Y.schoolid, userSchoolId: null, user: { schoolname: "Renamed Nowhere" }, schools: [SCHOOL_X, SCHOOL_Y] });
     const claims = await signIn();
     expect(claims.schoolid).toBe(SCHOOL_Y.schoolid);
+    expect(claims.organisationid).toBe(SCHOOL_Y.organisationid);
+  });
+
+  it("when the name finds no school and the stored id matches none either, both claims are null and it still signs in", async () => {
+    stub({ studentSchoolId: "5c000000-0000-4000-8000-00000000dead", user: { schoolname: "Nowhere" }, schools: [SCHOOL_Y] });
+    const claims = await signIn();
+    expect(claims.schoolid).toBeNull();
+    expect(claims.organisationid).toBeNull();
   });
 
   it("a teacher (no learner row) gets the same claims from the school-login row", async () => {
@@ -160,11 +163,18 @@ describe("login token claims: schoolid and organisationid", () => {
   });
 
   it("a login whose school has no organisation still signs in, with organisationid null", async () => {
-    stub({ studentSchoolId: SCHOOL_NO_ORG.schoolid, schools: [SCHOOL_NO_ORG] });
+    stub({ user: { schoolname: "School Z" }, schools: [SCHOOL_NO_ORG] });
     const claims = await signIn();
     expect(claims.schoolid).toBe(SCHOOL_NO_ORG.schoolid);
     expect(claims.organisationid).toBeNull();
     expect(claims.sub).toBe("u1");
+  });
+
+  it("a school with no organisation, reached through the stored id, also signs in with organisationid null", async () => {
+    stub({ userSchoolId: SCHOOL_NO_ORG.schoolid, user: { schoolname: "Nowhere" }, schools: [SCHOOL_NO_ORG] });
+    const claims = await signIn();
+    expect(claims.schoolid).toBe(SCHOOL_NO_ORG.schoolid);
+    expect(claims.organisationid).toBeNull();
   });
 
   it("a login with no resolvable school at all still signs in: both claims null, theme kids", async () => {
@@ -195,5 +205,47 @@ describe("login token claims: schoolid and organisationid", () => {
     for (const key of ["sub", "jti", "iat", "exp", "claims", "studentid", "studentfirstname", "schooluserid", "schoolusername", "schooluserrole", "schoolname", "uitheme", "schoolid", "baselinepassed", "is_teacher_acc"]) {
       expect(claims).toHaveProperty(key);
     }
+  });
+});
+
+describe("a database the organisations migration has not reached (MySQL 1054 on the new columns)", () => {
+  const unknownColumn = () =>
+    new DatabaseError(Object.assign(new Error("Unknown column 'organisationid' in 'field list'"), { errno: 1054, code: "ER_BAD_FIELD_ERROR" }) as never);
+
+  it("getLinkedSchoolId: answers null instead of failing", async () => {
+    jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
+    await expect(new SchoolBusiness().getLinkedSchoolId("u1")).resolves.toBeNull();
+  });
+
+  it("getLinkedSchoolId: any other database error is still raised", async () => {
+    jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(new DatabaseError(Object.assign(new Error("deadlock"), { errno: 1213 }) as never)) } as never);
+    await expect(new SchoolBusiness().getLinkedSchoolId("u1")).rejects.toThrow("deadlock");
+  });
+
+  it("getTheme: falls back to the plain by-name read, with organisationid null", async () => {
+    jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
+    const plain = jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL_X.schoolid, uitheme: "corporate" } as never);
+    await expect(new SchoolBusiness().getTheme("School X")).resolves.toEqual({
+      uitheme: "corporate",
+      schoolid: SCHOOL_X.schoolid,
+      organisationid: null,
+    });
+    expect(plain).toHaveBeenCalledWith({ where: { schoolname: "School X" } });
+  });
+
+  it("getTheme: any other database error is still raised", async () => {
+    jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(new Error("connection lost")) } as never);
+    await expect(new SchoolBusiness().getTheme("School X")).rejects.toThrow("connection lost");
+  });
+
+  it("a whole login on such a database still signs in, with the claims it had before (schoolid by name, no organisation)", async () => {
+    stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X] });
+    jest.spyOn(schools, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
+    jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: jest.fn().mockRejectedValue(unknownColumn()) } as never);
+    jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL_X.schoolid, uitheme: "corporate" } as never);
+    const claims = await signIn();
+    expect(claims.schoolid).toBe(SCHOOL_X.schoolid);
+    expect(claims.uitheme).toBe("corporate");
+    expect(claims.organisationid).toBeNull();
   });
 });

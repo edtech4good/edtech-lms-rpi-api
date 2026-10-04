@@ -32,15 +32,25 @@ export const MAX_CONTENT_ROWS = 200000;
 /** Control characters, and the bidirectional controls that reorder displayed text. Zero-width joiners stay: Khmer text uses them. */
 const FORBIDDEN_IN_NAME = /[\p{Cc}‪-‮⁦-⁩]/u;
 const HAS_LETTER_OR_DIGIT = /[\p{L}\p{N}]/u;
+/** The serialised settings JSON may be at most this many BYTES (not characters: Khmer text is 3 bytes a character). */
 const MAX_SETTINGS_BYTES = 64 * 1024;
 
 const id = joi.string().pattern(UUID);
+
+/** The same uuid in two letter cases is one id to the database, so a map carrying both is ambiguous: refused, not resolved by taking the last. */
+const noCaseDuplicates = (value: Record<string, unknown>, helpers: joi.CustomHelpers) => {
+  const keys = Object.keys(value);
+  return new Set(keys.map((k) => k.toLowerCase())).size === keys.length
+    ? value
+    : helpers.message({ custom: "{{#label}} names the same id more than once (ids are compared without regard to letter case)." });
+};
 
 const idMap = (max: number) =>
   joi
     .object()
     .pattern(UUID, id.required())
     .max(max)
+    .custom(noCaseDuplicates)
     .required();
 
 const displayText = (value: string, helpers: joi.CustomHelpers) =>
@@ -72,7 +82,9 @@ const settingsconfig = joi
   .object()
   .unknown(true)
   .custom((value, helpers) =>
-    JSON.stringify(value).length > MAX_SETTINGS_BYTES ? helpers.error("string.max") : value,
+    Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_SETTINGS_BYTES
+      ? helpers.message({ custom: "{{#label}} is too large: at most 64 KB once written as JSON." })
+      : value,
   )
   .allow(null)
   .required();
@@ -93,7 +105,12 @@ const organisation = joi.object({
 
 export const ownershipBody = joi.object({
   format: joi.number().valid(OWNERSHIP_FORMAT).strict().required(),
-  organisations: joi.array().items(organisation).unique("organisationid").max(MAX_ORGANISATIONS).required(),
+  organisations: joi
+    .array()
+    .items(organisation)
+    .unique((a, b) => String(a.organisationid).toLowerCase() === String(b.organisationid).toLowerCase())
+    .max(MAX_ORGANISATIONS)
+    .required(),
   schools: idMap(MAX_SCHOOLS),
   content: joi
     .object({

@@ -24,6 +24,16 @@ import { tableNameList, tableOptionsMatchingColumn } from "../migration-helpers"
  * found.) The `organisationid` columns that S2 adds elsewhere take theirs from
  * this table.
  *
+ * ## A table that is already there
+ *
+ * The server calls `sequelize.sync()` at boot, which creates `organisations`
+ * from the model, with the database's DEFAULT collation, if new code boots
+ * before this migration runs. So an existing table is not simply skipped: if its
+ * id collation differs from `schools.schoolid`'s and it is EMPTY, it is converted
+ * to the intended charset and collation; if it differs and holds rows, the
+ * migration stops with a message, because converting a populated table is a
+ * decision for a person. A table that already matches is left alone.
+ *
  * ## Idempotence
  *
  * MySQL DDL commits implicitly, so the transaction wrapper cannot undo a
@@ -37,14 +47,47 @@ import { tableNameList, tableOptionsMatchingColumn } from "../migration-helpers"
  */
 const ORGANISATIONS = "organisations";
 
+/** What a charset or collation name from information_schema looks like. */
+const SQL_NAME = /^[A-Za-z0-9_]+$/;
+
+/** See "A table that is already there" above. */
+async function alignExistingTable(
+  queryInterface: QueryInterface,
+  wanted: { charset: string; collate: string },
+  transaction: Transaction,
+): Promise<void> {
+  if (!SQL_NAME.test(wanted.charset) || !SQL_NAME.test(wanted.collate)) {
+    throw new Error("Unexpected charset/collation reported for schools.schoolid.");
+  }
+  const actual = await tableOptionsMatchingColumn(queryInterface, ORGANISATIONS, "organisationid");
+  if (actual.charset === wanted.charset && actual.collate === wanted.collate) {
+    return;
+  }
+  const [rows] = await queryInterface.sequelize.query(`SELECT COUNT(*) AS n FROM \`${ORGANISATIONS}\``, { transaction });
+  const count = Number((rows as Array<{ n: number | string }>)[0]?.n ?? 0);
+  if (count > 0) {
+    throw new Error(
+      `The ${ORGANISATIONS} table already exists with collation ${actual.collate} instead of ${wanted.collate}, ` +
+        `and it holds ${count} row(s). Convert it by hand ` +
+        `(ALTER TABLE ${ORGANISATIONS} CONVERT TO CHARACTER SET ${wanted.charset} COLLATE ${wanted.collate}) ` +
+        "once you have checked its rows, then run this migration again.",
+    );
+  }
+  await queryInterface.sequelize.query(
+    `ALTER TABLE \`${ORGANISATIONS}\` CONVERT TO CHARACTER SET ${wanted.charset} COLLATE ${wanted.collate}`,
+    { transaction },
+  );
+}
+
 module.exports = {
   up: (queryInterface: QueryInterface): Promise<void> =>
     queryInterface.sequelize.transaction(async (transaction: Transaction) => {
       const names = await tableNameList(queryInterface);
+      const opts = await tableOptionsMatchingColumn(queryInterface, "schools", "schoolid");
       if (names.includes(ORGANISATIONS)) {
+        await alignExistingTable(queryInterface, opts, transaction);
         return;
       }
-      const opts = await tableOptionsMatchingColumn(queryInterface, "schools", "schoolid");
       await queryInterface.createTable(
         ORGANISATIONS,
         {

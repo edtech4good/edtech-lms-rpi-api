@@ -65,9 +65,15 @@ export interface OwnershipDisagreement {
   requested: string;
 }
 
+/** At most this many disagreements are listed in the response; `disagreementCount` is always the full number. */
+export const MAX_LISTED_DISAGREEMENTS = 500;
+
 export interface OwnershipResult {
   applied: { organisations: number } & Record<TableKey, number>;
+  /** The first MAX_LISTED_DISAGREEMENTS only. */
   disagreements: OwnershipDisagreement[];
+  /** How many rows disagreed in all. */
+  disagreementCount: number;
   unknown: Record<TableKey, string[]>;
   unmapped: Record<TableKey, number>;
 }
@@ -126,6 +132,7 @@ export class OwnershipBusiness {
     const result: OwnershipResult = {
       applied: { organisations: 0, schools: 0, curriculums: 0, questions: 0, documents: 0, subjects: 0 },
       disagreements: [],
+      disagreementCount: 0,
       unknown: emptyByTable<string[]>(() => []),
       unmapped: emptyByTable<number>(() => 0),
     };
@@ -149,7 +156,7 @@ export class OwnershipBusiness {
 
     Logger.info("import ownership", {
       applied: result.applied,
-      disagreements: result.disagreements.length,
+      disagreements: result.disagreementCount,
       unknown: Object.fromEntries(Object.entries(result.unknown).map(([k, v]) => [k, v.length])),
       unmapped: result.unmapped,
     });
@@ -266,7 +273,10 @@ export class OwnershipBusiness {
             toFill.set(want, [id]);
           }
         } else if (!sameId(current, want)) {
-          result.disagreements.push({ table: key, id, current, requested: want });
+          result.disagreementCount += 1;
+          if (result.disagreements.length < MAX_LISTED_DISAGREEMENTS) {
+            result.disagreements.push({ table: key, id, current, requested: want });
+          }
         }
       }
     }
