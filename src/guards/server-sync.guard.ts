@@ -12,6 +12,8 @@ import { SchoolRole } from "src/models/enums/school.role.enum";
 import { TokenType } from "src/models/enums/tokentype.enum";
 import { Token } from "src/models/token.model";
 import { AccessGuard } from "./access.guard";
+import { withGuardInfo } from "./guard-info";
+import { markPiBootstrapRoute } from "./pi-bootstrap";
 import { isServerSyncKey } from "./server-sync-key.util";
 
 /** The `schooluserid` the guard gives a request that carried central's server sync key. */
@@ -48,6 +50,8 @@ export const ServerSyncGuard = (
 
       const offline = Config.fortyk.api.rpi.offline;
       if (offline && offlineRoles.length > 0) {
+        // The one route a Pi's staff may use before their school has an organisation (see pi-bootstrap.ts).
+        markPiBootstrapRoute(request);
         const RoleGuard = AccessGuard(TokenType.ACCESS, ...offlineRoles);
         return (await new RoleGuard().canActivate(context)) as boolean;
       }
@@ -59,5 +63,9 @@ export const ServerSyncGuard = (
       throw new ForbiddenException();
     }
   }
-  return mixin(ServerSyncGuardMixin);
+  return withGuardInfo(mixin(ServerSyncGuardMixin), {
+    label: `ServerSyncGuard(${offlineRoles.map((r) => `Role.${SchoolRole[r] ?? r}`).join(", ")})`,
+    admitsServerKey: true,
+    roles: offlineRoles.map(Number),
+  });
 };

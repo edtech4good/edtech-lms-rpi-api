@@ -2,8 +2,14 @@ import { ExecutionContext, ForbiddenException, mixin, UnauthorizedException } fr
 import { AuthGuard } from '@nestjs/passport';
 import { SchoolRole } from 'src/models/enums/school.role.enum';
 import { TokenType } from './../models/enums/tokentype.enum';
+import { withGuardInfo } from './guard-info';
+
+const tokenTypeName = (tokentype: TokenType): string =>
+  Object.entries(TokenType).find(([, value]) => value === tokentype)?.[0] ?? String(tokentype);
+const roleName = (role: SchoolRole): string => `Role.${SchoolRole[role] ?? role}`;
+
 const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
-  mixin(class LocalAccessGuard extends AuthGuard(`jwt-${tokentype}`) {
+  withGuardInfo(mixin(class LocalAccessGuard extends AuthGuard(`jwt-${tokentype}`) {
     canActivate(context: ExecutionContext) {
       // Add your custom authentication logic here
       // for example, call super.logIn(request) to establish a session.
@@ -32,6 +38,9 @@ const AccessGuard = (tokentype: TokenType, ...schoolrole: Array<SchoolRole>) =>
       }
       return user;
     }
+  }), {
+    label: `AccessGuard(${[tokenTypeName(tokentype), ...schoolrole.map(roleName)].join(', ')})`,
+    roles: schoolrole.map(Number),
   });
 export { AccessGuard };
 

@@ -18,6 +18,12 @@ import { ExportController } from "./export.controller";
 const realFs = require("fs");
 
 const tokenExists = jest.fn();
+// Who may call what is this spec's subject; the organisation boundary (claims, scope, content access) has its
+// own specs (src/modules/org-boundary.leak.spec.ts), so it is stood aside here.
+jest.mock("src/business/token-claims", () => ({
+  ...jest.requireActual("src/business/token-claims"),
+  checkTokenClaims: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock("src/business/token.business", () => ({
   TokenBusiness: jest.fn().mockImplementation(() => ({ tokenExists })),
 }));
