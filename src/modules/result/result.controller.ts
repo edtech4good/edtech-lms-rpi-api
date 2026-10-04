@@ -43,6 +43,7 @@ import {
   scorelevelquiz,
 } from "src/business/quizscore";
 import { gradeSubmissionItems, logGradingDisagreements } from "src/business/gradesubmission";
+import { confineToContainer } from "src/business/result-items";
 
 @ApiTags("Result")
 @Controller("result")
@@ -97,7 +98,9 @@ export class ResultController {
         error: false,
       };
     }
-    const rawdata = (result.result ?? []).map((x) => ({
+    // Only items that answer one of this practice's own questions are part of the result (see result-items.ts).
+    const submitted = await confineToContainer("lesson-practice", "lessonpractice", lessonpracticeid, "lessonpracticequestionid", result.result ?? []);
+    const rawdata = submitted.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
@@ -200,7 +203,9 @@ export class ResultController {
         error: false,
       };
     }
-    const rawdata = result.result.map((x) => ({
+    // Only items that answer one of this quiz's own questions are part of the result (see result-items.ts).
+    const submitted = await confineToContainer("lesson-quiz", "lessonquiz", lessonquizid, "lessonquizquestionid", result.result);
+    const rawdata = submitted.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
@@ -302,7 +307,9 @@ export class ResultController {
         error: false,
       };
     }
-    const rawdata = result.result.map((x) => ({
+    // Only items that answer one of this level quiz's own questions are part of the result (see result-items.ts).
+    const submitted = await confineToContainer("level-quiz", "levelquiz", levelid, "levelquizquestionid", result.result);
+    const rawdata = submitted.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
@@ -382,7 +389,9 @@ export class ResultController {
     ): Promise<ResponseBoolean> {
     const rb = new ResultBusiness();
     const curriculumBaselineBusiness = new CurriculumBaseLineBusiness();
-    const rawdata = result.result.map((x) => ({
+    // Only items that answer one of this baseline's own questions are part of the result (see result-items.ts).
+    const submitted = await confineToContainer("baseline", "baseline", curriculumbaselineid, "baselinequestionid", result.result);
+    const rawdata = submitted.map((x) => ({
       ...x,
       iscorrect: x.iscorrect || false,
       question: undefined,
