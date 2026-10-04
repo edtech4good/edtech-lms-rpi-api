@@ -139,10 +139,17 @@ describe("POST /result/...: a result keeps only the items that answer one of its
         await k.call([...own(k), foreign(k), { ...foreign(k), [k.idKey]: "foreign-2", iscorrect: true }]);
         const [without, withForeign] = k.created().mock.calls.map((c) => c[0]);
         expect(withoutAnswers(withForeign)).toEqual(withoutAnswers(without));
-        expect(JSON.parse(withForeign.actualanswers)).toEqual(JSON.parse(without.actualanswers));
         // and it is a real score: one of the two active questions answered correctly
         expect(without.passpercentage).toBe(50);
         expect(without.ispass).toBe(false);
+      });
+
+      it(`${mode}: the stored answers are those of the same result without the foreign items`, async () => {
+        process.env.GRADING_MODE = mode;
+        await k.call(own(k));
+        await k.call([...own(k), foreign(k), { ...foreign(k), [k.idKey]: "foreign-2", iscorrect: true }]);
+        const [without, withForeign] = k.created().mock.calls.map((c) => c[0]);
+        expect(JSON.parse(withForeign.actualanswers)).toEqual(JSON.parse(without.actualanswers));
       });
     }
 
