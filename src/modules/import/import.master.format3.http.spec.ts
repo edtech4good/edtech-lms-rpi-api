@@ -71,6 +71,10 @@ describe("PUT import/master with one organisation's content", () => {
       await put(header(), tokenFor(SchoolRole.TEACHER, { organisationid: ORG_X })).expect(403);
     });
 
+    it("refuses a teacher token with no claim, whatever the payload", async () => {
+      await put(header(), tokenFor(SchoolRole.TEACHER)).expect(403);
+    });
+
     it("central's key is read: the payload is refused for what is wrong with it, and the reason is given", async () => {
       const res = await put({ ...header(), scope: "curriculum" }, Config.fortyk.api.serversynckey).expect(400);
       expect(JSON.stringify(res.body)).toMatch(/scope must be \\"organisation\\"/);
@@ -95,9 +99,13 @@ describe("PUT import/master with one organisation's content", () => {
       expect(tnx.commit).not.toHaveBeenCalled();
     });
 
-    it("a token with no organisation claim gets a 403", async () => {
-      await put(header(), tokenFor(SchoolRole.TEACHER)).expect(403);
-      await put(header(), tokenFor(SchoolRole.SUPERADMIN, { organisationid: null })).expect(403);
+    it("a token with no organisation claim is judged after the payload is read (its school must be adoptable): an unreadable payload is a 400", async () => {
+      await put(header(), tokenFor(SchoolRole.TEACHER)).expect(400);
+      await put(header(), tokenFor(SchoolRole.SUPERADMIN, { organisationid: null })).expect(400);
+    });
+
+    it("a claim that is not an organisation id gets a 403", async () => {
+      await put(header(), tokenFor(SchoolRole.TEACHER, { organisationid: 42 })).expect(403);
     });
 
     it("a student token is still stopped by the guard", async () => {

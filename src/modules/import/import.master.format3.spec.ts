@@ -24,7 +24,7 @@ import { lessonplans } from "src/models/data-models/lessonplan";
 import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
 import { subjects } from "src/models/data-models/subjects";
-import { Logger } from "src/config";
+import { Config, Logger } from "src/config";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { ImportController } from "./import.controller";
@@ -124,6 +124,10 @@ const install = (initial: Store) => {
       }
       const found = store[name].filter((r) => matches(r, opts.where));
       return cloneDeep(found).map((r) => (Array.isArray(opts.attributes) ? Object.fromEntries((opts.attributes as string[]).map((a) => [a, r[a] ?? null])) : r));
+    }) as never);
+    jest.spyOn(model, "findOne").mockImplementation((async (opts: { where?: Row } = {}) => {
+      const found = store[name].find((r) => matches(r, opts.where));
+      return found ? cloneDeep(found) : null;
     }) as never);
     jest.spyOn(model, "count").mockImplementation((async (opts: { where?: Row } = {}) => store[name].filter((r) => matches(r, opts.where)).length) as never);
     jest.spyOn(model, "destroy").mockImplementation((async (opts: { where?: Row } = {}) => {
@@ -714,6 +718,91 @@ describe("who may import one organisation's content", () => {
     install({});
     await expect(importIt(payloadOf(content("x", 1, ORG_X)), teacher(claim))).rejects.toMatchObject({ status: 403 });
     expect(writes).toEqual([]);
+  });
+
+  describe("a classroom Pi whose schools have no organisation yet (a token with no claim)", () => {
+    const originalOffline = Config.fortyk.api.rpi.offline;
+    beforeEach(() => {
+      Config.fortyk.api.rpi.offline = true;
+    });
+    afterEach(() => {
+      Config.fortyk.api.rpi.offline = originalOffline;
+    });
+    const pi = (school: Record<string, unknown>, claim: unknown = null): Token => ({ schooluserid: "t1", schoolusername: "teacher", organisationid: claim, ...school } as unknown as Token);
+    /** x-school-1 is here and has no owner yet; everything else as dbBefore. */
+    const unownedSchoolDb = (): Store => {
+      const before = dbBefore();
+      before.schools.find((s) => s.schoolid === "x-school-1")!.organisationid = null;
+      return before;
+    };
+
+    it("is allowed when its own school is unowned here and is a school of the payload: the school gains the owner", async () => {
+      install(unownedSchoolDb());
+      const result: any = await importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" })); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result).toMatchObject({ error: false, data: true, organisationid: ORG_X });
+      expect(store.schools.find((s) => s.schoolid === "x-school-1")?.organisationid).toBe(ORG_X);
+      expect(result.counts.schools.adopted).toBe(1);
+      expect(logged.some((l) => /classroom bootstrap/.test(l))).toBe(true);
+      expect(logged.filter((l) => /classroom bootstrap/.test(l)).join("")).not.toMatch(/សាលា|x-school-1/);
+    });
+
+    it("finds its school by name when the token has only a name (an older token)", async () => {
+      install(unownedSchoolDb());
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolname: "សាលា x1" }))).resolves.toMatchObject({ error: false });
+      expect(store.schools.find((s) => s.schoolid === "x-school-1")?.organisationid).toBe(ORG_X);
+    });
+
+    it("is refused (403, nothing written) when its school already belongs to another organisation", async () => {
+      install(dbBefore());
+      const payload = content("x", 1, ORG_X);
+      payload.schools.push({ schoolid: "y-school-1", schoolname: "សាលា y 1", countryid: "c-kh", isdeleted: false, organisationid: ORG_X });
+      await expect(importIt(payloadOf(payload), pi({ schoolid: "y-school-1" }))).rejects.toMatchObject({ status: 403 });
+      expect(writes).toEqual([]);
+      expect(tnx.commit).not.toHaveBeenCalled();
+    });
+
+    it("is refused when its school already belongs to the organisation (it should have the claim)", async () => {
+      install(dbBefore());
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 403 });
+      expect(writes).toEqual([]);
+    });
+
+    it("is refused when its school is not a school of the payload", async () => {
+      install(dbBefore());
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "u-school-1" }))).rejects.toMatchObject({ status: 403 });
+      expect(writes).toEqual([]);
+    });
+
+    it("is refused when it has no school, or its school is not here, or its name matches none", async () => {
+      install(unownedSchoolDb());
+      for (const school of [{}, { schoolid: "x-school-9" }, { schoolname: "Not Here" }]) {
+        await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi(school))).rejects.toMatchObject({ status: 403 });
+      }
+      expect(writes).toEqual([]);
+    });
+
+    it("is judged AFTER the payload is validated: an invalid payload is a 400, not a 403", async () => {
+      install(unownedSchoolDb());
+      await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 400 });
+    });
+
+    it("a token WITH a claim is still checked before the payload is read, and another organisation's claim is a 403", async () => {
+      install(unownedSchoolDb());
+      await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }, ORG_Y))).rejects.toMatchObject({ status: 403 });
+    });
+
+    it("a claim that is not an id is a 403 even when its school would qualify", async () => {
+      install(unownedSchoolDb());
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }, 42))).rejects.toMatchObject({ status: 403 });
+    });
+
+    it("online (not RPI_OFFLINE) a token with no claim is a 403 whatever its school", async () => {
+      Config.fortyk.api.rpi.offline = false;
+      install(unownedSchoolDb());
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 403 });
+      await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 403 });
+      expect(writes).toEqual([]);
+    });
   });
 
   it("a payload whose header names no organisation is a 403 for a teacher, and a 400 for central", async () => {

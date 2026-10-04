@@ -27,10 +27,10 @@ import { OwnershipBusiness, OwnershipResult } from "src/business/ownership.busin
 import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
-import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
+import { assertOwnSchoolIsAdoptable, OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
 import { assertRosterBelongsToSchool, RosterSchoolError } from "src/business/school-identity";
 import { SyncBusiness } from "src/business/sync.business";
-import { Logger } from "src/config";
+import { Config, Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
 import { ApiError } from "src/models/ApiError";
@@ -95,19 +95,31 @@ async function rollbackQuietly(tnx: Transaction): Promise<void> {
 }
 
 /**
- * Who may import ONE organisation's content (format 3): central, with the server
- * sync key; or, on a classroom Pi, a staff token whose `organisationid` claim is
- * that organisation. A token with no claim (issued before the claim existed, or a
- * school with no organisation yet) may not.
+ * Who may import ONE organisation's content (format 3):
+ *  - central, with the server sync key: always;
+ *  - a staff token whose `organisationid` claim is that organisation: allowed (checked
+ *    before the payload is read, so another organisation's teacher learns nothing of it);
+ *  - on a classroom Pi only, a staff token with NO claim (its school has no organisation
+ *    here yet): "bootstrap", allowed only if its own school is adoptable (see
+ *    `assertOwnSchoolIsAdoptable`), which is checked after the payload is validated;
+ *  - anything else (another organisation's claim, a claim that is not an id, a null claim
+ *    online): 403.
  */
-function assertMayImportOrganisation(user: Token | undefined, organisationid: unknown): void {
+function organisationAccess(user: Token | undefined, organisationid: unknown): "allowed" | "bootstrap" {
   if (user?.schooluserid === SERVER_SYNC_USER_ID) {
-    return;
+    return "allowed";
   }
   const claim = user?.organisationid;
-  if (typeof claim !== "string" || typeof organisationid !== "string" || claim.toLowerCase() !== organisationid.toLowerCase()) {
+  if (typeof claim === "string" && claim !== "") {
+    if (typeof organisationid === "string" && claim.toLowerCase() === organisationid.toLowerCase()) {
+      return "allowed";
+    }
     throw new ApiError(ErrorCode.NOT_ALLOWED);
   }
+  if ((claim === undefined || claim === null || claim === "") && Config.fortyk.api.rpi.offline) {
+    return "bootstrap";
+  }
+  throw new ApiError(ErrorCode.NOT_ALLOWED);
 }
 
 @ApiTags("Import")
@@ -414,8 +426,11 @@ export class ImportController {
         // One organisation's content (format 3): a scoped replace, and a refusal says why.
         if (looksLikeOrganisationContent(parsed)) {
           ofOneOrganisation = true;
-          assertMayImportOrganisation(user, parsed.organisationid);
+          const access = organisationAccess(user, parsed.organisationid);
           const content = validateOrganisationContent(parsed);
+          if (access === "bootstrap") {
+            await assertOwnSchoolIsAdoptable(user, content, tnx);
+          }
           const counts = await new OrganisationContentImport(tnx).run(content);
           await tnx.commit();
           Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
