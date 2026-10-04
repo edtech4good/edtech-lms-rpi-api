@@ -1,4 +1,6 @@
 import { schools } from "src/models/data-models/school";
+import { schoolusers } from "src/models/data-models/schoolusers";
+import { students } from "src/models/data-models/students";
 
 export class SchoolBusiness {
   getSchoolByName = (schoolname?: unknown) => {
@@ -25,15 +27,44 @@ export class SchoolBusiness {
     };
   };
 
-  /** Powers the student-login JWT claims. Same fallback shape as getBranding,
-   * plus the schoolid so the app can key cached branding per school. */
+  /**
+   * The school id a login is tied to, from the id columns on its rows: the
+   * learner row first, then the school-login row. NULL while neither is filled
+   * (a row not yet backfilled, or a login with no school), in which case the
+   * caller falls back to the school's name.
+   */
+  getLinkedSchoolId = async (schooluserid: string): Promise<string | null> => {
+    const learner = await students
+      .scope("withOwnership")
+      .findOne({ where: { schooluserid }, attributes: ["schoolid"] });
+    if (learner?.schoolid) {
+      return learner.schoolid;
+    }
+    const login = await schoolusers
+      .scope("withOwnership")
+      .findOne({ where: { schooluserid }, attributes: ["schoolid"] });
+    return login?.schoolid ?? null;
+  };
+
+  /** Powers the login JWT claims (learner and teacher alike). Same fallback
+   * shape as getBranding, plus the schoolid so the app can key cached branding
+   * per school, plus the school's organisation. The school is found by id when
+   * the caller has one, else by name (the join every row used before it had an
+   * id). A school with no organisation, or no school at all, gives null, never
+   * an error: nothing is refused on these claims yet. */
   getTheme = async (
-    schoolname?: string
-  ): Promise<{ uitheme: string; schoolid: string | null }> => {
-    const school = await this.getSchoolByName(schoolname);
+    schoolname?: string,
+    schoolid?: string | null
+  ): Promise<{ uitheme: string; schoolid: string | null; organisationid: string | null }> => {
+    const withOwnership = schools.scope("withOwnership");
+    let school = schoolid ? await withOwnership.findOne({ where: { schoolid } }) : null;
+    if (!school && typeof schoolname === "string" && schoolname.length > 0) {
+      school = await withOwnership.findOne({ where: { schoolname } });
+    }
     return {
       uitheme: school?.uitheme ?? "kids",
       schoolid: school?.schoolid ?? null,
+      organisationid: school?.organisationid ?? null,
     };
   };
 }

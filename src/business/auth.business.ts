@@ -41,7 +41,11 @@ export class AuthBusiness {
     const schooluser = await new StudentBusiness().getstudentbyschooluserid(
       user.schooluserid
     );
-    const schoolTheme = await new SchoolBusiness().getTheme(user.schoolname);
+    const schoolBusiness = new SchoolBusiness();
+    const schoolTheme = await schoolBusiness.getTheme(
+      user.schoolname,
+      await schoolBusiness.getLinkedSchoolId(user.schooluserid)
+    );
     if (schooluser) {
       // const studenttype = Config.fortyk.api.rpi.offline ? 'offline' : 'online';
       // Only reached after a correct password, so this can safely say more

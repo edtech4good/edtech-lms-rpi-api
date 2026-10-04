@@ -119,7 +119,7 @@ export class TokenBusiness {
     user: students,
     baselineid: string | undefined | null = null,
     baselinepassed: boolean = false,
-    schoolTheme?: { uitheme?: string; schoolid?: string | null }
+    schoolTheme?: { uitheme?: string; schoolid?: string | null; organisationid?: string | null }
   ): Promise<LoginTokens> => {
     const userpayload = <Token>{
       studentfirstname: user.studentfirstname,
@@ -152,6 +152,7 @@ export class TokenBusiness {
       is_teacher_acc: user.is_teacher_acc ?? false,
       uitheme: schoolTheme?.uitheme ?? "kids",
       schoolid: schoolTheme?.schoolid ?? null,
+      organisationid: schoolTheme?.organisationid ?? null,
     };
     const accessid = uuidv4();
     const accessToken = this.generateToken(
