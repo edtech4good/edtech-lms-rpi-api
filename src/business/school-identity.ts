@@ -274,3 +274,57 @@ export async function withImportSchoolIds<T extends { schoolid?: string | null; 
   }
   return out;
 }
+
+type SchoolRef = { schoolid?: unknown; schoolname?: unknown };
+
+/** A roster file that names a school (format 3) and carries rows of another. */
+export class RosterSchoolError extends ApiError {}
+
+/**
+ * A format-3 roster names the school it is for (a top-level `schoolid`), and every
+ * row in it must belong to that school: by the `schoolid` the row carries, or, for
+ * a row with none, by its `schoolname` resolving to that school. One row of another
+ * school, with no school, or whose name matches no school here, fails the whole
+ * file with a 400 (nothing has been written when this runs).
+ */
+export async function assertRosterBelongsToSchool(
+  rowsOfRoster: Array<SchoolRef | null | undefined | Array<SchoolRef | null | undefined>>,
+  schoolid: unknown,
+  transaction?: Transaction,
+): Promise<void> {
+  if (!isGiven(schoolid)) {
+    throw new RosterSchoolError(ErrorCode.INVALID_INPUT, {
+      message: "schoolid must be the id of the school this roster is for.",
+      fields: [{ field: "schoolid", message: "schoolid must be the id of the school this roster is for." }],
+    });
+  }
+  const wanted = schoolid.trim().toLowerCase();
+  const byName = new Map<string, string | null>();
+  let elsewhere = 0;
+  const declaredBy = async (row: SchoolRef | null | undefined): Promise<string | null> => {
+    if (row && isGiven(row.schoolid)) {
+      return row.schoolid.trim();
+    }
+    if (row && isGiven(row.schoolname)) {
+      if (!byName.has(row.schoolname)) {
+        byName.set(row.schoolname, await findSchoolIdByName(row.schoolname, { strict: true, transaction }));
+      }
+      return byName.get(row.schoolname) ?? null;
+    }
+    return null;
+  };
+  // An entry is one learner or teacher; when it is a list (a login and its learner record) every part must belong.
+  for (const entry of rowsOfRoster) {
+    for (const row of Array.isArray(entry) ? entry : [entry]) {
+      const declared = await declaredBy(row);
+      if (declared === null || declared.toLowerCase() !== wanted) {
+        elsewhere += 1;
+        break;
+      }
+    }
+  }
+  if (elsewhere > 0) {
+    const message = `${elsewhere} ${elsewhere === 1 ? "row does" : "rows do"} not belong to the school this roster is for. Nothing was written.`;
+    throw new RosterSchoolError(ErrorCode.INVALID_INPUT, { message, fields: [{ field: "schoolid", message }] });
+  }
+}

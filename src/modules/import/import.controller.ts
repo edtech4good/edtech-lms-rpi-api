@@ -28,6 +28,7 @@ import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
 import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
+import { assertRosterBelongsToSchool, RosterSchoolError } from "src/business/school-identity";
 import { SyncBusiness } from "src/business/sync.business";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
@@ -185,6 +186,14 @@ export class ImportController {
         const stp = new StudentProgressBusiness();
         const tnx = await dbinstance.getdbinstance().transaction();
         try {
+          // A roster that names its school (format 3) may only carry that school's rows.
+          if (payload.schoolid !== undefined) {
+            await assertRosterBelongsToSchool(
+              newstudents.map((x) => [x, x.student]),
+              payload.schoolid,
+              tnx
+            );
+          }
           const suresult = await su.importschoolusers(newstudents, tnx);
           await st.importstudents(
             suresult.map((x: any) => {
@@ -209,6 +218,9 @@ export class ImportController {
           await tnx.commit();
         } catch(e) {
           await rollbackQuietly(tnx);
+          if (e instanceof RosterSchoolError) {
+            throw e;
+          }
           throw new BadRequestException({
             error: true,
             errormessage: "Invalid file",
@@ -220,6 +232,9 @@ export class ImportController {
           data: true,
         };
       } catch (e) {
+        if (e instanceof RosterSchoolError) {
+          throw e;
+        }
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",
@@ -283,11 +298,24 @@ export class ImportController {
       try {
         const teachersjson = zipEntries[0].getData().toString("utf8");
         let newteachers: Array<any> = [];
-        newteachers = JSON.parse(teachersjson);
+        const parsed = JSON.parse(teachersjson);
+        if (Array.isArray(parsed)) {
+          newteachers = parsed;
+        } else {
+          // A roster that names its school (format 3): `{ schoolid, teachers: [...] }`.
+          if (!Array.isArray(parsed?.teachers) || parsed.schoolid === undefined) {
+            throw new Error("not a teacher roster");
+          }
+          newteachers = parsed.teachers;
+          await assertRosterBelongsToSchool(newteachers, parsed.schoolid, tnx);
+        }
         await su.importschoolteachers(newteachers, tnx);
         await tnx.commit();
-      } catch {
+      } catch (e) {
         await rollbackQuietly(tnx);
+        if (e instanceof RosterSchoolError) {
+          throw e;
+        }
         throw new BadRequestException({
           error: true,
           errormessage: "Invalid file",

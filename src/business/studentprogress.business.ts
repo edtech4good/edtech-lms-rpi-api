@@ -19,6 +19,8 @@ import {
 } from "src/models/data-models/studentprogress";
 
 export interface exportpayload {
+  // Set on a roster that names the school it is for (format 3): every row must be that school's.
+  schoolid?: string;
   studentusers: schoolusersAttributes[];
   studentprogresses: studentpointsprogress;
 }
