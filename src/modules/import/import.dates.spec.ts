@@ -8,6 +8,7 @@ import {
   studentprogress,
   students,
 } from "src/models/data-models/init-models";
+import { schools } from "src/models/data-models/school";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { ImportController } from "./import.controller";
@@ -48,13 +49,18 @@ const mockZipContaining = (payload: unknown) => {
 const BIRTH = "2015-03-14T00:00:00.000Z";
 const JOIN = "2024-09-02T00:00:00.000Z";
 
+// The school the roster names: it is "here" (S4: a roster is refused until its school is).
+const SCHOOL = "5c000000-0000-4000-8000-0000000000a1";
+
 const studentuser = (student: Record<string, unknown>) => ({
   schooluserid: "su1",
   schoolusername: "sokha01",
   schooluserrole: "STUDENT",
+  schoolid: SCHOOL,
   student: {
     studentid: "s1",
     schooluserid: "su1",
+    schoolid: SCHOOL,
     studentfirstname: "សុខា",
     studentlastname: "ចាន់",
     city: "ភ្នំពេញ",
@@ -64,6 +70,7 @@ const studentuser = (student: Record<string, unknown>) => ({
 
 describe("students import writes the nested student's dates to the right columns", () => {
   beforeEach(() => {
+    jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL, schoolname: "School" } as never);
     jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue({
       commit: jest.fn().mockResolvedValue(undefined),
       rollback: jest.fn().mockResolvedValue(undefined),

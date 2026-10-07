@@ -38,7 +38,8 @@ beforeEach(() => {
   jest.spyOn(schools, "findAll").mockImplementation((async (opts: { where: { logic: string } }) =>
     schoolRows.filter((s) => s.schoolname.toLowerCase() === opts.where.logic.trim().toLowerCase()).map((s) => ({ isdeleted: false, ...s }))) as never);
   jest.spyOn(schools, "findOne").mockImplementation((async (opts: { where: { schoolid: string } }) =>
-    schoolRows.find((s) => s.schoolid === opts.where.schoolid) ?? null) as never);
+    // the column's collation compares ids without regard to letter case
+    schoolRows.find((s) => s.schoolid.toLowerCase() === opts.where.schoolid.toLowerCase()) ?? null) as never);
   jest.spyOn(schoolusers, "bulkCreate").mockImplementation((async (rows: Array<{ schoolusername: string }>) => rows) as never);
   jest.spyOn(students, "bulkCreate").mockResolvedValue([] as never);
   jest.spyOn(studentprogress, "bulkCreate").mockResolvedValue([] as never);
@@ -95,17 +96,19 @@ describe("PUT /import/students for one school", () => {
     }
   });
 
-  it("before its school has reached this server: rows that carry the school id pass, rows with only a name are refused (the name cannot resolve yet)", async () => {
+  it("before its school has reached this server (S4): rows that carry the school id and rows with only a name are all refused, nothing written", async () => {
     schoolRows = [];
-    mockZipContaining({ schoolid: A, studentusers: [learner(1), learner(2, { schoolid: A, schoolname: "សាលា A" })] });
-    await expect(new ImportController().studentsimport(file, user)).resolves.toEqual({ error: false, data: true });
-    expect(students.bulkCreate).toHaveBeenCalled();
-    jest.clearAllMocks();
-    tnx.commit.mockResolvedValue(undefined);
-    tnx.rollback.mockResolvedValue(undefined);
-    mockZipContaining({ schoolid: A, studentusers: [learner(3, { schoolname: "សាលា A" })] });
-    await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
-    nothingWritten();
+    for (const rows of [
+      [learner(1), learner(2, { schoolid: A, schoolname: "សាលា A" })],
+      [learner(3, { schoolname: "សាលា A" })],
+    ]) {
+      jest.clearAllMocks();
+      tnx.commit.mockResolvedValue(undefined);
+      tnx.rollback.mockResolvedValue(undefined);
+      mockZipContaining({ schoolid: A, studentusers: rows });
+      await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/no school this server has|does not belong to the school this roster is for/) });
+      nothingWritten();
+    }
   });
 
   it("a schoolid that is not a school id is refused", async () => {
@@ -125,7 +128,7 @@ describe("PUT /import/students for one school", () => {
     nothingWritten();
   });
 
-  it("a payload with no top-level schoolid is read as before: rows of any school are imported", async () => {
+  it("a payload with no top-level schoolid is read as before: rows of any school this server has are imported", async () => {
     mockZipContaining({ studentusers: [learner(1), learner(2, { schoolid: B })] });
     await expect(new ImportController().studentsimport(file, user)).resolves.toEqual({ error: false, data: true });
     expect(tnx.commit).toHaveBeenCalledTimes(1);

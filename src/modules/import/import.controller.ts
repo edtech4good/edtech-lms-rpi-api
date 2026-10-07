@@ -29,7 +29,7 @@ import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
 import { OrganisationContent } from "./organisation-content.validator";
 import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
-import { assertRosterBelongsToSchool, RosterSchoolError } from "src/business/school-identity";
+import { assertRosterBelongsToSchool, RosterSchoolError, withRequiredSchoolIds } from "src/business/school-identity";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
@@ -209,6 +209,10 @@ export class ImportController {
               tnx
             );
           }
+          // Every login and every learner row must name a school this server has: refused here, before the
+          // first write (the writers below ask again).
+          await withRequiredSchoolIds(newstudents, tnx);
+          await withRequiredSchoolIds(newstudents.map((x) => x.student ?? {}), tnx);
           const suresult = await su.importschoolusers(newstudents, tnx);
           await st.importstudents(
             suresult.map((x: any) => {
@@ -325,6 +329,8 @@ export class ImportController {
           newteachers = parsed.teachers;
           await assertRosterBelongsToSchool(newteachers, parsed.schoolid, tnx);
         }
+        // Refused before the first write: every teacher must name a school this server has.
+        await withRequiredSchoolIds(newteachers, tnx);
         await su.importschoolteachers(newteachers, tnx);
         await tnx.commit();
       } catch (e) {
@@ -387,7 +393,7 @@ export class ImportController {
   )
   @ApiResponse({
     status: 200,
-    description: "One organisation's content imported; the body names the organisation and counts what was written, deleted, marked deleted and adopted per table",
+    description: "One organisation's content imported; the body names the organisation and counts what was written, deleted and marked deleted per table",
     schema: {
       type: "object",
       properties: {

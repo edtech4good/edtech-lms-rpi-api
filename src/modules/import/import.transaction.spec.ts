@@ -9,6 +9,7 @@ import {
   studentprogress,
   students,
 } from "src/models/data-models/init-models";
+import { schools } from "src/models/data-models/school";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { ImportController } from "./import.controller";
@@ -78,9 +79,12 @@ const formatThree = {
   ),
 };
 
+// The school every roster row names: it is "here" (S4: a roster is refused until its school is).
+const SCHOOL = "5c000000-0000-4000-8000-0000000000a1";
+
 const studentPayload = {
   studentusers: [
-    { schooluserid: "su1", schoolusername: "student1", student: { studentid: "s1" } },
+    { schooluserid: "su1", schoolusername: "student1", schoolid: SCHOOL, student: { studentid: "s1", schoolid: SCHOOL } },
   ],
   studentprogresses: {
     studentprogress: [{ studentprogressid: "p1", studentid: "s1" }],
@@ -120,6 +124,7 @@ describe("import transactions wait for their writes and commit", () => {
       rolledBack: false,
     };
     jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
+    jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL, schoolname: "School" } as never);
     // importschoolusers returns schoolusers.bulkCreate's rows; the controller
     // matches them back to the payload by schoolusername.
     jest
@@ -174,7 +179,7 @@ describe("import transactions wait for their writes and commit", () => {
   });
 
   it("teachers import rolls back and answers 400 when the write fails", async () => {
-    mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher9" }]);
+    mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher9", schoolid: SCHOOL }]);
     jest.spyOn(schoolusers, "bulkCreate").mockReturnValue(rejectLater("ER_DUP_ENTRY") as never);
 
     await expect(new ImportController().teachersimport(file, user)).rejects.toBeInstanceOf(
@@ -194,7 +199,7 @@ describe("import transactions wait for their writes and commit", () => {
   });
 
   it("teachers import answers 400 (not the rollback's error) when the commit fails", async () => {
-    mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher9" }]);
+    mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher9", schoolid: SCHOOL }]);
     tnx.commit.mockReturnValue(rejectLater("commit failed"));
     // What Sequelize does after a failed commit: the transaction is finished.
     tnx.rollback.mockRejectedValue(

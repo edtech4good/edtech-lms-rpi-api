@@ -1,26 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
-import { hashPassword } from "src/services/password.service";
 import { Op, Transaction } from "sequelize";
 import { SchoolRole } from "src/models/enums/school.role.enum";
-import { v4 as uuidv4 } from "uuid";
 import {
   schoolusers,
-  schoolusersAttributes,
   students,
 } from "../models/data-models/init-models";
 import { byLogin, ExportKeys } from "./export-scope";
-import { withImportSchoolIds } from "./school-identity";
+import { withRequiredSchoolIds } from "./school-identity";
 
 export class SchoolUserBusiness {
-  importschooluser = async (newschooluser: schoolusers) => {
-    const newschoolusersresult = await schoolusers.create({ ...newschooluser });
-    return {
-      ...newschooluser,
-      schooluser: newschoolusersresult.get({ plain: true }),
-    };
-  };
   importschoolusers = async (
     newschooluser: Array<schoolusers>,
     tnx: Transaction
@@ -34,8 +24,9 @@ export class SchoolUserBusiness {
       // Fall back to STUDENT only if a row arrives without a role.
       //
       // `schoolid` follows the row's school (the id it carries, else its name
-      // resolved), so the id is rewritten with the name and never left stale.
-      (await withImportSchoolIds(newschooluser, tnx)).map((x) => ({
+      // resolved), so the id is rewritten with the name and never left stale. A row
+      // with no school this server has refuses the whole write (the column is required).
+      (await withRequiredSchoolIds(newschooluser, tnx)).map((x) => ({
         ...x,
         schooluserrole: x.schooluserrole ?? SchoolRole.STUDENT,
       })),
@@ -61,7 +52,7 @@ export class SchoolUserBusiness {
     transaction: Transaction
   ) =>
     schoolusers.bulkCreate(
-      (await withImportSchoolIds(newschooluser, transaction)).map((x) => ({ ...x, schooluserrole: SchoolRole.TEACHER })),
+      (await withRequiredSchoolIds(newschooluser, transaction)).map((x) => ({ ...x, schooluserrole: SchoolRole.TEACHER })),
       {
         transaction,
         // Upsert (matches importschoolusers). Without this a re-import of an
@@ -81,13 +72,6 @@ export class SchoolUserBusiness {
         ],
       }
     );
-  importschoolteacher = async (newteacheruser: schoolusers) => {
-    const newteacherusersresult = await schoolusers.create({
-      ...newteacheruser,
-      schooluserrole: SchoolRole.TEACHER,
-    });
-    return newteacherusersresult.get({ plain: true });
-  };
   deleteallteachers = () =>
     schoolusers.destroy({
       where: {
@@ -95,13 +79,6 @@ export class SchoolUserBusiness {
         schoolusername: { [Op.notLike]: "testteacher" },
       },
     });
-
-  createUser = async (user: schoolusersAttributes) => {
-    user.schooluserid = uuidv4();
-    user.schooluserpasswordhash = hashPassword(user.schooluserpasswordhash);
-    user.isdisabled = false;
-    return schoolusers.create(user);
-  };
 
   getuser = async (schooluserid: string) => {
     const _user = await schoolusers.findOne({ where: { schooluserid } });
