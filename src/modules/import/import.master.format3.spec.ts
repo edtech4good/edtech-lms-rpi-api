@@ -27,6 +27,7 @@ import { subjects } from "src/models/data-models/subjects";
 import { Config, Logger } from "src/config";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
+import { OrganisationContentImport } from "src/business/organisation-content.business";
 import { ImportController } from "./import.controller";
 
 /**
@@ -302,7 +303,7 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.lessonquizquestions).toHaveLength(1);
       expect(store.standards).toHaveLength(1);
       expect(result.counts.organisations.written).toBe(1);
-      expect(result.counts.questions).toMatchObject({ deleted: 0, written: 2, adopted: 0 });
+      expect(result.counts.questions).toEqual({ deleted: 0, written: 2, markedDeleted: 0 });
       expect(result.counts.schools).toMatchObject({ written: 1, markedDeleted: 0 });
       expect(result.counts.countries.written).toBe(1);
       expect(result.counts.grades.written).toBe(1);
@@ -317,6 +318,31 @@ describe("PUT /import/master with a format-3 payload", () => {
       await importIt(payloadOf(content("x", 1, ORG_X), { organisations: [organisationRow(ORG_X, "xorg", { uitheme: "kids", brandingconfig: { displayname: "ថ្មី" } })] }));
       expect(store.organisations).toHaveLength(1);
       expect(store.organisations[0]).toMatchObject({ organisationcode: "xorg", organisationname: "អង្គការ", uitheme: "kids", brandingconfig: { displayname: "ថ្មី" } });
+    });
+  });
+
+  describe("every owned row is written with an owner (S4)", () => {
+    it("a header that names no organisation refuses before anything is read or written", async () => {
+      install({});
+      const tx = tnx as never;
+      for (const organisationid of ["", "   ", undefined, null]) {
+        queries.length = 0;
+        const run = new OrganisationContentImport(tx).run({ organisationid, organisationcode: "xorg", organisation: organisationRow(ORG_X, "xorg"), tables: {} } as never);
+        await expect(run).rejects.toMatchObject({ status: 400, message: "The payload names no organisation. Nothing was written." });
+        expect(queries.filter((q) => !/FOREIGN_KEY_CHECKS/.test(q))).toEqual([]);
+        expect(store.organisations).toEqual([]);
+      }
+    });
+
+    it("every owned row stored carries the header's organisation, and the counts have no `adopted` field", async () => {
+      install({});
+      const payload = content("x", 1, ORG_X);
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      for (const table of OWNED_TABLES) {
+        expect(store[table].length).toBeGreaterThan(0);
+        expect(store[table].every((r) => r.organisationid === ORG_X)).toBe(true);
+      }
+      for (const counts of Object.values(result.counts)) expect(Object.keys(counts as object).sort()).toEqual(["deleted", "markedDeleted", "written"]);
     });
   });
 
@@ -549,31 +575,7 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(store.countries.map((c) => [c.countryid, c.countryname]).sort()).toEqual([["c-kh", "កម្ពុជា"], ["c-th", "ថៃ"]]);
     });
 
-    it("rows of an owned table with the same id and no owner are the organisation's: they take its owner, and are counted", async () => {
-      install(dbBefore());
-      const payload = content("x", 1, ORG_X);
-      payload.questions.push({ questionid: "u-q1-1", questiontext: "adopted", isdeleted: false, organisationid: ORG_X });
-      payload.questions.push({ questionid: "x-q9", questiontext: "សំណួរ ៩", isdeleted: false, organisationid: ORG_X });
-      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(store.questions.find((q) => q.questionid === "u-q1-1")).toMatchObject({ organisationid: ORG_X, questiontext: "adopted" });
-      expect(store.questions.find((q) => q.questionid === "u-q2-1")?.organisationid).toBeNull();
-      expect(result.counts.questions.adopted).toBe(1);
-    });
-
-    it("a school or curriculum with the same id and no owner is the organisation's: it takes the owner and is counted", async () => {
-      install(dbBefore());
-      const payload = content("x", 1, ORG_X);
-      payload.schools.push({ schoolid: "u-school-1", schoolname: "សាលា u 1 (renamed)", countryid: "c-kh", isdeleted: false, organisationid: ORG_X });
-      payload.curriculums.push({ curriculumid: "u-cur-1", curriculumname: "adopted", isdeleted: false, organisationid: ORG_X });
-      payload.standards.push({ standardid: "x-std-9", standardname: "ថ្នាក់ទី២", schoolid: "u-school-1" });
-      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(store.schools.find((s) => s.schoolid === "u-school-1")).toMatchObject({ organisationid: ORG_X, schoolname: "សាលា u 1 (renamed)" });
-      expect(store.curriculums.find((c) => c.curriculumid === "u-cur-1")).toMatchObject({ organisationid: ORG_X, curriculumname: "adopted" });
-      expect(result.counts.schools.adopted).toBe(1);
-      expect(result.counts.curriculums.adopted).toBe(1);
-    });
-
-    it("learners and logins pushed before their school get its id, the same fill the old import runs", async () => {
+    it("learners and logins stored before S4 with no school id get it once the school is here (the repair step; since S4 none can be stored)", async () => {
       const before = dbBefore();
       before.students.push({ studentid: "x-student-early", schoolname: "សាលា x1", schoolid: null });
       before.schoolusers.push({ schooluserid: "x-login-early", schoolname: "សាលា x1", schoolid: null });

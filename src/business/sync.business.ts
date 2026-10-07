@@ -201,12 +201,13 @@ export class SyncBusiness {
     });
 
   /**
-   * Learners and school logins are imported before their school exists on a new
-   * classroom server (rosters come from one sync, schools from this one), so they
-   * were written without a `schoolid`. Now that the schools are here, every row
-   * whose `schoolid` is still empty gets the id of the school its `schoolname`
-   * names, once per distinct name, by the same text rule every reader uses. A name
-   * that matches no school, or more than one, is left empty (counted, not named).
+   * A repair step for rows stored BEFORE `schoolid` became required (S4): a learner or
+   * school login imported ahead of its school was written without a `schoolid`. Now that
+   * the schools are here, every such row whose `schoolid` is still empty gets the id of
+   * the school its `schoolname` names, once per distinct name, by the same text rule every
+   * reader uses. A name that matches no school, or more than one, is left empty (counted,
+   * not named). Since S4 no row can be empty (a roster is refused until its school is
+   * here), so on a migrated database this finds nothing.
    */
   linkRosterToSchools = async () => {
     for (const [table, model] of [["students", students], ["schoolusers", schoolusers]] as const) {
@@ -236,7 +237,7 @@ export class SyncBusiness {
         }
         const [affected] = await (model as typeof students).update(
           { schoolid },
-          { where: { [Op.and]: [{ schoolid: null }, sqlWhere(cast(col("schoolname"), "BINARY"), name)] }, transaction: this._transaction },
+          { where: { [Op.and]: [{ schoolid: null }, sqlWhere(cast(col("schoolname"), "BINARY"), name)] } as never, transaction: this._transaction },
         );
         filled += affected;
       }
