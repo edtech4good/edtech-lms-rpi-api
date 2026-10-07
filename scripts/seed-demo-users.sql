@@ -1,4 +1,7 @@
 -- Demo Pi API users for local development (database: edtech_lms_rpi).
+-- Every row is owned: the school and the curriculum belong to the organisation `edtech4good` (created by
+-- seed-demo-users.js before this runs, which fills __ORGANISATION_ID__), and every login and learner has its
+-- school's id. seed-demo-users.js fills a NULL owner on rows this file inserted before and checks all of them.
 -- Guarantees: demo.student, demo.teacher accounts in 'Demo Primary School' (schoolid b0000000-0000-4000-8000-000000000002).
 -- Password for both accounts: 'demo' by default, or SEED_DEMO_PASSWORD if set
 -- when seed-demo-users.js runs. The default is published in this public repo,
@@ -17,21 +20,21 @@
 
 SET NAMES utf8mb4;
 
-INSERT IGNORE INTO `curriculums` (`curriculumid`, `curriculumname`, `curriculumstatus`, `curriculumdescription`, `isdeleted`, `subjectid`)
-VALUES ('a1111111-1111-4111-8111-111111111111', 'Demo curriculum', 1, 'Local dev seed', 0, NULL);
+INSERT IGNORE INTO `curriculums` (`curriculumid`, `curriculumname`, `curriculumstatus`, `curriculumdescription`, `isdeleted`, `subjectid`, `organisationid`)
+VALUES ('a1111111-1111-4111-8111-111111111111', 'Demo curriculum', 1, 'Local dev seed', 0, NULL, '__ORGANISATION_ID__');
 
-INSERT IGNORE INTO `schools` (`schoolid`, `schoolname`, `countryid`, `curriculums`, `isdeleted`, `uitheme`)
-VALUES ('b0000000-0000-4000-8000-000000000002', 'Demo Primary School', NULL, '[]', 0, 'kids');
+INSERT IGNORE INTO `schools` (`schoolid`, `schoolname`, `countryid`, `curriculums`, `isdeleted`, `uitheme`, `organisationid`)
+VALUES ('b0000000-0000-4000-8000-000000000002', 'Demo Primary School', NULL, '[]', 0, 'kids', '__ORGANISATION_ID__');
 
-INSERT IGNORE INTO `schoolusers` (`schooluserid`, `schoolusername`, `schooluserpasswordhash`, `schooluserrole`, `schooluserstatus`, `schoolname`, `isdisabled`)
+INSERT IGNORE INTO `schoolusers` (`schooluserid`, `schoolusername`, `schooluserpasswordhash`, `schooluserrole`, `schooluserstatus`, `schoolname`, `isdisabled`, `schoolid`)
 VALUES
-  ('a2222222-2222-4222-8222-222222222222', 'demo.student', '__PASSWORD_HASH__', 4, 1, 'Demo Primary School', 0),
-  ('a3333333-3333-4333-8333-333333333333', 'demo.teacher', '__PASSWORD_HASH__', 3, 1, 'Demo Primary School', 0);
+  ('a2222222-2222-4222-8222-222222222222', 'demo.student', '__PASSWORD_HASH__', 4, 1, 'Demo Primary School', 0, 'b0000000-0000-4000-8000-000000000002'),
+  ('a3333333-3333-4333-8333-333333333333', 'demo.teacher', '__PASSWORD_HASH__', 3, 1, 'Demo Primary School', 0, 'b0000000-0000-4000-8000-000000000002');
 
-INSERT IGNORE INTO `students` (`studentid`, `studentfirstname`, `studentlastname`, `genderid`, `city`, `country`, `state`, `curriculumid`, `isactive`, `schooluserid`, `is_teacher_acc`, `schoolname`)
+INSERT IGNORE INTO `students` (`studentid`, `studentfirstname`, `studentlastname`, `genderid`, `city`, `country`, `state`, `curriculumid`, `isactive`, `schooluserid`, `is_teacher_acc`, `schoolname`, `schoolid`)
 VALUES
-  ('a4444444-4444-4444-8444-444444444444', 'Demo', 'Student', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', 1, 'a2222222-2222-4222-8222-222222222222', 0, 'Demo Primary School'),
-  ('a5555555-5555-4555-8555-555555555555', 'Demo', 'Teacher', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', 1, 'a3333333-3333-4333-8333-333333333333', 1, 'Demo Primary School');
+  ('a4444444-4444-4444-8444-444444444444', 'Demo', 'Student', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', 1, 'a2222222-2222-4222-8222-222222222222', 0, 'Demo Primary School', 'b0000000-0000-4000-8000-000000000002'),
+  ('a5555555-5555-4555-8555-555555555555', 'Demo', 'Teacher', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', 1, 'a3333333-3333-4333-8333-333333333333', 1, 'Demo Primary School', 'b0000000-0000-4000-8000-000000000002');
 
 -- INSERT IGNORE is a no-op on a re-run against rows that already exist (e.g.
 -- from before `schoolname` was added to this seed), so backfill it

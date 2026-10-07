@@ -41,6 +41,15 @@ holds one school. The rules, in `src/business/`:
   over HTTP (the strategy refuses the token before the controller runs); the
   controller's own 403 is defence in depth.
   `PUT /import/ownership` fills empty owners only.
+- `src/provisioning/` (run as `npm run provision`, recipe in
+  `scripts/provision/README.md`) is how a fresh classroom server gets its first
+  organisation, school and logins with no network and no central: one
+  transaction, a dry run unless `--apply`, passwords shown once, a content
+  payload re-homed to the local organisation (content ids kept) and imported by
+  `OrganisationContentImport`. It refuses to run without `RPI_OFFLINE`, never
+  reuses a code under another name, and never reads or writes anything online.
+  The seeds (`scripts/seed-*.js`) put every school, content row, login and
+  learner under an organisation (`scripts/lib/seed-organisations.js`).
 - Every route declares an `@OrgPolicy` (`public | learner | teacher | server |
   pi-import`). `npm run routes:policy -- --write` regenerates
   `docs/route-policy-inventory.md`; `route-inventory.spec.ts` fails on an

@@ -30,6 +30,12 @@
  * .mp4 files exist nowhere, so a lesson opens but the player stays empty —
  * same accepted state as seed-demo-content.js.
  *
+ * Ownership: every school and piece of content here is owned by the organisation `miv` (created if it is not
+ * here, and refused if it was deleted: see lib/seed-organisations.js), and both logins and learners have the
+ * school's id. Rows seeded before owners existed get their NULL owner filled, and the school, its class, the
+ * owned content rows, the logins and the learners are checked after the INSERT IGNOREs. The rest (grades, levels,
+ * lessons, practices and so on) is not checked: INSERT IGNORE skips a row whose parent is missing without a word.
+ *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  */
 const path = require("path");
@@ -37,6 +43,7 @@ const dotenv = require("dotenv");
 const mysql = require("mysql2/promise");
 const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
+const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -237,17 +244,17 @@ async function main() {
   const q = (sql, params = []) => conn.execute(sql, params);
 
   try {
+    // The organisation everything below belongs to (created if it is not here yet).
+    const organisationid = await ensureOrganisation(conn, "miv");
+
     await q(`INSERT IGNORE INTO countries (countryid, countryname, isdeleted) VALUES (?,?,0)`,
       [ID.country, "Cambodia"]);
 
-    await q(`INSERT IGNORE INTO standards (standardid, standardname, schoolname, schoolid, isdeleted) VALUES (?,?,?,?,0)`,
-      [ID.standard, "MSME", "Mekong Inclusive Ventures", ID.school]);
+    await q(`INSERT IGNORE INTO subjects (subjectid, subjectname, subjectstatus, subjectdescription, isdeleted, organisationid) VALUES (?,?,1,?,0,?)`,
+      [ID.subject, "Business Foundations", "DCRS subject", organisationid]);
 
-    await q(`INSERT IGNORE INTO subjects (subjectid, subjectname, subjectstatus, subjectdescription, isdeleted) VALUES (?,?,1,?,0)`,
-      [ID.subject, "Business Foundations", "DCRS subject"]);
-
-    await q(`INSERT IGNORE INTO curriculums (curriculumid, curriculumname, curriculumstatus, curriculumdescription, isdeleted, subjectid) VALUES (?,?,1,?,0,?)`,
-      [ID.curriculum, "DCRS — Capital Readiness (Cohort II)", "Seeded by npm run seed:dcrs", ID.subject]);
+    await q(`INSERT IGNORE INTO curriculums (curriculumid, curriculumname, curriculumstatus, curriculumdescription, isdeleted, subjectid, organisationid) VALUES (?,?,1,?,0,?,?)`,
+      [ID.curriculum, "DCRS — Capital Readiness (Cohort II)", "Seeded by npm run seed:dcrs", ID.subject, organisationid]);
 
     await q(`INSERT IGNORE INTO grades (gradeid, curriculumid, gradestatus, gradename, gradedescription, gradeorder, isdeleted, passing_points, points) VALUES (?,?,1,?,?,1,0,80,100)`,
       [ID.grade, ID.curriculum, "Cohort II", "DCRS grade"]);
@@ -257,8 +264,13 @@ async function main() {
 
     // uitheme 'corporate' distinguishes this school's client UI from the
     // 'kids' default the demo school uses. brandingconfig stays NULL.
-    await q(`INSERT IGNORE INTO schools (schoolid, schoolname, countryid, curriculums, isdeleted, uitheme) VALUES (?,?,?,?,0,?)`,
-      [ID.school, "Mekong Inclusive Ventures", ID.country, JSON.stringify([ID.curriculum]), "corporate"]);
+    await q(`INSERT IGNORE INTO schools (schoolid, schoolname, countryid, curriculums, isdeleted, uitheme, organisationid) VALUES (?,?,?,?,0,?,?)`,
+      [ID.school, "Mekong Inclusive Ventures", ID.country, JSON.stringify([ID.curriculum]), "corporate", organisationid]);
+
+    // After the school: `standards.schoolid` has a foreign key to it, so inserted before the school exists (a fresh
+    // database) the row was skipped silently and the class only appeared on a second run.
+    await q(`INSERT IGNORE INTO standards (standardid, standardname, schoolname, schoolid, isdeleted) VALUES (?,?,?,?,0)`,
+      [ID.standard, "MSME", "Mekong Inclusive Ventures", ID.school]);
 
     const lessons = [
       { id: ID.lesson1, name: "Why direction matters", order: 1, doc: ID.doc1, learning: ID.learning1, learningName: "Animation: No plan vs clear vision", learningDesc: "Shows the difference between running a business with no plan and one guided by a clear vision.", practice: ID.practice1, quiz: ID.quiz1, desc: "Why having a clear plan matters more than reacting to daily fires." },
@@ -274,8 +286,8 @@ async function main() {
 
       // documenttypeid 2 = VIDEO. No file of this name exists in any bucket;
       // matches seed-demo-content.js's accepted empty-player state.
-      await q(`INSERT IGNORE INTO documents (documentid, documenttypeid, documentname, documents3meta, isdeleted, documenttags) VALUES (?,2,?,?,0,?)`,
-        [l.doc, `dcrs-m1-l${l.order}.mp4`, JSON.stringify({ seeded: true, media: "absent" }), JSON.stringify(["dcrs"])]);
+      await q(`INSERT IGNORE INTO documents (documentid, documenttypeid, documentname, documents3meta, isdeleted, documenttags, organisationid) VALUES (?,2,?,?,0,?,?)`,
+        [l.doc, `dcrs-m1-l${l.order}.mp4`, JSON.stringify({ seeded: true, media: "absent" }), JSON.stringify(["dcrs"]), organisationid]);
 
       await q(`INSERT IGNORE INTO lessonlearnings (lessonlearningid, lessonlearningname, lessonlearningdescription, lessonlearningstatus, lessonid, documentid, lessonlearningorder, points) VALUES (?,?,?,1,?,?,1,20)`,
         [l.learning, l.learningName, l.learningDesc, l.id, l.doc]);
@@ -303,10 +315,10 @@ async function main() {
         };
       });
 
-      await q(`INSERT IGNORE INTO questions (questionid, questionheading, questionoptions, questiontext, questiondistractors, questionfile, templatetypeid, isdeleted, questionstatus, questionidentifier, questiontags, questioncorrectvalue, questionfeedback)
-               VALUES (?,?,?,?,?,?,1,0,1,?,?,?,?)`,
+      await q(`INSERT IGNORE INTO questions (questionid, questionheading, questionoptions, questiontext, questiondistractors, questionfile, templatetypeid, isdeleted, questionstatus, questionidentifier, questiontags, questioncorrectvalue, questionfeedback, organisationid)
+               VALUES (?,?,?,?,?,?,1,0,1,?,?,?,?,?)`,
         [id, JSON.stringify({ headingtext: Q.text, headingfile: null }), JSON.stringify(options), Q.text,
-         JSON.stringify([]), null, Q.ident, JSON.stringify(["demo", "dcrs"]), null, Q.feedback ?? null]);
+         JSON.stringify([]), null, Q.ident, JSON.stringify(["demo", "dcrs"]), null, Q.feedback ?? null, organisationid]);
     }
 
     // Practice/quiz mapping (own join-row ids; order restarts at 1 per lesson).
@@ -343,17 +355,30 @@ async function main() {
     const CURRICULUM_IDS = JSON.stringify([ID.curriculum]);
 
     // schooluserrole: 3 = teacher, 4 = student (matches seed-demo-users.sql).
-    await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled) VALUES (?,?,?,4,1,?,0)`,
-      [ID.studentUser, "miv.demo", PASSWORD_HASH, "Mekong Inclusive Ventures"]);
-    await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc)
-             VALUES (?,?,?,2,?,?,?,?,?,1,?,?,?,?,?,?,?,0)`,
-      [ID.student, "Sreymom", "Prak", "Battambang", "Cambodia", "Battambang", ID.curriculum, CURRICULUM_IDS, ID.studentUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Mekong Inclusive Ventures"]);
+    await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled, schoolid) VALUES (?,?,?,4,1,?,0,?)`,
+      [ID.studentUser, "miv.demo", PASSWORD_HASH, "Mekong Inclusive Ventures", ID.school]);
+    await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc, schoolid)
+             VALUES (?,?,?,2,?,?,?,?,?,1,?,?,?,?,?,?,?,0,?)`,
+      [ID.student, "Sreymom", "Prak", "Battambang", "Cambodia", "Battambang", ID.curriculum, CURRICULUM_IDS, ID.studentUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Mekong Inclusive Ventures", ID.school]);
 
-    await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled) VALUES (?,?,?,3,1,?,0)`,
-      [ID.facilitatorUser, "miv.facilitator", PASSWORD_HASH, "Mekong Inclusive Ventures"]);
-    await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc)
-             VALUES (?,?,?,1,?,?,?,?,?,1,?,?,?,?,?,?,?,1)`,
-      [ID.facilitator, "MIV", "Facilitator", "Battambang", "Cambodia", "Battambang", ID.curriculum, CURRICULUM_IDS, ID.facilitatorUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Mekong Inclusive Ventures"]);
+    await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled, schoolid) VALUES (?,?,?,3,1,?,0,?)`,
+      [ID.facilitatorUser, "miv.facilitator", PASSWORD_HASH, "Mekong Inclusive Ventures", ID.school]);
+    await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc, schoolid)
+             VALUES (?,?,?,1,?,?,?,?,?,1,?,?,?,?,?,?,?,1,?)`,
+      [ID.facilitator, "MIV", "Facilitator", "Battambang", "Cambodia", "Battambang", ID.curriculum, CURRICULUM_IDS, ID.facilitatorUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Mekong Inclusive Ventures", ID.school]);
+
+    // INSERT IGNORE turns a refused row into a silent skip, and leaves rows seeded before owners existed as they
+    // were: fill the NULL owners and school ids of this seed's own rows, then check every one is there.
+    await fillAndVerify(conn, [
+      { table: "schools", key: "schoolid", ids: [ID.school], column: "organisationid", value: organisationid },
+      { table: "subjects", key: "subjectid", ids: [ID.subject], column: "organisationid", value: organisationid },
+      { table: "curriculums", key: "curriculumid", ids: [ID.curriculum], column: "organisationid", value: organisationid },
+      { table: "documents", key: "documentid", ids: [ID.doc1, ID.doc2, ID.doc3, ID.doc4], column: "organisationid", value: organisationid },
+      { table: "questions", key: "questionid", ids: QUESTIONS.map((Q) => ID[Q.key]), column: "organisationid", value: organisationid },
+      { table: "standards", key: "standardid", ids: [ID.standard], column: "schoolid", value: ID.school },
+      { table: "schoolusers", key: "schooluserid", ids: [ID.studentUser, ID.facilitatorUser], column: "schoolid", value: ID.school },
+      { table: "students", key: "studentid", ids: [ID.student, ID.facilitator], column: "schoolid", value: ID.school },
+    ]);
 
     const [[c]] = await conn.query(`
       SELECT (SELECT COUNT(*) FROM lessons WHERE levelid = ?)   AS lessons,
