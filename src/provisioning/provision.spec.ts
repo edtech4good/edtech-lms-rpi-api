@@ -100,7 +100,6 @@ describe("what the command prints", () => {
     otherSchoolsMarkedDeleted: 0,
     otherLiveSchoolIds: [],
     replaceSchool: false,
-    classIdsBefore: [],
     removals: null,
     content: null,
     reset: null,
@@ -131,6 +130,23 @@ describe("what the command prints", () => {
     expect(text).toContain("the import will DELETE (this organisation's rows the payload does not have): 3 questions, 1 document");
     expect(text).toContain("the import will mark deleted: 2 curricula, 1 school");
     expect(text).toContain("--replace-school: 1 other school of this organisation will be marked deleted");
+  });
+
+  it("says when a country that is deleted here is brought back, and how many payload countries were re-homed by name", () => {
+    const revive = describePlan({ ...plan, country: { action: "revive", countryid: "44444444-4444-4444-8444-444444444444", countryname: "កម្ពុជា" } }, false);
+    expect(revive).toContain('country       revive  "កម្ពុជា" (it is deleted here; a country is a shared reference row, so it is brought back)');
+    expect(describePlan(plan, false)).not.toContain("revive");
+    const withContent = (countriesRemapped: number): ProvisionPlan => ({
+      ...plan,
+      content: {
+        file: "payload.json",
+        rehomed: {
+          summary: { ownersRewritten: {}, schoolsInPayload: 1, standardsInPayload: 1, baselineListsRewritten: 0, curricula: 1, countryAdded: false, countriesRemapped, rows: { organisations: 1 } },
+        },
+      } as unknown as NonNullable<ProvisionPlan["content"]>,
+    });
+    expect(describePlan(withContent(1), false)).toContain("countries re-homed onto this server's row of the same name: 1");
+    expect(describePlan(withContent(0), false)).toContain("countries re-homed onto this server's row of the same name: 0");
   });
 
   it("describes a password reset as changing nothing else, and shows the new password once", () => {

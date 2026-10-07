@@ -35,6 +35,9 @@ export function describePlan(plan: ProvisionPlan, apply: boolean): string {
   if (plan.country && plan.country.action === "create") {
     out.push(`  country       create  "${plan.country.countryname}" (the server has none of that name and there is no payload to carry one)`);
   }
+  if (plan.country && plan.country.action === "revive") {
+    out.push(`  country       revive  "${plan.country.countryname}" (it is deleted here; a country is a shared reference row, so it is brought back)`);
+  }
   out.push(plan.standard ? `  class         ${plan.standard.action}  "${plan.standard.standardname}"` : "  class         none asked for");
   if (plan.standardsKept > 0) {
     out.push(`  classes       the school's ${plan.standardsKept === 1 ? "1 existing class stays" : `${plan.standardsKept} existing classes stay`} as ${plan.standardsKept === 1 ? "it is" : "they are"}`);
@@ -53,6 +56,7 @@ export function describePlan(plan: ProvisionPlan, apply: boolean): string {
     out.push(`      schools: the payload's ${summary.schoolsInPayload} replaced by the local school (listing its ${countOf(summary.curricula, "curriculum")})`);
     out.push(`      classes: the payload's ${summary.standardsInPayload} dropped; the school keeps its own${plan.standard?.action === "create" ? " and gets the new one" : ""}`);
     out.push(`      baseline school lists rewritten: ${summary.baselineListsRewritten}; country added to the payload: ${summary.countryAdded ? "yes" : "no"}`);
+    out.push(`      countries re-homed onto this server's row of the same name: ${summary.countriesRemapped}`);
     const rows = Object.entries(summary.rows).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`);
     out.push(`    rows imported: ${rows.join(", ")}`);
   } else {

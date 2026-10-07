@@ -237,6 +237,15 @@ describe("rehomeContent", () => {
     expect(summary.countriesRemapped).toBe(1);
   });
 
+  it("re-homes onto a country that is deleted here as a live row (it is brought back, the one rule for a deleted country)", () => {
+    const deletedLocal = { countryid: "0c000000-0000-4000-8000-0000000000e3", countryname: "Cambodia", expectedusage: null, isdeleted: true };
+    const { content } = rehomeContent(
+      validatePayload(sample()),
+      identity({ school: { ...identity().school, countryid: deletedLocal.countryid }, localCountries: [deletedLocal] }),
+    );
+    expect(content.tables.countries).toEqual([{ countryid: deletedLocal.countryid, countryname: "Cambodia", expectedusage: null, isdeleted: false }]);
+  });
+
   it("leaves a payload country alone when this server has it under the same id, or does not have the name", () => {
     const sameId = rehomeContent(validatePayload(sample()), identity({ localCountries: [{ countryid: CAMBODIA, countryname: "Cambodia", expectedusage: null, isdeleted: false }] }));
     expect(sameId.summary.countriesRemapped).toBe(0);

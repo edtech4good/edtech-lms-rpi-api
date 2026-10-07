@@ -182,6 +182,8 @@ organisation id and code. A classroom server has its own organisation, so before
 **Countries are re-homed by name.** A country name is unique on a server, so if the payload's country has the same name
 as one this server already has under another id (the one a no-`--content` run created, say), the payload's row is
 replaced by this server's, and every reference to the payload's id is rewritten to it. One row, no collision.
+A country that is **deleted** here is brought back (with or without `--content`): a country is a shared reference row
+and a classroom server has no screen that deletes one. The plan says "revive" and counts the countries it re-homed.
 
 (`PUT /import/master` over HTTP has no such step: a payload whose country has the same name as a local country under
 another id updates the local row, and a school pointing at the payload's id would dangle, because the import runs with
