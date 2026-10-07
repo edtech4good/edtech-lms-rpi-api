@@ -15,8 +15,8 @@ For where this project came from, see [HISTORY.md](HISTORY.md).
 The routes that matter for sync:
 
 - `PUT /import/master` takes the curriculum zip that the central API builds at `/sync/content` (one organisation's content). Online it accepts only the server sync key, which central's Sync Content sends as the raw `Authorization` header. On a classroom Pi (`RPI_OFFLINE=true`, or `"offline": true` in `FORTYKAPIRPICONFIG`) it also accepts an admin, superadmin or teacher token, so a teacher can carry the zip in on a tablet; that token must carry the organisation the zip is for. It takes one organisation's content (format 3) only: the old whole-content payload (format 2) is refused with a 400.
-- `PUT /import/students` and `PUT /import/teachers` accept only the server sync key, online or on a Pi.
-- `PUT /import/ownership` takes a JSON map of which organisation owns each school and each curriculum, question, document and subject, plus the organisation rows. It accepts only the server sync key, online or on a Pi, and writes only `organisationid` and the `organisations` table: no deletes and no logins. A row that already has a different owner is reported, not changed.
+- `PUT /import/students` and `PUT /import/teachers` accept only the server sync key, online or on a Pi. Every learner and login in a roster must name a school this server has (by id, or by a name that resolves to one); a roster with a row that does not is refused with a 400 and nothing is written, so a school must be here (provisioned, or pushed with its organisation's content) before its roster.
+- `PUT /import/ownership` takes a JSON map of which organisation owns each school and each curriculum, question, document and subject, plus the organisation rows. It accepts only the server sync key, online or on a Pi, and writes only `organisationid` and the `organisations` table: no deletes and no logins. A row that already has a different owner is reported, not changed. Since migration S4 every owner is required, so this route has nothing left to fill; it remains for databases that have not reached S4.
 - `GET /export/log` returns a zip of the student log plus this server's log files, for upload to the central API at `/log/import`. That central route is off by default; it only runs when the central API is deployed with `LOG_IMPORT_ENABLED` set to `true` or `1`.
 - `GET /export/report-data` does the same for the reporting API.
 
@@ -92,7 +92,8 @@ A school can run this code on a classroom server without ever touching the onlin
 
 - `npm run start:dev` runs Nest in watch mode.
 - `npm run build` then `npm start` (or `npm run start:prod`, same thing) is the production path. The build lands in `build/` and both run `build/server.js`.
-- `npm run db:migrate` runs the Sequelize migrations.
+- `npm run db:migrate` runs the Sequelize migrations. The last one (S4) makes the owner and school columns required and **refuses, changing nothing, while any row has none**.
+- `npm run db:check-owners [-- --ids]` is the pre-flight for S4: it prints, per column, how many rows have no owner or school (with `--ids`, which), and exits 1 when any do. Run it before `db:migrate`.
 - `npm run provision -- …` provisions a classroom server (see above and `scripts/provision/README.md`).
 - `npm run lint` and `npm run format` run ESLint and Prettier.
 
