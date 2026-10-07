@@ -27,8 +27,6 @@ import { subjects } from "src/models/data-models/subjects";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { dbinstance } from "src/services/dbservice";
 import { CONTENT_TABLES, OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
-import { Token } from "src/models/token.model";
-import { findSchoolIdByName, isGiven } from "./school-identity";
 import { SyncBusiness } from "./sync.business";
 
 /**
@@ -57,7 +55,7 @@ import { SyncBusiness } from "./sync.business";
  *  5. This organisation's schools and curricula that the payload no longer has are
  *     marked `isdeleted` (learners hold ids into them), never destroyed.
  *  6. Learners and logins that were pushed before their school are given their
- *     `schoolid` (the same fill the old master import runs).
+ *     `schoolid` (the same fill the retired format-2 import ran).
  *
  * Countries are global: upserted, never deleted. Nothing else is touched. The
  * caller commits (or rolls back) the transaction.
@@ -580,42 +578,4 @@ export class OrganisationContentImport {
       this.counts[key].markedDeleted += changed;
     }
   };
-}
-
-/**
- * A classroom Pi whose schools have no organisation yet gives its staff tokens no
- * `organisationid` claim, so the first format-3 content for it cannot be sent under the
- * claim rule. Such a token may send it ONLY when its own school (the token's school id, or
- * its school name resolved to one) is a school here that has no owner, AND is a school of
- * the payload (whose rows all carry the header's organisation). Anything else is a 403.
- * Reads only: called after the payload is validated and before anything is written. The
- * import then gives that school its owner, and the teacher's next login carries the claim.
- */
-export async function assertOwnSchoolIsAdoptable(
-  user: Token | undefined,
-  content: OrganisationContent,
-  transaction: Transaction,
-): Promise<void> {
-  const refuse = (): never => {
-    throw new ApiError(ErrorCode.NOT_ALLOWED);
-  };
-  const own = isGiven(user?.schoolid)
-    ? String(user?.schoolid).trim()
-    : await findSchoolIdByName(user?.schoolname, { strict: true, transaction }).catch(() => null);
-  if (!own) {
-    return refuse();
-  }
-  const row = (await schools.scope("withOwnership").findOne({
-    attributes: ["schoolid", "organisationid"],
-    where: { schoolid: own },
-    raw: true,
-    transaction,
-  })) as unknown as { organisationid: string | null } | null;
-  if (!row || (row.organisationid !== null && row.organisationid !== undefined && row.organisationid !== "")) {
-    return refuse(); // no such school here, or it already has an owner
-  }
-  if (!content.tables.schools.some((s) => lower(String(s.schoolid)) === lower(own))) {
-    return refuse();
-  }
-  Logger.info(`import contents for one organisation: classroom bootstrap by a token with no organisation, its school is adopted into ${content.organisationid}`);
 }

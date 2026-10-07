@@ -172,14 +172,18 @@ const ROSTER_KEYS = new Set([
 /** The keys that only a content payload has: any of them, or `format`, marks the payload as one. */
 const CONTENT_MARKERS = ["format", "scope", "organisationid", "organisationcode", "organisations"];
 
-/** True when the body is meant as a format-3 content payload (or claims to be), false for an old payload. */
+/**
+ * True when the body is meant as a format-3 content payload (or claims to be, so that
+ * `validateOrganisationContent` can say what is wrong with it). False for anything else:
+ * a body that names format 2 (retired), an array, a scalar, and the old whole-content
+ * payload, which has none of the markers. The caller refuses all of those.
+ */
 export const looksLikeOrganisationContent = (body: unknown): boolean => {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return false;
   }
   const row = body as Row;
-  // An old payload that names itself format 2 is still an old payload.
-  if (row.format === 2 && CONTENT_MARKERS.every((key) => key === "format" || !(key in row))) {
+  if (row.format === 2) {
     return false;
   }
   return CONTENT_MARKERS.some((key) => key in row);

@@ -666,7 +666,8 @@ describe("PUT /import/master with a format-3 payload", () => {
       await invalid({ ...base(), organisationcode: "x" }, /organisationcode must be 2 to 16/);
     });
     it("a header that is not a format-3 header", async () => {
-      await invalid({ ...base(), format: 2 }, /format must be 3/);
+      await invalid({ ...base(), format: 4 }, /format must be 3/);
+      await invalid({ ...base(), format: "3" }, /format must be 3/);
       await invalid({ ...base(), organisationid: "not-a-uuid" }, /organisationid must be/);
       const p = base();
       delete p.organisationid;
@@ -777,21 +778,57 @@ describe("PUT /import/master with a format-3 payload", () => {
     });
   });
 
-  describe("an old payload (no header, no owners) is still the old import", () => {
-    it("is not read as format 3: it wipes every content table and rebuilds it", async () => {
+  describe("format 2 is retired: a payload that is not one organisation's content is refused whole", () => {
+    const RETIRED = "This server accepts one organisation's content (format 3). Export it from the admin and send it again.";
+    /** The whole body of the refusal, and nothing read, opened or written. */
+    const retired = async (payload: unknown, user: Token = server) => {
       install(dbBefore());
-      const legacy = { schools: [], questions: [], documents: [], subjects: [], curriculums: [], grades: [], countries: [] };
-      await expect(importIt(legacy)).resolves.toEqual({ error: false, data: true });
-      // the old import's whole-table deletes ran (it destroys other organisations' rows too: that is the old behaviour)
-      expect(writes).toContain("questions.destroy");
-      expect(store.questions).toEqual([]);
+      const snapshot = cloneDeep(store);
+      const error: any = await importIt(payload, user).catch((e) => e); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(error.status).toBe(400);
+      expect(error.message).toBe(RETIRED);
+      expect(store).toEqual(snapshot);
+      expect(writes).toEqual([]);
+      expect(queries).toEqual([]);
+      expect(dbinstance.getdbinstance().transaction).not.toHaveBeenCalled();
+      expect(tnx.commit).not.toHaveBeenCalled();
+    };
+    const legacy = () => ({ schools: [], questions: [], documents: [], subjects: [], curriculums: [], grades: [], countries: [] });
+
+    it("the old whole-content payload (no header, no owners) is refused, and every content table is untouched", async () => {
+      await retired(legacy());
     });
 
-    it("a payload that says format 2 and has no header is the old import too; any other format is refused, not guessed at", async () => {
-      install(dbBefore());
-      await expect(importIt({ format: 2, questions: [] })).resolves.toEqual({ error: false, data: true });
+    it("a payload that names format 2 is refused, with or without the other keys of a header", async () => {
+      await retired({ format: 2, questions: [] });
+      await retired({ ...payloadOf(content("x", 1, ORG_X)), format: 2 });
+    });
+
+    it("a body that is not an object at all is refused the same way", async () => {
+      await retired([]);
+      await retired([legacy()]);
+      await retired(null);
+      await retired("format 3");
+    });
+
+    it("a teacher token is refused the same way, with or without an organisation claim", async () => {
+      await retired(legacy(), { schooluserid: "t1" } as Token);
+      await retired(legacy(), { schooluserid: "t1", organisationid: ORG_X } as unknown as Token);
+    });
+
+    it("a payload that claims format 3 but is malformed is still refused for what is wrong with it, not as format 2", async () => {
       install(dbBefore());
       await expect(importIt({ format: 4, questions: [] })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/format must be 3/) });
+      await expect(importIt({ format: 3, questions: [] })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/scope must be/) });
+      expect(writes).toEqual([]);
+    });
+
+    it("a file that is not JSON is the same 'Invalid file' as before", async () => {
+      install(dbBefore());
+      (AdmZip as jest.Mock).mockImplementation(() => ({
+        getEntries: () => [{ header: { size: 10 }, getData: () => Buffer.from("not json {") }],
+      }));
+      await expect(new ImportController().completesync(file, server)).rejects.toMatchObject({ status: 400, response: { errormessage: "Invalid file" } });
       expect(writes).toEqual([]);
     });
   });
@@ -829,103 +866,73 @@ describe("who may import one organisation's content", () => {
     expect(writes).toEqual([]);
   });
 
-  describe("a classroom Pi whose schools have no organisation yet (a token with no claim)", () => {
+  describe("a token with no organisation claim is refused on a classroom Pi as much as online (no bootstrap)", () => {
     const originalOffline = Config.fortyk.api.rpi.offline;
-    beforeEach(() => {
-      Config.fortyk.api.rpi.offline = true;
-    });
     afterEach(() => {
       Config.fortyk.api.rpi.offline = originalOffline;
     });
     const pi = (school: Record<string, unknown>, claim: unknown = null): Token => ({ schooluserid: "t1", schoolusername: "teacher", organisationid: claim, ...school } as unknown as Token);
-    /** x-school-1 is here and has no owner yet; everything else as dbBefore. */
+    /** x-school-1 is here and has no owner (a database from before owners were required); everything else as dbBefore. */
     const unownedSchoolDb = (): Store => {
       const before = dbBefore();
       before.schools.find((s) => s.schoolid === "x-school-1")!.organisationid = null;
       return before;
     };
-
-    it("is allowed when its own school is unowned here and is a school of the payload: the school gains the owner", async () => {
-      install(unownedSchoolDb());
-      const result: any = await importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" })); // eslint-disable-line @typescript-eslint/no-explicit-any
-      expect(result).toMatchObject({ error: false, data: true, organisationid: ORG_X });
-      expect(store.schools.find((s) => s.schoolid === "x-school-1")?.organisationid).toBe(ORG_X);
-      expect(result.counts.schools.adopted).toBe(1);
-      expect(logged.some((l) => /classroom bootstrap/.test(l))).toBe(true);
-      expect(logged.filter((l) => /classroom bootstrap/.test(l)).join("")).not.toMatch(/សាលា|x-school-1/);
-    });
-
-    it("finds its school by name when the token has only a name (an older token)", async () => {
-      install(unownedSchoolDb());
-      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolname: "សាលា x1" }))).resolves.toMatchObject({ error: false });
-      expect(store.schools.find((s) => s.schoolid === "x-school-1")?.organisationid).toBe(ORG_X);
-    });
-
-    it("is refused (403, nothing written) when its school already belongs to another organisation", async () => {
-      install(dbBefore());
-      const payload = content("x", 1, ORG_X);
-      payload.schools.push({ schoolid: "y-school-1", schoolname: "សាលា y 1", countryid: "c-kh", isdeleted: false, organisationid: ORG_X });
-      await expect(importIt(payloadOf(payload), pi({ schoolid: "y-school-1" }))).rejects.toMatchObject({ status: 403 });
+    const refusedWhole = async (payload: unknown, user: Token) => {
+      const snapshot = cloneDeep(store);
+      await expect(importIt(payload, user)).rejects.toMatchObject({ status: 403 });
+      expect(store).toEqual(snapshot);
       expect(writes).toEqual([]);
+      expect(queries).toEqual([]);
       expect(tnx.commit).not.toHaveBeenCalled();
+    };
+
+    it.each([[true], [false]])("a teacher with no claim whose own school is unowned here and in the payload is a 403, nothing written (RPI_OFFLINE=%p)", async (offline) => {
+      Config.fortyk.api.rpi.offline = offline;
+      install(unownedSchoolDb());
+      await refusedWhole(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }));
+      expect(store.schools.find((s) => s.schoolid === "x-school-1")?.organisationid).toBeNull();
     });
 
-    it("is refused when its school already belongs to the organisation (it should have the claim)", async () => {
+    it("the same by school name only (an older token), and with no organisationid key at all", async () => {
+      Config.fortyk.api.rpi.offline = true;
+      install(unownedSchoolDb());
+      await refusedWhole(payloadOf(content("x", 1, ORG_X)), pi({ schoolname: "សាលា x1" }));
+      await refusedWhole(payloadOf(content("x", 1, ORG_X)), { schooluserid: "t1", schoolusername: "teacher", schoolid: "x-school-1" } as unknown as Token);
+    });
+
+    it("no claim and no school at all, a school that is not here, or one that belongs to the organisation or another one: 403", async () => {
+      Config.fortyk.api.rpi.offline = true;
       install(dbBefore());
-      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 403 });
-      expect(writes).toEqual([]);
+      for (const school of [{}, { schoolid: "x-school-9" }, { schoolname: "Not Here" }, { schoolid: "x-school-1" }, { schoolid: "y-school-1" }, { schoolid: "u-school-1" }]) {
+        await refusedWhole(payloadOf(content("x", 1, ORG_X)), pi(school));
+      }
     });
 
-    it("is refused when its school is not a school of the payload", async () => {
+    it("is judged before the payload is read: a payload that is not even valid is a 403 too, so nothing about it is told", async () => {
+      Config.fortyk.api.rpi.offline = true;
+      install(unownedSchoolDb());
+      await refusedWhole({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }));
+    });
+
+    it("another organisation's claim is a 403 before the payload is read", async () => {
+      Config.fortyk.api.rpi.offline = true;
+      install(unownedSchoolDb());
+      await refusedWhole({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }, ORG_Y));
+    });
+
+    it("an empty-string claim, or any claim that is not an organisation id, is a 403 even when its school would qualify", async () => {
+      Config.fortyk.api.rpi.offline = true;
+      install(unownedSchoolDb());
+      for (const claim of ["", "  ", "not-a-uuid", ORG_X.slice(1), 42]) {
+        await refusedWhole(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }, claim));
+      }
+    });
+
+    it("a token whose claim is the organisation is still read on a Pi, whatever its school", async () => {
+      Config.fortyk.api.rpi.offline = true;
       install(dbBefore());
-      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "u-school-1" }))).rejects.toMatchObject({ status: 403 });
-      expect(writes).toEqual([]);
-    });
-
-    it("is refused when it has no school, or its school is not here, or its name matches none", async () => {
-      install(unownedSchoolDb());
-      for (const school of [{}, { schoolid: "x-school-9" }, { schoolname: "Not Here" }]) {
-        await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi(school))).rejects.toMatchObject({ status: 403 });
-      }
-      expect(writes).toEqual([]);
-    });
-
-    it("is judged AFTER the payload is validated: an invalid payload is a 400, not a 403", async () => {
-      install(unownedSchoolDb());
-      await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 400 });
-    });
-
-    it("a token WITH a claim is still checked before the payload is read, and another organisation's claim is a 403", async () => {
-      install(unownedSchoolDb());
-      await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }, ORG_Y))).rejects.toMatchObject({ status: 403 });
-    });
-
-    it("an empty-string claim, or any claim that is not an organisation id, is a 403 (only a missing claim is 'no claim') even when its school would qualify", async () => {
-      install(unownedSchoolDb());
-      for (const claim of ["", "  ", "not-a-uuid", ORG_X.slice(1)]) {
-        await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }, claim))).rejects.toMatchObject({ status: 403 });
-        await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }, claim))).rejects.toMatchObject({ status: 403 });
-      }
-      expect(writes).toEqual([]);
-    });
-
-    it("a claim that is absent altogether (no organisationid key in the token) is 'no claim': the bootstrap rule applies", async () => {
-      install(unownedSchoolDb());
-      const token = { schooluserid: "t1", schoolusername: "teacher", schoolid: "x-school-1" } as unknown as Token;
-      await expect(importIt(payloadOf(content("x", 1, ORG_X)), token)).resolves.toMatchObject({ error: false });
-    });
-
-    it("a claim that is not an id is a 403 even when its school would qualify", async () => {
-      install(unownedSchoolDb());
-      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }, 42))).rejects.toMatchObject({ status: 403 });
-    });
-
-    it("online (not RPI_OFFLINE) a token with no claim is a 403 whatever its school", async () => {
-      Config.fortyk.api.rpi.offline = false;
-      install(unownedSchoolDb());
-      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 403 });
-      await expect(importIt({ ...payloadOf(content("x", 1, ORG_X)), scope: "bad" }, pi({ schoolid: "x-school-1" }))).rejects.toMatchObject({ status: 403 });
-      expect(writes).toEqual([]);
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)), pi({}, ORG_X))).resolves.toMatchObject({ error: false, organisationid: ORG_X });
     });
   });
 
@@ -941,8 +948,12 @@ describe("who may import one organisation's content", () => {
     await expect(importIt(payloadOf(content("x", 2, ORG_X)), server)).resolves.toMatchObject({ organisationid: ORG_X });
   });
 
-  it("an old payload is not subject to the claim: a teacher token with none still imports it (unchanged)", async () => {
+  it("an old payload is refused as format 2 for a teacher with no claim too: the payload is not read, the claim rule is not what answers", async () => {
     install({});
-    await expect(importIt({ schools: [], questions: [] }, { schooluserid: "t1" } as Token)).resolves.toEqual({ error: false, data: true });
+    await expect(importIt({ schools: [], questions: [] }, { schooluserid: "t1" } as Token)).rejects.toMatchObject({
+      status: 400,
+      message: "This server accepts one organisation's content (format 3). Export it from the admin and send it again.",
+    });
+    expect(writes).toEqual([]);
   });
 });

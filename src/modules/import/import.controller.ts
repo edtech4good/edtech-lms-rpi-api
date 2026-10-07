@@ -21,17 +21,16 @@ import {
 } from "@nestjs/swagger";
 import AdmZip from "adm-zip";
 import { parseISO } from "date-fns";
-import { chunk } from "lodash";
 import "multer";
 import { Transaction } from "sequelize";
 import { OwnershipBusiness, OwnershipResult } from "src/business/ownership.business";
 import { SchoolUserBusiness } from "src/business/schooluser.business";
 import { StudentBusiness } from "src/business/student.business";
 import { exportpayload, StudentProgressBusiness } from "src/business/studentprogress.business";
-import { assertOwnSchoolIsAdoptable, OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
+import { OrganisationContent } from "./organisation-content.validator";
+import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
 import { assertRosterBelongsToSchool, RosterSchoolError } from "src/business/school-identity";
-import { SyncBusiness } from "src/business/sync.business";
-import { Config, Logger } from "src/config";
+import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
 import { ApiError } from "src/models/ApiError";
@@ -40,7 +39,6 @@ import { SERVER_SYNC_USER_ID, ServerSyncGuard } from "src/guards/server-sync.gua
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { ResponseBoolean } from "src/models/ResponseBoolean";
-import { Sync } from "src/models/Sync";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { looksLikeOrganisationContent, validateOrganisationContent } from "./organisation-content.validator";
@@ -100,35 +98,31 @@ const CLAIM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 /**
  * Who may import ONE organisation's content (format 3):
  *  - central, with the server sync key: always;
- *  - a staff token whose `organisationid` claim is that organisation: allowed (checked
- *    before the payload is read, so another organisation's teacher learns nothing of it);
- *  - on a classroom Pi only, a staff token with NO claim (its school has no organisation
- *    here yet): "bootstrap", allowed only if its own school is adoptable (see
- *    `assertOwnSchoolIsAdoptable`), which is checked after the payload is validated;
+ *  - a staff token (a classroom Pi only; the guard admits no other user token) whose
+ *    `organisationid` claim is that organisation: allowed (checked before the payload is
+ *    read, so another organisation's teacher learns nothing of it);
  *  - anything else (another organisation's claim, a claim that is not an organisation id,
- *    an empty string included, a missing claim online): 403.
+ *    an empty string included, no claim at all): 403, on a Pi as much as online.
  */
-function organisationAccess(user: Token | undefined, organisationid: unknown): "allowed" | "bootstrap" {
+function assertMayImportOrganisation(user: Token | undefined, organisationid: unknown): void {
   if (user?.schooluserid === SERVER_SYNC_USER_ID) {
-    return "allowed";
+    return;
   }
   const claim = user?.organisationid;
-  // Only a missing claim (null or absent) is "no claim". Any other value, an empty string
-  // included, must be an organisation id, and the header's, or it is a 403.
-  if (claim === undefined || claim === null) {
-    if (Config.fortyk.api.rpi.offline) {
-      return "bootstrap";
-    }
-  } else if (
+  if (
     typeof claim === "string" &&
     CLAIM_ID.test(claim) &&
     typeof organisationid === "string" &&
     claim.toLowerCase() === organisationid.toLowerCase()
   ) {
-    return "allowed";
+    return;
   }
   throw new ApiError(ErrorCode.NOT_ALLOWED);
 }
+
+/** What a payload that is not one organisation's content (format 3) is told. */
+const FORMAT_RETIRED_MESSAGE =
+  "This server accepts one organisation's content (format 3). Export it from the admin and send it again.";
 
 @ApiTags("Import")
 @Controller("import")
@@ -380,11 +374,12 @@ export class ImportController {
     return new OwnershipBusiness().apply(validateOwnershipBody(body));
   }
 
-  // Content import: the server sync key, plus staff tokens on a classroom Pi
-  // only, where the Android teacher app carries central's content zip in.
+  // Content import: ONE organisation's content (format 3) only; format 2 is retired.
+  // The server sync key, plus staff tokens on a classroom Pi only, where the Android
+  // teacher app carries central's content zip in.
   @Put("master")
   @OrgPolicy("pi-import", {
-    note: "Payload header names the organisation; on a Pi it must match the token's, or the token's school must be unowned (5c; the payload's rows are proved in src/modules/import).",
+    note: "Payload header names the organisation; on a Pi it must match the token's claim, and a token with no claim is refused (the payload's rows are proved in src/modules/import).",
     enforcedBy: "src/modules/org-boundary.leak.spec.ts",
   })
   @UseGuards(
@@ -397,7 +392,7 @@ export class ImportController {
   })
   @ApiResponse({
     status: 400,
-    description: "Error while sync",
+    description: "Not one organisation's content (format 3: format 2 is retired), or an invalid file",
   })
   @ApiResponse({
     status: 413,
@@ -428,115 +423,54 @@ export class ImportController {
   async completesync(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
-  ): Promise<ResponseBoolean | OrganisationContentResult> {
+  ): Promise<OrganisationContentResult> {
     const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
       assertEntryWithinLimit(zipEntries[0], UploadLimits.MASTER_ZIP_DECOMPRESSED_MAX_BYTES);
-      const tnx = await dbinstance.getdbinstance().transaction();
-      let ofOneOrganisation = false;
+      let parsed: unknown;
       try {
-        const data = zipEntries[0].getData().toString("utf8");
-        const parsed = JSON.parse(data);
-        // One organisation's content (format 3): a scoped replace, and a refusal says why.
-        if (looksLikeOrganisationContent(parsed)) {
-          ofOneOrganisation = true;
-          const access = organisationAccess(user, parsed.organisationid);
-          const content = validateOrganisationContent(parsed);
-          if (access === "bootstrap") {
-            await assertOwnSchoolIsAdoptable(user, content, tnx);
-          }
-          const counts = await new OrganisationContentImport(tnx).run(content);
-          await tnx.commit();
-          Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
-          return {
-            error: false,
-            data: true,
-            organisationid: content.organisationid,
-            counts,
-          };
+        parsed = JSON.parse(zipEntries[0].getData().toString("utf8"));
+      } catch {
+        throw new BadRequestException({
+          error: true,
+          errormessage: "Invalid file",
+        });
+      }
+      // Format 2 (the whole-content payload that replaced every table, with no owners) is retired:
+      // anything that is not one organisation's content is refused before anything is read or written.
+      if (!looksLikeOrganisationContent(parsed)) {
+        throw new ApiError(ErrorCode.FILE_REJECTED, { message: FORMAT_RETIRED_MESSAGE });
+      }
+      // One organisation's content (format 3): a scoped replace, and a refusal says why.
+      let content: OrganisationContent;
+      try {
+        assertMayImportOrganisation(user, (parsed as { organisationid?: unknown }).organisationid);
+        content = validateOrganisationContent(parsed);
+      } catch (e) {
+        if (e instanceof ApiError) {
+          throw e;
         }
-        let newsync: Sync = new Sync();
-        newsync = parsed;
-        const syncb = new SyncBusiness(tnx);
-
-        // Sync is a full-replace of content by id: cleanup() wipes every
-        // content table (including ones students hold FKs into, e.g.
-        // grades/levels/lessons) and the imports below re-create the SAME
-        // primary keys from the same central payload. Content ids are
-        // stable across syncs (central is the id authority), so once the
-        // import completes the student FK values are valid again. Turning
-        // FOREIGN_KEY_CHECKS off/on is what makes the intermediate
-        // (post-cleanup, pre-import) state tolerable instead of failing
-        // cleanup() with ER_ROW_IS_REFERENCED on any Pi where students
-        // have progress. This is a session variable scoped to this pooled
-        // connection only (SET, not SET GLOBAL) — it MUST be restored to
-        // 1 before the transaction ends on every path (commit or
-        // rollback), or the connection goes back into the pool with
-        // checks permanently off for whichever request borrows it next.
-        await dbinstance
-          .getdbinstance()
-          .query("SET FOREIGN_KEY_CHECKS = 0", { transaction: tnx });
-        try {
-          await syncb.cleanup();
-          const tempdocumentschunk = chunk(newsync.documents, 2000);
-
-          for await (const smallchunk of tempdocumentschunk) {
-            await syncb.documents(smallchunk);
-          }
-          //to ensure unbroken connection
-          const tempquestionschunk = chunk(newsync.questions, 2000);
-          for await (const smallchunk of tempquestionschunk) {
-            await syncb.questions(smallchunk);
-          }
-
-          await syncb.curriculum(newsync.curriculums);
-          await syncb.curriculumbaseline(newsync.curriculumbaselines);
-          await syncb.grade(newsync.grades);
-          await syncb.level(newsync.levels);
-          await syncb.lesson(newsync.lessons);
-          // countries -> schools -> standards: standards.schoolid references
-          // schools, and schools.countryid references countries, so both
-          // must be imported before standards. (Belt-and-braces alongside
-          // FOREIGN_KEY_CHECKS=0 above: correct on its own merits if that
-          // scope is ever narrowed.)
-          await syncb.countries(newsync.countries);
-          await syncb.schools(newsync.schools);
-          await syncb.standards(newsync.standards);
-
-          const tempquestionschunk1 = chunk(newsync.lessonlearnings, 1);
-          for await (const smallchunk of tempquestionschunk1) {
-            await syncb.lessonlearnings(smallchunk);
-          }
-
-          //await syncb.lessonlearnings(newsync.lessonlearnings);
-          await syncb.lessonquizzes(newsync.lessonquizzes);
-          await syncb.lessonpractices(newsync.lessonpractices);
-          await syncb.lessonpracticequestions(newsync.lessonpracticequestions);
-          await syncb.lessonquizquestions(newsync.lessonquizquestions);
-          await syncb.levelquizquestions(newsync.levelquizquestions);
-          await syncb.baselinequestion(newsync.baselinequestion);
-          await syncb.lessonplans(newsync.lessonplans);
-          await syncb.subject(newsync.subjects);
-          // The tables above were deleted and re-created: give schools and content
-          // back their owning organisation, and keep learners tied to their school.
-          await syncb.restoreOwnership();
-        } finally {
-          await dbinstance
-            .getdbinstance()
-            .query("SET FOREIGN_KEY_CHECKS = 1", { transaction: tnx });
-        }
-
+        throw new BadRequestException({
+          error: true,
+          errormessage: "Invalid file",
+        });
+      }
+      const tnx = await dbinstance.getdbinstance().transaction();
+      try {
+        const counts = await new OrganisationContentImport(tnx).run(content);
         await tnx.commit();
         Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
         return {
           error: false,
           data: true,
+          organisationid: content.organisationid,
+          counts,
         };
       } catch (e: any) {
         Logger.info(e);
         await rollbackQuietly(tnx);
-        if (ofOneOrganisation && e instanceof ApiError) {
+        if (e instanceof ApiError) {
           throw e;
         }
         throw new BadRequestException({
