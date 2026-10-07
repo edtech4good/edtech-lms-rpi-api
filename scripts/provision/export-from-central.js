@@ -9,7 +9,8 @@
  *
  * It signs in as a platform user, switches to the organisation (POST /auth/organisation), downloads
  * GET /sync/content (a zip with one file) and writes that file, pretty-printed, to the output path. Credentials
- * come from the environment only; nothing is printed but status lines.
+ * come from the environment only; nothing is printed but status lines. It signs out at the end: central keeps one
+ * token per user, so signing in here would otherwise end that account's session in a browser.
  */
 const fs = require("fs");
 const path = require("path");
@@ -33,7 +34,9 @@ const call = async (route, options = {}) => {
 const json = { "content-type": "application/json" };
 
 (async () => {
+  let token = null;
   const login = await (await call("/auth/login", { method: "POST", headers: json, body: JSON.stringify({ lmsusername: user, lmsuserpassword: password }) })).json();
+  token = login.data.accessToken;
   const switched = await (
     await call("/auth/organisation", {
       method: "POST",
@@ -41,7 +44,9 @@ const json = { "content-type": "application/json" };
       body: JSON.stringify({ organisationid }),
     })
   ).json();
-  const zip = Buffer.from(await (await call("/sync/content", { headers: { authorization: `Bearer ${switched.data.accessToken}` } })).arrayBuffer());
+  // Switching organisation issues a new token and ends the old one: this is the one to sign out with.
+  token = switched.data.accessToken;
+  const zip = Buffer.from(await (await call("/sync/content", { headers: { authorization: `Bearer ${token}` } })).arrayBuffer());
   const entries = new AdmZip(zip).getEntries();
   if (entries.length === 0) throw new Error("the export holds no file");
   const payload = JSON.parse(entries[0].getData().toString("utf8"));
@@ -50,7 +55,14 @@ const json = { "content-type": "application/json" };
   fs.writeFileSync(output, JSON.stringify(payload, null, 2) + "\n");
   const rows = Object.entries(payload).filter(([, v]) => Array.isArray(v)).reduce((n, [, v]) => n + v.length, 0);
   console.log(`Saved ${rows} rows of organisation ${payload.organisationcode} to ${output}`);
-})().catch((e) => {
-  console.error(`Export failed: ${e.message}`);
-  process.exit(1);
-});
+})()
+  .catch((e) => {
+    console.error(`Export failed: ${e.message}`);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    // One token per user: signing in here evicts that account's other session (a browser, say), so sign out again.
+    if (token) {
+      await fetch(`${base}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${token}` } }).catch(() => undefined);
+    }
+  });

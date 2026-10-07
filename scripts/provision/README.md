@@ -18,6 +18,7 @@ It creates, in **one database transaction**:
 
 - the organisation (a new UUID and the code you give);
 - the school (a new UUID, owned by that organisation), and one class if you ask for one;
+- the country, when there is no `--content` to carry it and the server has none of that name;
 - the first staff logins: an **admin** (`schooluserrole` 2) and, if you ask, a **teacher** (3), each with a random
   password (the role numbers are `SchoolRole` in `src/models/enums/school.role.enum.ts`);
 - and, with `--content`, the organisation's content, imported by the same code `PUT /import/master` runs.
@@ -63,13 +64,15 @@ again. To keep it out of the terminal, add `--credentials-file <path>`: the pass
 | `--organisation "<name>"` | The organisation's name. |
 | `--code <code>` | Its code: 2 to 16 lower-case letters and digits (the rule `src/modules/import/ownership.request.validator.ts` applies, which is central's rule). |
 | `--school "<name>"` | The school's name (at most 45 characters). |
-| `--country <id or name>` | A country id, or its name as the `countries` table (or the payload) has it. |
+| `--country <id or name>` | A country id, or its name as the `countries` table (or the payload) has it. With **no** `--content`, a name the server does not have yet is **created** (a fresh server's `countries` table is empty); an id that is not there is refused. |
 | `--admin <username>` | The first admin login (3 to 45 letters, digits, `.`, `-`, `_`). |
 | `--teacher <username>` | Optional: a teacher login. |
 | `--class "<name>"` | Optional: one class (`standards` row) in the school. |
 | `--content <file>` | Optional: a format-3 payload, as a `.zip` (its first file) or a raw `.json`. |
 | `--credentials-file <path>` | Optional: write the new passwords here instead of printing them. |
 | `--database <name>` | Optional check: refuse unless this is the database the server is configured for. |
+| `--replace-school` | Allow a different `--school` for an organisation that already has one here: the old school is marked deleted (see "One school per server"). |
+| `--reset-password <login>` | Lost password: set a new one for that login of the school, and change nothing else (see "A lost password"). Takes only `--organisation`, `--code`, `--school`, `--credentials-file`, `--database` and `--apply`. |
 | `--apply` | Write it. Without it, nothing is written. |
 | `--i-know-this-is-online` | For tests: run on a server without `RPI_OFFLINE`. |
 
@@ -80,9 +83,10 @@ It refuses, writes nothing and exits non-zero when:
 - the code is already used by an organisation with a **different name**, or that organisation is deleted or
   suspended;
 - a school of the same name already exists in **another organisation**;
+- the organisation already has **another school** here and `--replace-school` is not given (see "One school per server");
 - a login name is already taken for another school, or with another role, or is disabled or deleted;
 - the payload names content that already belongs to another organisation on this server;
-- `--code` is not 2 to 16 lower-case letters and digits, or the country is not found.
+- `--code` is not 2 to 16 lower-case letters and digits, or the country is not found (and cannot be created: see `--country`).
 
 After writing, and before committing, it checks in the same transaction that the organisation is there once and
 active, that the school is live and owned by it, that every login is in the school with the right role, and that
@@ -92,10 +96,38 @@ no row of the payload is missing or has another owner. It prints counts only. An
 
 It is idempotent. The organisation is found by its code (same name: reused), the school by its name in that
 organisation, the class by its name in the school, the logins by their names. Nothing new is created and **no
-password is shown or changed** for a login that exists. The content import replaces the organisation's content with
-the payload's, as it always does, so the rows it writes again keep their ids and values; the two audit columns
-(`created_at`, `updated_at`) of the rows of `standards` and `subjects` it re-creates are refreshed, and nothing else
-changes.
+password is shown or changed** for a login that exists. A school or login that is found is never renamed: a name
+that differs only in letter case finds the same one, and its stored name is the one used.
+
+**Classes survive a re-run, with or without `--class`.** The content import replaces the classes of the school in the
+payload, so the command puts every class the school already has (deleted ones too, with their ids and creation dates)
+into the payload with it, plus the class you ask for if it is new. The content import also replaces the organisation's
+content with the payload's, as it always does. So the plan prints, before anything is written, what the import would
+take away: the organisation's questions, documents and subjects that the payload does not have are **deleted**, and its
+curricula and schools that the payload does not have are **marked deleted**. If you give a smaller payload than last time, read that
+list first. Rows it writes again keep their ids and values; the audit column `updated_at` of the `standards` and
+`subjects` rows it re-creates is refreshed, and nothing else changes.
+
+## One school per server
+
+A classroom server holds one school. The content import marks every other school of the organisation as deleted, and
+the logins of a deleted school can no longer sign in. So a second `--school` for an organisation that already has one
+is **refused** (a typo in the name would otherwise lock out the first school's staff). To replace the school on purpose,
+add `--replace-school`: the old school is marked deleted and the new one is created. **To bring a deleted school back,
+run the command again with its name**: it is un-deleted (and, if another school is live, that one needs
+`--replace-school` to be marked deleted in turn). No SQL is ever needed.
+
+## A lost password
+
+The passwords are shown once and kept nowhere, so if the admin's is lost:
+
+```bash
+npm run provision -- --organisation "<name>" --code <code> --school "<name>" --reset-password <login> [--credentials-file <path>] --apply
+```
+
+It sets a new random password for that login of this school (shown once, or written to the credentials file) and
+ends that login's session; it changes nothing else, and it refuses a login that is not in this school. Without
+`--apply` it prints what it would do.
 
 ## A new database
 
@@ -114,8 +146,16 @@ An existing server's database has the table already and migrates in one go.
 ## Signing in
 
 `POST /auth/login` with `{"studentusername": "<login>", "studentpassword": "<its password>"}`. The token carries
-the school and the organisation the command created. Staff tools (the teacher app, the import and export routes)
-use that token.
+the school and the organisation the command created, and the staff routes that take a staff token (the report,
+curriculum and student lists, and `PUT /import/master` for the organisation's own content) accept it.
+
+## Learners: not yet
+
+Be clear about what a freshly provisioned classroom server has: one organisation, one school, its staff logins and its
+content. **It has no learners.** Today they can only arrive through `PUT /import/students` (a roster file, in the
+format central exports), and that route takes the server's sync key, not a login; there is no admin screen on a
+classroom server, and `npm run provision` does not create learners. A `--learners <csv>` option, so that an offline
+school can add its own learners with no roster from central, is a follow-up and is **not built yet**.
 
 ## What the content payload is, and what the command does to it
 
@@ -141,7 +181,9 @@ The payload is checked before and after: every row of the re-homed payload must 
 ## Videos and other media
 
 The content payload names media files (`documents.documentname`, for a video `documenttypeid` 2) but carries no
-file. The app fetches each file by URL from the resource base the client was built with
+file, and the question options that are pictures name image files too (`questions.questionoptions`, the shapes in the
+sample such as `triangle.png`, `square.png`, `circle.png` and the story pictures): those need to be present at the
+same resource base as the videos, or the picture questions show empty boxes. The app fetches each file by URL from the resource base the client was built with
 (`EXPO_PUBLIC_RESOURCE_URL` plus the file name) and caches it; see the project's storage notes ("Making object
 storage optional": the local option is a media folder that a web server serves at the resource base) and the Pi
 section of its runbook, which still marks the classroom network and media host as open. So: copy the videos onto
