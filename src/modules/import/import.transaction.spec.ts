@@ -31,16 +31,13 @@ import { ImportController } from "./import.controller";
 jest.mock("adm-zip");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const AdmZip = require("adm-zip");
-// Master sync's many steps (cleanup + one bulkCreate per content table) are
-// beside the point here; only what happens around the commit is. Every
-// SyncBusiness method resolves.
-jest.mock("src/business/sync.business", () => ({
-  SyncBusiness: jest.fn().mockImplementation(
-    () => new Proxy({}, { get: () => () => Promise.resolve([]) })
-  ),
+// The content import's many writes are beside the point here; only what happens
+// around the commit is. The import itself resolves.
+jest.mock("src/business/organisation-content.business", () => ({
+  OrganisationContentImport: jest.fn().mockImplementation(() => ({ run: () => Promise.resolve({}) })),
 }));
 
-const user = { schooluserid: "u1", schoolusername: "teacher1" } as Token;
+const user = { schooluserid: "server", schoolusername: "central" } as Token;
 const file = { buffer: Buffer.from("mocked zip") } as Express.Multer.File;
 
 const mockZipContaining = (payload: unknown) => {
@@ -52,6 +49,33 @@ const mockZipContaining = (payload: unknown) => {
       },
     ],
   }));
+};
+
+// The smallest payload that passes the format-3 checks: a header and every table empty.
+const formatThree = {
+  format: 3,
+  organisationid: "a1000000-0000-4000-8000-00000000000a",
+  organisationcode: "xorg",
+  scope: "organisation",
+  organisations: [
+    {
+      organisationid: "a1000000-0000-4000-8000-00000000000a",
+      organisationname: "Org",
+      organisationcode: "xorg",
+      organisationstatus: true,
+      uitheme: "kids",
+      brandingconfig: null,
+      settingsconfig: null,
+      isdeleted: false,
+    },
+  ],
+  ...Object.fromEntries(
+    [
+      "schools", "standards", "countries", "curriculums", "curriculumbaselines", "baselinequestion", "grades", "levels", "lessons",
+      "lessonlearnings", "lessonplans", "lessonpractices", "lessonquizzes", "lessonpracticequestions", "lessonquizquestions",
+      "levelquizquestions", "questions", "documents", "subjects",
+    ].map((key) => [key, []])
+  ),
 };
 
 const studentPayload = {
@@ -184,8 +208,7 @@ describe("import transactions wait for their writes and commit", () => {
   });
 
   it("master sync answers 400 when the commit fails", async () => {
-    mockZipContaining({ documents: [], questions: [], lessonlearnings: [] });
-    jest.spyOn(dbinstance.getdbinstance(), "query").mockResolvedValue([] as never);
+    mockZipContaining(formatThree);
     tnx.commit.mockReturnValue(rejectLater("commit failed"));
 
     await expect(new ImportController().completesync(file, user)).rejects.toBeInstanceOf(

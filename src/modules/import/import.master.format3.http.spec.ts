@@ -24,7 +24,7 @@ const ORG_X = "a1000000-0000-4000-8000-00000000000a";
 const ORG_Y = "b2000000-0000-4000-8000-00000000000b";
 const SCHOOL_X = "a1000000-0000-4000-8000-0000000000a1";
 const SCHOOL_Y = "b2000000-0000-4000-8000-0000000000b1";
-const SCHOOL_NEW = "c3000000-0000-4000-8000-0000000000c1"; // a school here that has no organisation yet
+const SCHOOL_NEW = "c3000000-0000-4000-8000-0000000000c1"; // a school here that has no organisation (only a database from before owners were required has one)
 // What the strategy finds when it checks a token's claims (no database here).
 const ORGS: Record<string, { organisationstatus: boolean; isdeleted: boolean }> = {
   [ORG_X]: { organisationstatus: true, isdeleted: false },
@@ -103,8 +103,18 @@ describe("PUT import/master with one organisation's content", () => {
     it("central's key is read: the payload is refused for what is wrong with it, and the reason is given", async () => {
       const res = await put({ ...header(), scope: "curriculum" }, Config.fortyk.api.serversynckey).expect(400);
       expect(JSON.stringify(res.body)).toMatch(/scope must be \\"organisation\\"/);
+      // the payload is judged before a transaction is opened
+      expect(dbinstance.getdbinstance().transaction).not.toHaveBeenCalled();
       expect(tnx.commit).not.toHaveBeenCalled();
-      expect(tnx.rollback).toHaveBeenCalledTimes(1);
+    });
+
+    it("central's key with a format-2 body (the old whole-content payload) is refused with the one retirement message, and nothing is opened or written", async () => {
+      const res = await put({ schools: [], questions: [], documents: [] }, Config.fortyk.api.serversynckey).expect(400);
+      expect(res.body.message ?? res.body.errormessage ?? JSON.stringify(res.body)).toContain("This server accepts one organisation's content (format 3). Export it from the admin and send it again.");
+      const named = await put({ format: 2, questions: [] }, Config.fortyk.api.serversynckey).expect(400);
+      expect(JSON.stringify(named.body)).toContain("format 3");
+      expect(dbinstance.getdbinstance().transaction).not.toHaveBeenCalled();
+      expect(tnx.commit).not.toHaveBeenCalled();
     });
   });
 
@@ -124,9 +134,12 @@ describe("PUT import/master with one organisation's content", () => {
       expect(tnx.commit).not.toHaveBeenCalled();
     });
 
-    it("a token whose school has no organisation yet (no organisation claim) is judged after the payload is read (its school must be adoptable): an unreadable payload is a 400", async () => {
-      await put(header(), tokenFor(SchoolRole.TEACHER, { schoolid: SCHOOL_NEW })).expect(400);
-      await put(header(), tokenFor(SchoolRole.SUPERADMIN, { organisationid: null, schoolid: SCHOOL_NEW })).expect(400);
+    it("a token with no organisation claim is refused (401: it signs in again) on a Pi as much as online, even when its school has no owner here", async () => {
+      await put(header(), tokenFor(SchoolRole.TEACHER, { schoolid: SCHOOL_NEW })).expect(401);
+      await put(header(), tokenFor(SchoolRole.SUPERADMIN, { organisationid: null, schoolid: SCHOOL_NEW })).expect(401);
+      await put({ ...header(), scope: "curriculum" }, tokenFor(SchoolRole.ADMIN, { schoolid: SCHOOL_NEW })).expect(401);
+      expect(dbinstance.getdbinstance().transaction).not.toHaveBeenCalled();
+      expect(tnx.commit).not.toHaveBeenCalled();
     });
 
     it("a token with no organisation claim whose school already has an owner is refused (401): it signs in again", async () => {

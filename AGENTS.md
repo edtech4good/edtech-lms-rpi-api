@@ -21,9 +21,10 @@ holds one school. The rules, in `src/business/`:
 
 - `token-claims.ts` — a learner or teacher token must carry `schoolid` and
   `organisationid`; a missing claim, a suspended or deleted organisation, a
-  deleted school, or a school whose owner no longer matches → 401. **Classroom
-  window**: offline only, a token of a school that has no owner yet keeps
-  working, confined to that one school, until the school gains an owner.
+  deleted school, or a school whose owner no longer matches → 401. There is no
+  exception: a classroom server refuses a token with no organisation exactly as
+  the online one does, and a login whose school has no organisation cannot
+  sign in.
 - `content-access.ts` — every content id resolves to its curriculum; a learner
   reaches only curricula they are currently enrolled in within their
   organisation, a teacher only their school's. Anything else answers exactly
@@ -34,8 +35,12 @@ holds one school. The rules, in `src/business/`:
   be one id inside the scope.
 - `organisation-content.business.ts` — `PUT /import/master` accepts a format-3
   payload (one organisation's content, with owners) as a scoped replace that
-  never touches another organisation's or unowned rows; format-2 payloads
-  (today's) are unchanged. `PUT /import/ownership` fills empty owners only.
+  never touches another organisation's or unowned rows. Anything that is not a
+  format-3 payload (format 2 is retired) is a 400. A staff token with no
+  organisation claim is refused on a classroom server as much as online: 401
+  over HTTP (the strategy refuses the token before the controller runs); the
+  controller's own 403 is defence in depth.
+  `PUT /import/ownership` fills empty owners only.
 - Every route declares an `@OrgPolicy` (`public | learner | teacher | server |
   pi-import`). `npm run routes:policy -- --write` regenerates
   `docs/route-policy-inventory.md`; `route-inventory.spec.ts` fails on an

@@ -28,8 +28,7 @@ import { callerKindOf, callerOf, ContentKind, curriculaInScope, curriculumIdsOf,
  *  - a learner token (only where a route admits one): the token's own login and nothing else.
  */
 export interface ReportScope {
-  /** Null only in the classroom-Pi window (a school with no organisation yet): the scope is that one school. */
-  organisationid: string | null;
+  organisationid: string;
   /** The schools whose learners may be covered. */
   schoolids: string[];
   /** The curricula in play, when narrower than everything the organisation owns (a school's own list). */
@@ -79,7 +78,7 @@ export async function resolveReportScope(request: { headers: Record<string, unkn
     const organisationid = header.trim();
     return { organisationid, schoolids: await schoolIdsOfOrganisation(organisationid) };
   }
-  const claims = await callerOf(user);
+  const claims = callerOf(user);
   if (!user || !claims) {
     throw new ApiError(ErrorCode.SIGN_IN_REQUIRED);
   }

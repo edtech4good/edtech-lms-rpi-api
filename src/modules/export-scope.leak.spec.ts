@@ -8,7 +8,7 @@ import { Config } from "src/config";
 import { mayTakeServerLogs } from "src/business/export-scope";
 import { resolveReportScope, SERVER_USER_ID } from "src/business/report-scope";
 import { SyncReport } from "src/business/sync.report";
-import { checkTokenClaims, unownedPiSchoolOf } from "src/business/token-claims";
+import { checkTokenClaims } from "src/business/token-claims";
 import { initModels } from "src/models/data-models/init-models";
 import { organisations } from "src/models/data-models/organisations";
 import { rpiuseraccess } from "src/models/data-models/rpiuseraccess";
@@ -33,7 +33,7 @@ import { JwtAccessStrategy } from "src/services/auth.strategy";
  * (organisations package 8, step 2): what each caller's zip holds.
  *
  * Fixtures: organisation X with two schools (each with learners and a login), organisation Y with one school, an
- * unowned legacy school (the classroom Pi's own school before its first format-3 zip), a deleted unowned school, a
+ * unowned school (a database from before owners were required; nobody signs in to it), a deleted unowned school, a
  * learner and a login that belong to no school, and a suspended organisation. Every learner has a row in every
  * progress table; one learner also has rows older than six months.
  *
@@ -111,7 +111,6 @@ const STAFF: Array<[string, SchoolRole, string | null]> = [
 const WHOLE_X = { studentids: [ST_X1, ST_X2, ST_X3], logins: [SU_X1, SU_X2, SU_X3, SU_TX, SU_AX, SU_SX, SU_TX2, SU_STUDENT] };
 const SCHOOL_X = { studentids: [ST_X1, ST_X2], logins: [SU_X1, SU_X2, SU_TX, SU_AX, SU_SX, SU_STUDENT] };
 const SCHOOL_Y_ONLY = { studentids: [ST_Y1], logins: [SU_Y1, SU_TY] };
-const SCHOOL_L_ONLY = { studentids: [ST_L1], logins: [SU_L1, SU_TL] };
 const EVERYTHING = {
   studentids: [ST_X1, ST_X2, ST_X3, ST_Y1, ST_L1, ST_N],
   logins: [SU_X1, SU_X2, SU_X3, SU_TX, SU_AX, SU_SX, SU_TX2, SU_STUDENT, SU_Y1, SU_TY, SU_L1, SU_TL, SU_N, SU_O],
@@ -259,9 +258,9 @@ const X2_TEACHER = bearer(token(SU_TX2, SchoolRole.TEACHER, SCH_X2, ORG_X));
 const Y_TEACHER = bearer(token(SU_TY, SchoolRole.TEACHER, SCH_Y, ORG_Y));
 const X_PUPIL = bearer({ sub: SU_STUDENT, schooluserid: SU_STUDENT, studentid: ST_X1, schooluserrole: SchoolRole.STUDENT, schoolid: SCH_X, organisationid: ORG_X, schoolname: "School X" });
 const CLAIMLESS_TEACHER = bearer({ sub: SU_TX, schooluserid: SU_TX, schooluserrole: SchoolRole.TEACHER, schoolname: "School X" });
-// a classroom Pi's own school, before the first format-3 zip: no organisation claim
+// a token of a school that has no organisation, with no organisation claim: refused everywhere, on a Pi too
 const PI_WINDOW_TEACHER = bearer({ sub: SU_TL, schooluserid: SU_TL, schooluserrole: SchoolRole.TEACHER, schoolid: SCH_L, organisationid: null, schoolname: "Legacy School" });
-// an older token of the same window: no school id either, only the name
+// an older token of the same school: no school id either, only the name
 const PI_WINDOW_TEACHER_BY_NAME = bearer({ sub: SU_TL, schooluserid: SU_TL, schooluserrole: SchoolRole.TEACHER, schoolname: "Legacy School" });
 const PI_WINDOW_DELETED = bearer({ sub: SU_TL, schooluserid: SU_TL, schooluserrole: SchoolRole.TEACHER, schoolid: SCH_LD, schoolname: "Closed Legacy School" });
 
@@ -424,18 +423,13 @@ describe("the data exports are confined to the caller's scope (organisations pac
       await request(app.getHttpServer()).get("/export/report-data").expect(401);
     });
 
-    it("GET /export/report-data: on a classroom Pi whose school has no organisation yet, a teacher gets that school's rows (the window)", async () => {
-      Config.fortyk.api.rpi.offline = true;
-      const res = await get("/export/report-data", { bearer: PI_WINDOW_TEACHER }).expect(200);
-      expect(idsIn(json(res.body, "syncfile.ini"))).toEqual(sorted(SCHOOL_L_ONLY));
-      const byName = await get("/export/report-data", { bearer: PI_WINDOW_TEACHER_BY_NAME }).expect(200);
-      expect(idsIn(json(byName.body, "syncfile.ini"))).toEqual(sorted(SCHOOL_L_ONLY));
-    });
-
-    it("GET /export/report-data: the window does not exist online, and does not accept a school that is deleted", async () => {
-      await get("/export/report-data", { bearer: PI_WINDOW_TEACHER }).expect(401); // online
-      Config.fortyk.api.rpi.offline = true;
-      await get("/export/report-data", { bearer: PI_WINDOW_DELETED }).expect(401);
+    it("GET /export/report-data: a token with no organisation claim is refused (401) on a classroom Pi as online, by school id or by name, and for a deleted school", async () => {
+      for (const offline of [false, true]) {
+        Config.fortyk.api.rpi.offline = offline;
+        for (const bearer of [PI_WINDOW_TEACHER, PI_WINDOW_TEACHER_BY_NAME, PI_WINDOW_DELETED]) {
+          await get("/export/report-data", { bearer }).expect(401);
+        }
+      }
     });
   });
 
@@ -467,9 +461,7 @@ describe("the data exports are confined to the caller's scope (organisations pac
       expect(entryNames(owned.body)).toEqual(["RPI-API-error-1.log", "RPI-API-info-1.log", "log.ini"]);
       expect(logIdsIn(owned.body)).toEqual(inLog(SCHOOL_X));
       piWithOnly(SCH_L);
-      const window = await get("/export/log", { bearer: PI_WINDOW_TEACHER }).expect(200);
-      expect(entryNames(window.body)).toEqual(["RPI-API-error-1.log", "RPI-API-info-1.log", "log.ini"]);
-      expect(logIdsIn(window.body)).toEqual(inLog(SCHOOL_L_ONLY));
+      await get("/export/log", { bearer: PI_WINDOW_TEACHER }).expect(401); // a school with no organisation has no sign-in, even alone on a Pi
     });
 
     it("GET /export/log: on a classroom Pi that holds several schools, a school's teacher gets log.ini only, with their school's rows", async () => {
@@ -477,8 +469,7 @@ describe("the data exports are confined to the caller's scope (organisations pac
       const res = await get("/export/log", { bearer: X_TEACHER }).expect(200);
       expect(entryNames(res.body)).toEqual(["log.ini"]);
       expect(logIdsIn(res.body)).toEqual(inLog(SCHOOL_X));
-      const window = await get("/export/log", { bearer: PI_WINDOW_TEACHER }).expect(200);
-      expect(entryNames(window.body)).toEqual(["log.ini"]);
+      await get("/export/log", { bearer: PI_WINDOW_TEACHER }).expect(401);
     });
 
     it("GET /export/log: the server key is not admitted (nothing sends it here), with or without a header", async () => {
@@ -526,19 +517,19 @@ describe("the data exports are confined to the caller's scope (organisations pac
       expect(disposition).toContain("logfiles-School X-");
       expect(disposition).not.toContain("forged");
       piWithOnly(SCH_L);
-      const window = await get("/export/system-log/files", { bearer: PI_WINDOW_TEACHER }).expect(200);
-      expect(String(window.headers["content-disposition"])).toContain("logfiles-Legacy School-");
+      await get("/export/system-log/files", { bearer: PI_WINDOW_TEACHER }).expect(401);
     });
 
     it("GET /export/system-log/files: on a classroom Pi that holds several schools, a school's staff get the answer for a role that is not allowed", async () => {
       Config.fortyk.api.rpi.offline = true;
       const reference = await get("/export/system-log/files", { bearer: X_PUPIL });
       expect(reference.status).toBe(403);
-      for (const who of [X_TEACHER, X_ADMIN, PI_WINDOW_TEACHER]) {
+      for (const who of [X_TEACHER, X_ADMIN]) {
         const res = await get("/export/system-log/files", { bearer: who });
         expect(res.status).toBe(403);
         expect(res.headers["content-type"]).toBe(reference.headers["content-type"]);
       }
+      await get("/export/system-log/files", { bearer: PI_WINDOW_TEACHER }).expect(401);
     });
 
     it("GET /export/system-log/files: the server key is not admitted, and no claims is refused (401)", async () => {
@@ -549,15 +540,16 @@ describe("the data exports are confined to the caller's scope (organisations pac
   });
 
   // -------------------------------------------------------------------------------------------------------
-  describe("a school that is deleted is nobody's window (the classroom-Pi rule of token-claims)", () => {
-    it("unownedPiSchoolOf: a Pi's unowned school is its window, a deleted one is not (by id or by name)", async () => {
-      Config.fortyk.api.rpi.offline = true;
-      await expect(unownedPiSchoolOf({ schoolid: SCH_L })).resolves.toBe(SCH_L);
-      await expect(unownedPiSchoolOf({ schoolname: "Legacy School" })).resolves.toBe(SCH_L);
-      await expect(unownedPiSchoolOf({ schoolid: SCH_LD })).resolves.toBeNull();
-      await expect(unownedPiSchoolOf({ schoolname: "Closed Legacy School" })).resolves.toBeNull();
-      await expect(checkTokenClaims({ schoolid: SCH_LD })).rejects.toMatchObject({ status: 401 });
-      await expect(checkTokenClaims({ schoolid: SCH_L })).resolves.toBeUndefined();
+  describe("a school with no organisation has no window, on a classroom Pi or online (token-claims)", () => {
+    it("checkTokenClaims: an unowned school, deleted or not, by id or by name, is refused whatever the Pi flag", async () => {
+      for (const offline of [false, true]) {
+        Config.fortyk.api.rpi.offline = offline;
+        await expect(checkTokenClaims({ schoolid: SCH_L })).rejects.toMatchObject({ status: 401 });
+        await expect(checkTokenClaims({ schoolid: SCH_L, organisationid: null })).rejects.toMatchObject({ status: 401 });
+        await expect(checkTokenClaims({ schoolname: "Legacy School" } as Record<string, unknown>)).rejects.toMatchObject({ status: 401 });
+        await expect(checkTokenClaims({ schoolid: SCH_LD })).rejects.toMatchObject({ status: 401 });
+        await expect(checkTokenClaims({ schoolname: "Closed Legacy School" } as Record<string, unknown>)).rejects.toMatchObject({ status: 401 });
+      }
     });
   });
 });

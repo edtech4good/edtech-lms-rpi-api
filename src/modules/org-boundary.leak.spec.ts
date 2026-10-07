@@ -1711,7 +1711,7 @@ describe("PUT /import/master: who may send content, online and on a classroom Pi
     expect(failures).toEqual([]);
   });
 
-  it("PUT /import/master on a classroom Pi: a teacher of the payload's organisation is read, another's is stopped, and a token with no organisation is read only while its own school has none", async () => {
+  it("PUT /import/master on a classroom Pi: a teacher of the payload's organisation is read, another's is stopped, and a token with no organisation is refused (no bootstrap)", async () => {
     const { failures, check } = scenario();
     Config.fortyk.api.rpi.offline = true;
     let r = await put(X_TEACHER, ORG_X);
@@ -1722,15 +1722,13 @@ describe("PUT /import/master: who may send content, online and on a classroom Pi
     check(`Y teacher, X's payload -> ${r.status} (wanted 403)`, r.status === 403);
     r = await put(X_LEARNER, ORG_X);
     check(`X learner -> ${r.status} (wanted 403)`, r.status === 403);
-    r = await put(UNOWNED_STAFF, ORG_X);
-    check(`a token whose school is here and has no organisation yet -> ${r.status} (wanted 400: read, the payload is judged next)`, r.status === 400);
-    for (const [name, auth] of REFUSED_TOKENS) {
+    for (const [name, auth] of [...REFUSED_TOKENS, ["a token whose school is here and has no organisation", UNOWNED_STAFF]] as Array<[string, Auth]>) {
       r = await put(auth, ORG_X);
-      check(`${name} -> ${r.status} (wanted 401)`, r.status === 401);
+      check(`${name} -> ${r.status} (wanted 401: the token proves nothing, whatever its school)`, r.status === 401);
     }
-    // the window is not for the import alone: the same token works elsewhere, scoped to its one school (see the next describe)
+    // no window anywhere else either: the same token is refused on an ordinary route (see the next describe)
     const other = await send("get", "/teacher/students", UNOWNED_STAFF);
-    check(`the unowned school's token on GET /teacher/students -> ${other.status} (wanted 200)`, other.status === 200);
+    check(`the unowned school's token on GET /teacher/students -> ${other.status} (wanted 401)`, other.status === 401);
     expect(failures).toEqual([]);
   });
 });
@@ -1738,9 +1736,9 @@ describe("PUT /import/master: who may send content, online and on a classroom Pi
 const bodyOfSchools = (values: string[], key = "schoolid") => ({ pageindex: 1, pagesize: 50, filter: [{ key, value: values }] });
 
 // ---------------------------------------------------------------------------------------------------------
-// the classroom Pi's window: a school with no organisation yet
+// no window: a token with no organisation is refused everywhere, on a classroom Pi as online
 // ---------------------------------------------------------------------------------------------------------
-describe("a classroom Pi whose school has no organisation yet keeps working, one school at a time", () => {
+describe("a token with no organisation is refused everywhere, on a classroom Pi as much as online (no window)", () => {
   const originalOffline = Config.fortyk.api.rpi.offline;
   beforeEach(() => {
     Config.fortyk.api.rpi.offline = true;
@@ -1773,103 +1771,40 @@ describe("a classroom Pi whose school has no organisation yet keeps working, one
     `/question/lesson/${t.lesson}`,
   ];
 
-  it("a learner of the unowned school gets its own content and lists, and nothing of any other school's (a second unowned school on the Pi, or an organisation's)", async () => {
+  it.each([[true], [false]])("a learner or teacher of an unowned school (own content, another's, absent content) is refused on every route, and a result writes nothing (RPI_OFFLINE=%p)", async (offline) => {
     const { failures, check } = scenario();
-    for (const [name, auth] of [["learner", L_LEARNER], ["learner with a token from before the claims existed", L_OLD]] as Array<[string, Auth]>) {
-      for (const path of contentPaths(T_L)) {
-        const r = await send("get", path, auth);
-        check(`${name}, own ${path.split("/")[1]} -> ${r.status} (wanted 200)`, r.status === 200);
-      }
-      const absent = await send("get", `/Lesson/level/${NOWHERE}`, auth);
-      check(`${name}, a level that is not there -> ${absent.status} (wanted 404)`, absent.status === 404);
-      for (const [what, tree] of [["the second unowned school's", T_L2], ["X's", T_X1], ["Y's", T_Y1]] as Array<[string, Tree]>) {
-        for (const path of contentPaths(tree)) {
-          const r = await send("get", path, auth);
-          check(`${name}, ${what} ${path.split("/")[1]} -> ${r.status} (wanted 404)`, r.status === 404);
-        }
-        const r = await send("get", `/Lesson/level/${tree.level}`, auth);
-        check(`${name}, ${what} level: the answer is the one for absent content`, text(r.body) === text(absent.body));
-      }
-      for (const [path, key, wanted] of [
-        ["/curriculum", "curriculumid", [T_L.curriculum]],
-        ["/curriculum/subjects", "curriculumid", [T_L.curriculum]],
-        ["/curriculum/all", "curriculumid", [T_L.curriculum]],
-        ["/grade/all", "gradeid", [T_L.grade]],
-        ["/level/all", "levelid", [T_L.level]],
-        ["/Lesson/all", "lessonid", [T_L.lesson]],
-      ] as Array<[string, string, string[]]>) {
-        const r = await send("get", path, auth);
-        check(`${name}, ${path} -> ${r.status}, ${JSON.stringify(idsIn(r.body, key))} (wanted only the school's)`, r.status === 200 && sameSet(idsIn(r.body, key), wanted));
-      }
-      const library = await send("get", "/level/library", auth);
-      check(`${name}, /level/library -> ${JSON.stringify(libraryIds(library.body))}`, library.status === 200 && sameSet(libraryIds(library.body), [T_L.curriculum]));
-    }
-    // the second unowned school's learner is the mirror image
-    for (const path of contentPaths(T_L2)) check(`second school's learner, own ${path.split("/")[1]}`, (await send("get", path, L2_LEARNER)).status === 200);
-    for (const path of contentPaths(T_L)) check(`second school's learner, the first school's ${path.split("/")[1]} -> 404`, (await send("get", path, L2_LEARNER)).status === 404);
-    expect(failures).toEqual([]);
-  });
-
-  it("a result submission of the unowned school's learner writes for its own content, and writes nothing for another school's", async () => {
-    const { failures, check } = scenario();
-    reset();
-    let r = await send("post", `/result/lesson/practice/${T_L.practice}`, L_LEARNER, RESULT_BODY);
-    check(`own practice -> ${r.status} (wanted 200)`, r.status === 200);
-    check(`own practice: the writes ran (${stubCalls.join()})`, stubCalls.includes("ResultBusiness.updatePracticePoints"));
+    Config.fortyk.api.rpi.offline = offline;
     reset();
     const before = snapshot();
     const transactionsBefore = (dbinstance.getdbinstance().transaction as unknown as jest.Mock).mock.calls.length;
-    for (const tree of [T_L2, T_X1, T_Y1]) {
-      r = await send("post", `/result/lesson/practice/${tree.practice}`, L_LEARNER, RESULT_BODY);
-      check(`another school's practice -> ${r.status} (wanted 404)`, r.status === 404);
-    }
-    check(`another school's practice: nothing ran (${stubCalls.join()})`, stubCalls.length === 0);
-    check("another school's practice: no table changed, no transaction", snapshot() === before && (dbinstance.getdbinstance().transaction as unknown as jest.Mock).mock.calls.length === transactionsBefore);
-    expect(failures).toEqual([]);
-  });
-
-  it("a teacher of the unowned school sees its own school's learners, classes, reports and content, and no other school's", async () => {
-    const { failures, check } = scenario();
-    for (const path of contentPaths(T_L)) check(`teacher, own ${path.split("/")[1]}`, (await send("get", path, L_TEACHER)).status === 200);
-    for (const [what, tree] of [["the second unowned school's", T_L2], ["X's", T_X1]] as Array<[string, Tree]>) {
-      for (const path of contentPaths(tree)) {
-        const r = await send("get", path, L_TEACHER);
-        check(`teacher, ${what} ${path.split("/")[1]} -> ${r.status} (wanted 404)`, r.status === 404);
+    for (const [name, auth] of [["learner", L_LEARNER], ["second school's learner", L2_LEARNER], ["learner with a token from before the claims existed", L_OLD], ["teacher", L_TEACHER], ["second school's teacher", L2_TEACHER]] as Array<[string, Auth]>) {
+      for (const tree of [T_L, T_L2, T_X1, T_Y1]) {
+        for (const path of contentPaths(tree)) {
+          const r = await send("get", path, auth);
+          check(`${name}, ${path} -> ${r.status} (wanted 401)`, r.status === 401);
+        }
+      }
+      for (const path of ["/curriculum", "/curriculum/subjects", "/curriculum/all", "/grade/all", "/level/all", "/Lesson/all", "/level/library", "/teacher/students", "/teacher/standards", `/Lesson/level/${NOWHERE}`]) {
+        const r = await send("get", path, auth);
+        check(`${name}, ${path} -> ${r.status} (wanted 401)`, r.status === 401);
+      }
+      const w = await send("post", `/result/lesson/practice/${T_L.practice}`, auth, RESULT_BODY);
+      check(`${name}, a result for its own practice -> ${w.status} (wanted 401)`, w.status === 401);
+      for (const [path, body] of [
+        ["/teacher/studentprogress", {}],
+        ["/report/studentstatus", bodyOfSchools([SCH_L, SCH_L2])],
+        ["/report/studentprogress/class", bodyOfSchools([CLS_L2], "standard")],
+        ["/student/logintime", [SU_L1, SU_L2, SU_X1]],
+      ] as Array<[string, unknown]>) {
+        const r = await send("post", path, auth, body);
+        check(`${name}, ${path} -> ${r.status} (wanted 401)`, r.status === 401);
       }
     }
-    const students = await send("get", "/teacher/students", L_TEACHER);
-    check(`teacher/students -> ${JSON.stringify(idsIn(students.body, "studentid"))} (wanted only the school's learner)`, students.status === 200 && sameSet(idsIn(students.body, "studentid"), [ST_L1]));
-    const progress = await send("post", "/teacher/studentprogress", L_TEACHER, {});
-    check(`teacher/studentprogress, no class -> ${JSON.stringify(idsIn(progress.body, "studentid"))} (wanted only the school's learner)`, sameSet(idsIn(progress.body, "studentid"), [ST_L1]));
-    const foreignClass = await send("post", "/teacher/studentprogress", L_TEACHER, { filter: [{ key: "standard", value: CLS_L2 }] });
-    check(`teacher/studentprogress, the second school's class -> total ${foreignClass.body?.data?.total} (wanted an unknown class: 0)`, foreignClass.status === 200 && foreignClass.body?.data?.total === 0);
-    const classes = await send("get", "/teacher/standards", L_TEACHER);
-    check(`teacher/standards -> ${JSON.stringify(idsIn(classes.body, "standard"))}`, sameSet(idsIn(classes.body, "standard"), [CLS_L]));
-    const info = await send("get", `/teacher/studentinfo?studentid=${ST_L2}`, L_TEACHER);
-    check(`teacher/studentinfo for the second school's learner -> ${JSON.stringify(info.body?.data)} (wanted null)`, info.status === 200 && info.body?.data === null);
-    for (const [path, key, wanted] of [
-      ["/curriculum", "curriculumid", [T_L.curriculum]],
-      ["/curriculum/all", "curriculumid", [T_L.curriculum]],
-      ["/grade/all", "gradeid", [T_L.grade]],
-    ] as Array<[string, string, string[]]>) {
-      const r = await send("get", path, L_TEACHER);
-      check(`teacher ${path} -> ${JSON.stringify(idsIn(r.body, key))}`, r.status === 200 && sameSet(idsIn(r.body, key), wanted));
-    }
-    reset();
-    const report = await send("post", "/report/studentstatus", L_TEACHER, bodyOfSchools([SCH_L, SCH_L2]));
-    check(`report/studentstatus naming both unowned schools -> ${report.status}, read ${JSON.stringify([...seen])} (wanted only the school's learner)`, report.status === 200 && seen.size > 0 && [...seen].every((id) => id === ST_L1));
-    reset();
-    await send("post", "/report/studentprogress/class", L_TEACHER, bodyOfSchools([CLS_L2], "standard"));
-    check(`report/studentprogress/class, the second school's class: read ${JSON.stringify([...seen])} (wanted none)`, seen.size === 0);
-    reset();
-    await send("post", "/student/logintime", L_TEACHER, [SU_L1, SU_L2, SU_X1]);
-    check(`student/logintime asked ${JSON.stringify(rawQueries.flatMap((q) => q.replacements))} (wanted only the school's login)`, sameSet(rawQueries.flatMap((q) => q.replacements as string[]), [SU_L1]));
-    const other = await send("get", "/teacher/students", L2_TEACHER);
-    check(`the second school's teacher sees ${JSON.stringify(idsIn(other.body, "studentid"))} (wanted only its own)`, sameSet(idsIn(other.body, "studentid"), [ST_L2]));
+    check(`nothing was read for a report, nothing ran (${stubCalls.join()}) and no table or transaction changed`, stubCalls.length === 0 && seen.size === 0 && snapshot() === before && (dbinstance.getdbinstance().transaction as unknown as jest.Mock).mock.calls.length === transactionsBefore);
     expect(failures).toEqual([]);
   });
 
-  it("online, a token with no organisation is refused everywhere, an unowned school or not", async () => {
+  it("online, a token with no organisation is refused everywhere (as it always was), an unowned school or not", async () => {
     const { failures, check } = scenario();
     Config.fortyk.api.rpi.offline = false;
     for (const [name, auth] of [["learner", L_LEARNER], ["teacher", L_TEACHER], ["old token", L_OLD]] as Array<[string, Auth]>) {
@@ -1883,7 +1818,7 @@ describe("a classroom Pi whose school has no organisation yet keeps working, one
     expect(failures).toEqual([]);
   });
 
-  it("on a Pi, a token with no organisation is refused once its school has an owner, and an empty or odd claim is never 'none'", async () => {
+  it("on a Pi, a token with no organisation is refused whether or not its school has an owner, and an empty or odd claim is never 'none'", async () => {
     const { failures, check } = scenario();
     for (const [name, auth] of [["null claim, owned school", OWNED_NULL], ["old token, owned school", OWNED_OLD], ["empty claim", ODD_CLAIM[0]], ["number claim", ODD_CLAIM[1]]] as Array<[string, Auth]>) {
       for (const path of ["/curriculum", "/level/library", `/curriculum/${T_X1.curriculum}`, `/curriculum/${T_L.curriculum}`]) {
