@@ -82,11 +82,18 @@ ALLOW_DEMO_SEED=true npm run seed:dcrs
 
 The student app reads lessons from this API, not from the central one, so a local stack needs content in both databases. The seeds short-circuit the sync for development. They are not a substitute for it.
 
+Every seeded school, piece of content, login and learner belongs to an organisation: the demo seeds to `edtech4good`, the DCRS seed to `miv` (the same codes and ids the central API's seeds use). Each seed creates the organisation it needs, so they run in any order, and a re-run fills an owner or school id that an older seed left empty.
+
+## Setting up a classroom server (offline)
+
+A school can run this code on a classroom server without ever touching the online system. `npm run build`, then `npm run provision -- --organisation "<name>" --code <code> --school "<name>" --country <country> --admin <username> [--content <payload>] [--apply]` creates the organisation, the school, the first logins and the content in one transaction, on this server's own database. It prints a plan and writes nothing until you add `--apply`, shows each new password once, and never uses the network. `scripts/provision/README.md` is the whole recipe, including a sample content payload and where the videos go.
+
 ## Scripts
 
 - `npm run start:dev` runs Nest in watch mode.
 - `npm run build` then `npm start` (or `npm run start:prod`, same thing) is the production path. The build lands in `build/` and both run `build/server.js`.
 - `npm run db:migrate` runs the Sequelize migrations.
+- `npm run provision -- …` provisions a classroom server (see above and `scripts/provision/README.md`).
 - `npm run lint` and `npm run format` run ESLint and Prettier.
 
 `npm test` prints "no test specified". There are no unit tests here. The Playwright suites in [edtech-lms-ui](https://github.com/edtech4good/edtech-lms-ui) cover this API, including a SQL injection suite that targets it directly.
@@ -106,6 +113,7 @@ src/
 ├── models/
 ├── modules/        # Feature modules (auth, import, export, student, ...)
 ├── pipes/
+├── provisioning/   # npm run provision: the first organisation, school and logins on a classroom server
 ├── services/
 └── validators/
 scripts/            # Seed scripts
