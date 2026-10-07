@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 /**
- * Loads RPI_DB_* from ../.env and runs scripts/seed-demo-users.sql.
+ * Loads RPI_DB_* from ../.env and runs scripts/seed-demo-users.sql, inside the organisation `edtech4good`.
  * Usage: npm run seed:demo (requires ALLOW_DEMO_SEED=true)
  */
 const fs = require("fs");
@@ -9,6 +9,12 @@ const dotenv = require("dotenv");
 const mysql = require("mysql2/promise");
 const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
+const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
+
+const SCHOOL_ID = "b0000000-0000-4000-8000-000000000002";
+const CURRICULUM_ID = "a1111111-1111-4111-8111-111111111111";
+const LOGIN_IDS = ["a2222222-2222-4222-8222-222222222222", "a3333333-3333-4333-8333-333333333333"];
+const LEARNER_IDS = ["a4444444-4444-4444-8444-444444444444", "a5555555-5555-4555-8555-555555555555"];
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -47,10 +53,6 @@ async function main() {
   // contains "$" sequences (e.g. "$2b$10$..."), and String.replace()
   // special-cases "$"-patterns (`$&`, `$1`, `$$`, ...) in a string
   // replacement. A function return value is inserted verbatim.
-  const sql = fs
-    .readFileSync(sqlPath, "utf8")
-    .replace(/__PASSWORD_HASH__/g, () => passwordHash);
-
   const conn = await mysql.createConnection({
     host,
     port,
@@ -61,7 +63,21 @@ async function main() {
   });
 
   try {
+    // The organisation the demo school and curriculum belong to (created if it is not here yet; a deleted one is refused).
+    const organisationid = await ensureOrganisation(conn, "edtech4good");
+    const sql = fs
+      .readFileSync(sqlPath, "utf8")
+      .replace(/__PASSWORD_HASH__/g, () => passwordHash)
+      .replace(/__ORGANISATION_ID__/g, () => organisationid);
     await conn.query(sql);
+    // INSERT IGNORE skips a refused row silently and leaves rows that were seeded before owners existed as they were:
+    // fill the NULL owners and school ids of the rows this seed owns, then check every one is there.
+    await fillAndVerify(conn, [
+      { table: "schools", key: "schoolid", ids: [SCHOOL_ID], column: "organisationid", value: organisationid },
+      { table: "curriculums", key: "curriculumid", ids: [CURRICULUM_ID], column: "organisationid", value: organisationid },
+      { table: "schoolusers", key: "schooluserid", ids: LOGIN_IDS, column: "schoolid", value: SCHOOL_ID },
+      { table: "students", key: "studentid", ids: LEARNER_IDS, column: "schoolid", value: SCHOOL_ID },
+    ]);
     console.log("Demo users seeded OK.");
     console.log(`  demo.student / ${plaintext}  (student)`);
     console.log(`  demo.teacher / ${plaintext}  (teacher — import/sync guards)`);

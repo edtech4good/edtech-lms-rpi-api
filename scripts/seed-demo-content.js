@@ -25,6 +25,11 @@
  * - Questions cover only the 15 template ids the tablet renders (1-8, 18-24).
  *   Ids 9-17 have no client renderer. See the central repo's seed for detail.
  *
+ * Ownership: every school and piece of content is owned by the organisation `edtech4good` (created here if it
+ * is not, and refused if it was deleted: see lib/seed-organisations.js), and every login and learner has its
+ * school's id. Rows seeded before owners existed get their NULL owner filled, and every seeded row is checked
+ * after the INSERT IGNOREs.
+ *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  */
 const path = require("path");
@@ -32,6 +37,7 @@ const dotenv = require("dotenv");
 const mysql = require("mysql2/promise");
 const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
+const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -160,16 +166,19 @@ async function main() {
   const q = (sql, params = []) => conn.execute(sql, params);
 
   try {
+    // The organisation everything below belongs to (created if it is not here yet).
+    const organisationid = await ensureOrganisation(conn, "edtech4good");
+
     await q(`INSERT IGNORE INTO countries (countryid, countryname, isdeleted) VALUES (?,?,0)`,
       [ID.country, "Cambodia"]);
-    await q(`INSERT IGNORE INTO schools (schoolid, schoolname, countryid, curriculums, isdeleted) VALUES (?,?,?,?,0)`,
-      [ID.school, "Demo Primary School", ID.country, JSON.stringify([ID.curriculum])]);
+    await q(`INSERT IGNORE INTO schools (schoolid, schoolname, countryid, curriculums, isdeleted, organisationid) VALUES (?,?,?,?,0,?)`,
+      [ID.school, "Demo Primary School", ID.country, JSON.stringify([ID.curriculum]), organisationid]);
     await q(`INSERT IGNORE INTO standards (standardid, standardname, schoolname, schoolid, isdeleted) VALUES (?,?,?,?,0)`,
       [ID.standard, "Class 4A", "Demo Primary School", ID.school]);
-    await q(`INSERT IGNORE INTO subjects (subjectid, subjectname, subjectstatus, subjectdescription, isdeleted) VALUES (?,?,1,?,0)`,
-      [ID.subject, "Foundational Skills", "Demo subject"]);
-    await q(`INSERT IGNORE INTO curriculums (curriculumid, curriculumname, curriculumstatus, curriculumdescription, isdeleted, subjectid) VALUES (?,?,1,?,0,?)`,
-      [ID.curriculum, "Demo Curriculum", "Seeded by npm run seed:content", ID.subject]);
+    await q(`INSERT IGNORE INTO subjects (subjectid, subjectname, subjectstatus, subjectdescription, isdeleted, organisationid) VALUES (?,?,1,?,0,?)`,
+      [ID.subject, "Foundational Skills", "Demo subject", organisationid]);
+    await q(`INSERT IGNORE INTO curriculums (curriculumid, curriculumname, curriculumstatus, curriculumdescription, isdeleted, subjectid, organisationid) VALUES (?,?,1,?,0,?,?)`,
+      [ID.curriculum, "Demo Curriculum", "Seeded by npm run seed:content", ID.subject, organisationid]);
     await q(`INSERT IGNORE INTO grades (gradeid, curriculumid, gradestatus, gradename, gradedescription, gradeorder, isdeleted, passing_points, points) VALUES (?,?,1,?,?,1,0,80,100)`,
       [ID.grade, ID.curriculum, "Grade 1", "Demo grade"]);
     await q(`INSERT IGNORE INTO levels (levelid, gradeid, levelname, leveldescription, isdeleted, levelstatus, levelorder, passing_points, quiz_points, points) VALUES (?,?,?,?,0,1,1,80,20,100)`,
@@ -184,8 +193,8 @@ async function main() {
       await q(`INSERT IGNORE INTO lessons (lessonid, levelid, lessonname, lessondescription, practicecount, quizcount, lessonpasspercentage, lessonorder, lessonstatus, isdeleted, total_points, passing_points, learning_points, quizzes_points, practices_points)
                VALUES (?,?,?,?,1,1,80,?,1,0,100,80,20,40,40)`,
         [l.id, ID.level, l.name, "Demo lesson", l.order]);
-      await q(`INSERT IGNORE INTO documents (documentid, documenttypeid, documentname, documents3meta, isdeleted, documenttags) VALUES (?,2,?,?,0,?)`,
-        [l.doc, `demo/${l.name.toLowerCase().replace(/ /g, "-")}.mp4`, JSON.stringify({ seeded: true, media: "absent" }), JSON.stringify(["demo"])]);
+      await q(`INSERT IGNORE INTO documents (documentid, documenttypeid, documentname, documents3meta, isdeleted, documenttags, organisationid) VALUES (?,2,?,?,0,?,?)`,
+        [l.doc, `demo/${l.name.toLowerCase().replace(/ /g, "-")}.mp4`, JSON.stringify({ seeded: true, media: "absent" }), JSON.stringify(["demo"]), organisationid]);
       await q(`INSERT IGNORE INTO lessonlearnings (lessonlearningid, lessonlearningname, lessonlearningdescription, lessonlearningstatus, lessonid, documentid, lessonlearningorder, points) VALUES (?,?,?,1,?,?,1,20)`,
         [l.learning, `${l.name} video`, "Demo learning video", l.id, l.doc]);
       await q(`INSERT IGNORE INTO lessonpractices (lessonpracticeid, lessonid, lessonpracticeorder, lessonpracticestatus, lessonpracticename, lessonpracticedescription, points) VALUES (?,?,1,1,?,?,40)`,
@@ -211,10 +220,10 @@ async function main() {
         };
       });
 
-      await q(`INSERT IGNORE INTO questions (questionid, questionheading, questionoptions, questiontext, questiondistractors, questionfile, templatetypeid, isdeleted, questionstatus, questionidentifier, questiontags, questioncorrectvalue)
-               VALUES (?,?,?,?,?,?,?,0,1,?,?,?)`,
+      await q(`INSERT IGNORE INTO questions (questionid, questionheading, questionoptions, questiontext, questiondistractors, questionfile, templatetypeid, isdeleted, questionstatus, questionidentifier, questiontags, questioncorrectvalue, organisationid)
+               VALUES (?,?,?,?,?,?,?,0,1,?,?,?,?)`,
         [id, JSON.stringify({ headingtext: Q.text, headingfile: null }), JSON.stringify(options), Q.text,
-         JSON.stringify([]), null, Q.t, Q.ident, JSON.stringify(["demo"]), Q.correctvalue ?? null]);
+         JSON.stringify([]), null, Q.t, Q.ident, JSON.stringify(["demo"]), Q.correctvalue ?? null, organisationid]);
       const l = i < Math.ceil(QUESTIONS.length / 2) ? lessons[0] : lessons[1];
       await q(`INSERT IGNORE INTO lessonpracticequestions (lessonpracticequestionid, lessonpracticeid, lessonpracticequestionstatus, questionid, lessonpracticequestionorder) VALUES (?,?,1,?,?)`,
         [`${id}-p`.slice(0, 36), l.practice, id, i + 1]);
@@ -233,18 +242,18 @@ async function main() {
     const CURRICULUM_IDS = JSON.stringify([ID.curriculum]);
 
     // schooluserrole: 3 = teacher, 4 = student (matches seed-demo-users.sql).
-    await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled) VALUES (?,?,?,3,1,?,0)`,
-      [ID.teacherUser, "demo.numeracy.teacher", PASSWORD_HASH, "Demo Primary School"]);
-    await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc)
-             VALUES (?,?,?,1,?,?,?,?,?,1,?,?,?,?,?,?,?,1)`,
-      [ID.teacher, "Demo", "Teacher", "Phnom Penh", "Cambodia", "Phnom Penh", ID.curriculum, CURRICULUM_IDS, ID.teacherUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Demo Primary School"]);
+    await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled, schoolid) VALUES (?,?,?,3,1,?,0,?)`,
+      [ID.teacherUser, "demo.numeracy.teacher", PASSWORD_HASH, "Demo Primary School", ID.school]);
+    await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc, schoolid)
+             VALUES (?,?,?,1,?,?,?,?,?,1,?,?,?,?,?,?,?,1,?)`,
+      [ID.teacher, "Demo", "Teacher", "Phnom Penh", "Cambodia", "Phnom Penh", ID.curriculum, CURRICULUM_IDS, ID.teacherUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Demo Primary School", ID.school]);
 
     for (const s of STUDENTS) {
-      await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled) VALUES (?,?,?,4,1,?,0)`,
-        [s.su, s.username, PASSWORD_HASH, "Demo Primary School"]);
-      await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc)
-               VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,0)`,
-        [s.id, s.first, s.last, s.gender, "Phnom Penh", "Cambodia", "Phnom Penh", ID.curriculum, CURRICULUM_IDS, s.su, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Demo Primary School"]);
+      await q(`INSERT IGNORE INTO schoolusers (schooluserid, schoolusername, schooluserpasswordhash, schooluserrole, schooluserstatus, schoolname, isdisabled, schoolid) VALUES (?,?,?,4,1,?,0,?)`,
+        [s.su, s.username, PASSWORD_HASH, "Demo Primary School", ID.school]);
+      await q(`INSERT IGNORE INTO students (studentid, studentfirstname, studentlastname, genderid, city, country, state, curriculumid, curriculumids, isactive, schooluserid, gradeid, startinglevelid, studentcurrentlevelid, studentcurrentlessonid, standard, schoolname, is_teacher_acc, schoolid)
+               VALUES (?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,0,?)`,
+        [s.id, s.first, s.last, s.gender, "Phnom Penh", "Cambodia", "Phnom Penh", ID.curriculum, CURRICULUM_IDS, s.su, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Demo Primary School", ID.school]);
     }
 
     /**
@@ -261,6 +270,18 @@ async function main() {
        WHERE su.schoolusername IN ('demo.student', 'demo.teacher')`,
       [ID.curriculum, CURRICULUM_IDS, ID.grade, ID.level, ID.level, ID.lesson1]
     );
+
+    // INSERT IGNORE turns a refused row into a silent skip, and leaves rows seeded before owners existed as they
+    // were: fill the NULL owners and school ids of this seed's own rows, then check every one is there.
+    await fillAndVerify(conn, [
+      { table: "schools", key: "schoolid", ids: [ID.school], column: "organisationid", value: organisationid },
+      { table: "subjects", key: "subjectid", ids: [ID.subject], column: "organisationid", value: organisationid },
+      { table: "curriculums", key: "curriculumid", ids: [ID.curriculum], column: "organisationid", value: organisationid },
+      { table: "documents", key: "documentid", ids: [ID.doc1, ID.doc2], column: "organisationid", value: organisationid },
+      { table: "questions", key: "questionid", ids: QUESTIONS.map((_, i) => qid(i)), column: "organisationid", value: organisationid },
+      { table: "schoolusers", key: "schooluserid", ids: [ID.teacherUser, ...STUDENTS.map((s) => s.su)], column: "schoolid", value: ID.school },
+      { table: "students", key: "studentid", ids: [ID.teacher, ...STUDENTS.map((s) => s.id)], column: "schoolid", value: ID.school },
+    ]);
 
     const [[c]] = await conn.query(`
       SELECT (SELECT COUNT(*) FROM lessons)   AS lessons,
