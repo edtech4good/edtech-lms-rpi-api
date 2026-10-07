@@ -66,7 +66,7 @@ Routes admitting the server key: 21.
 | POST | `/access` | AccessController.access | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | Records the caller's own usage; no other login's row is read or written. |
 | GET | `/` | AppController.getbase | public | n/a |  |  |  | none |  |
 | GET | `/version` | AppController.getversion | public | n/a |  |  |  | none |  |
-| POST | `/auth/login` | AuthController.login | public | n/a |  |  |  | ThrottlerGuard | Refuses (401) a login whose school or organisation cannot be resolved or is suspended, except on a classroom Pi whose school has no organisation yet. |
+| POST | `/auth/login` | AuthController.login | public | n/a |  |  |  | ThrottlerGuard | Refuses (401) a login whose school or organisation cannot be resolved or is suspended; a school with no organisation cannot sign anyone in, on a classroom Pi as much as online. |
 | POST | `/auth/logout` | AuthController.logout | public | n/a |  |  |  | none | Reads the bearer token in the handler and ends only that token's own session. |
 | GET | `/curriculum` | CurriculumController.getall | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) |  |
 | GET | `/curriculum/:curriculumbaselineid/getstudentresult` | CurriculumController.getStudentBaselineEndlineResults | teacher | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | AccessOrServerSyncGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | Central calls it with the server key; scoped by the organisation header, and by the school for a token. |

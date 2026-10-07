@@ -387,8 +387,16 @@ export class ImportController {
   )
   @ApiResponse({
     status: 200,
-    description: "Complete sync successfully",
-    schema: { $ref: getSchemaPath(ResponseBoolean) },
+    description: "One organisation's content imported; the body names the organisation and counts what was written, deleted, marked deleted and adopted per table",
+    schema: {
+      type: "object",
+      properties: {
+        error: { type: "boolean", example: false },
+        data: { type: "boolean", example: true },
+        organisationid: { type: "string" },
+        counts: { type: "object", additionalProperties: { type: "object" } },
+      },
+    },
   })
   @ApiResponse({
     status: 400,

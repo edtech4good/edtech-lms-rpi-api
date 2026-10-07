@@ -546,9 +546,9 @@ describe("the data exports are confined to the caller's scope (organisations pac
         Config.fortyk.api.rpi.offline = offline;
         await expect(checkTokenClaims({ schoolid: SCH_L })).rejects.toMatchObject({ status: 401 });
         await expect(checkTokenClaims({ schoolid: SCH_L, organisationid: null })).rejects.toMatchObject({ status: 401 });
-        await expect(checkTokenClaims({ schoolname: "Legacy School" })).rejects.toMatchObject({ status: 401 });
+        await expect(checkTokenClaims({ schoolname: "Legacy School" } as Record<string, unknown>)).rejects.toMatchObject({ status: 401 });
         await expect(checkTokenClaims({ schoolid: SCH_LD })).rejects.toMatchObject({ status: 401 });
-        await expect(checkTokenClaims({ schoolname: "Closed Legacy School" })).rejects.toMatchObject({ status: 401 });
+        await expect(checkTokenClaims({ schoolname: "Closed Legacy School" } as Record<string, unknown>)).rejects.toMatchObject({ status: 401 });
       }
     });
   });

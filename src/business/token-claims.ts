@@ -21,7 +21,6 @@ import { isGiven } from "./school-identity";
  */
 export interface TokenClaims {
   schoolid?: unknown;
-  schoolname?: unknown;
   organisationid?: unknown;
 }
 

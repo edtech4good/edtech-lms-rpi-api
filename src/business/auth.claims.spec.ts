@@ -29,7 +29,6 @@ import { TokenBusiness } from "./token.business";
 const SCHOOL_X = { schoolid: "5c000000-0000-4000-8000-0000000000a1", schoolname: "School X", uitheme: "corporate", organisationid: "0a000000-0000-4000-8000-00000000000a" };
 const SCHOOL_Y = { schoolid: "5c000000-0000-4000-8000-0000000000b2", schoolname: "School Y", uitheme: "kids", organisationid: "0b000000-0000-4000-8000-00000000000b" };
 const SCHOOL_X_DELETED = { ...SCHOOL_X, isdeleted: true };
-const SCHOOL_NO_ORG_DELETED = { schoolid: "5c000000-0000-4000-8000-0000000000c4", schoolname: "School Z2", uitheme: "kids", organisationid: null, isdeleted: true };
 const SCHOOL_NO_ORG = { schoolid: "5c000000-0000-4000-8000-0000000000c3", schoolname: "School Z", uitheme: "kids", organisationid: null };
 
 type Stubs = {
@@ -234,13 +233,13 @@ describe("login token claims: schoolid and organisationid", () => {
     }
   });
 
-  it("a login whose school is deleted cannot sign in, online or on a Pi, owned or not, with the answer for a school that is not here", async () => {
+  it("a login whose school is deleted cannot sign in, online or on a Pi, with the answer for a school that is not here; the same school not deleted does sign in", async () => {
     // the reference answer: a login whose school is not here at all
     stub({ studentSchoolId: null, userSchoolId: null, user: { schoolname: "Nowhere" }, schools: [SCHOOL_X] });
     Config.fortyk.api.rpi.offline = false;
     const missing = await signIn().catch((e) => e);
     jest.restoreAllMocks();
-    for (const [school, name] of [[SCHOOL_X_DELETED, "School X"], [SCHOOL_NO_ORG_DELETED, "School Z2"]] as const) {
+    for (const [school, name] of [[SCHOOL_X_DELETED, "School X"]] as const) {
       stub({ user: { schoolname: name }, schools: [school] });
       for (const offline of [false, true]) {
         Config.fortyk.api.rpi.offline = offline;
@@ -250,6 +249,13 @@ describe("login token claims: schoolid and organisationid", () => {
         });
         expect(refusal).toMatchObject(REFUSED);
       }
+      jest.restoreAllMocks();
+    }
+    // the same owned school, not deleted: it signs in, so the refusal above is the deletion
+    for (const offline of [false, true]) {
+      stub({ user: { schoolname: "School X" }, schools: [SCHOOL_X] });
+      Config.fortyk.api.rpi.offline = offline;
+      expect((await signIn()).schoolid).toBe(SCHOOL_X.schoolid);
       jest.restoreAllMocks();
     }
   });

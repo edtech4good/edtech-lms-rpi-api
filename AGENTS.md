@@ -37,7 +37,9 @@ holds one school. The rules, in `src/business/`:
   payload (one organisation's content, with owners) as a scoped replace that
   never touches another organisation's or unowned rows. Anything that is not a
   format-3 payload (format 2 is retired) is a 400. A staff token with no
-  organisation claim is a 403 there, on a classroom server as much as online.
+  organisation claim is refused on a classroom server as much as online: 401
+  over HTTP (the strategy refuses the token before the controller runs); the
+  controller's own 403 is defence in depth.
   `PUT /import/ownership` fills empty owners only.
 - Every route declares an `@OrgPolicy` (`public | learner | teacher | server |
   pi-import`). `npm run routes:policy -- --write` regenerates

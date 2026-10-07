@@ -90,7 +90,7 @@ export interface Caller {
  * such a token before any route runs; this is the same answer for anything that asks without it). A token with
  * no organisation claim is never a caller, on a classroom Pi as much as online.
  */
-export async function callerOf(user: Pick<Token, "organisationid" | "schoolid" | "schoolname"> | undefined): Promise<Caller | null> {
+export function callerOf(user: Pick<Token, "organisationid" | "schoolid"> | undefined): Caller | null {
   return claimsOf(user);
 }
 
@@ -279,7 +279,7 @@ export async function learnerCurriculumList(studentid: unknown): Promise<string[
 
 /** The curricula the token's holder may see, as curriculum rows' ids: the rule above, applied to the whole list. */
 export async function curriculumIdsInScope(user: Token | undefined): Promise<string[]> {
-  const claims = await callerOf(user);
+  const claims = callerOf(user);
   if (!claims || !user) {
     return [];
   }
@@ -296,7 +296,7 @@ export async function curriculumIdsInScope(user: Token | undefined): Promise<str
  * list). What the learner screens (subjects, progress summary, library) show.
  */
 export async function enrolledCurriculumIds(user: Token | undefined): Promise<string[]> {
-  const claims = await callerOf(user);
+  const claims = callerOf(user);
   if (!claims || !user) {
     return [];
   }
@@ -310,7 +310,7 @@ export async function enrolledCurriculumIds(user: Token | undefined): Promise<st
 
 /** May the token's holder see this content? An id that names nothing is not visible either. */
 export async function canAccessContent(user: Token | undefined, kind: ContentKind, id: unknown): Promise<boolean> {
-  const caller = await callerOf(user);
+  const caller = callerOf(user);
   if (!caller) {
     return false;
   }

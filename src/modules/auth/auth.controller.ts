@@ -37,7 +37,7 @@ import { LogoutResponse } from "./models/LogoutResponse";
 @Controller("auth")
 export class AuthController {
   @Post("login")
-  @OrgPolicy("public", { note: "Refuses (401) a login whose school or organisation cannot be resolved or is suspended, except on a classroom Pi whose school has no organisation yet." })
+  @OrgPolicy("public", { note: "Refuses (401) a login whose school or organisation cannot be resolved or is suspended; a school with no organisation cannot sign anyone in, on a classroom Pi as much as online." })
   @ApiExtraModels(LoginTokens)
   @ApiExtraModels(LoginResponseModel)
   @ApiResponse({

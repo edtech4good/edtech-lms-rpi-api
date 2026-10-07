@@ -78,7 +78,7 @@ export async function resolveReportScope(request: { headers: Record<string, unkn
     const organisationid = header.trim();
     return { organisationid, schoolids: await schoolIdsOfOrganisation(organisationid) };
   }
-  const claims = await callerOf(user);
+  const claims = callerOf(user);
   if (!user || !claims) {
     throw new ApiError(ErrorCode.SIGN_IN_REQUIRED);
   }
