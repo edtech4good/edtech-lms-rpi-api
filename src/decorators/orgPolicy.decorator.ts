@@ -36,8 +36,8 @@ import { SetMetadata } from "@nestjs/common";
  *  - `pi-import` The content import: central's server sync key online, and on a
  *                classroom Pi also a staff token. The organisation is the one
  *                in the payload header; on a Pi it must match the token's, and
- *                a token whose school has no organisation yet may send only
- *                content that gives that school its owner.
+ *                a token with no organisation is refused. Only one
+ *                organisation's content (format 3) is accepted.
  *
  * A route used by both a user token and the server key is classified by its user path; the key path is recorded separately.
  *
@@ -77,7 +77,7 @@ export const ORG_POLICY_DEFINITIONS: Record<(typeof ORG_POLICIES)[number], strin
   server:
     "Authenticated only by central's server sync key. Carries no user; the organisation comes from the payload header, and a payload for another organisation's rows is refused.",
   "pi-import":
-    "The content import: central's server sync key online, and on a classroom Pi also a staff token. The organisation is the one in the payload header; on a Pi it must match the token's, and a token whose school has no organisation yet may send only content that gives that school its owner.",
+    "The content import: central's server sync key online, and on a classroom Pi also a staff token. The organisation is the one in the payload header; on a Pi it must match the token's, and a token with no organisation is refused. Only one organisation's content (format 3) is accepted.",
 };
 
 export const ORG_POLICY_TIE_BREAK =

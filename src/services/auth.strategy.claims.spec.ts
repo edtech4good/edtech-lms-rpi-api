@@ -9,9 +9,9 @@ import { JwtAccessStrategy } from "./auth.strategy";
 /**
  * The strategy refuses a token that does not prove the organisation it acts for (organisations package 8):
  * both `schoolid` and `organisationid` must be present, the organisation must be here and neither suspended
- * nor deleted, and the school must still be that organisation's. The one exception is a classroom Pi
- * (`RPI_OFFLINE`) whose own school has no organisation yet: a token with no organisation is accepted, on every
- * route, ONLY while the school is here and unowned (and never online).
+ * nor deleted, and the school must still be that organisation's. There is no exception: a classroom Pi
+ * (`RPI_OFFLINE`) refuses a token with no organisation exactly as the online server does, even when the
+ * token's school is here and has no owner.
  *
  * No database: the token table and the two lookups are stubbed; the rule is the real code.
  */
@@ -132,46 +132,41 @@ describe("JwtAccessStrategy: a token must prove its school and organisation", ()
   });
 });
 
-describe("JwtAccessStrategy: the classroom Pi whose school has no organisation yet", () => {
-  beforeEach(() => {
-    Config.fortyk.api.rpi.offline = true;
-  });
+describe("JwtAccessStrategy: a token with no organisation is refused on a classroom Pi as much as online", () => {
+  const both = (name: string, check: () => Promise<void>) =>
+    it.each([[true], [false]])(`${name} (RPI_OFFLINE=%p)`, async (offline) => {
+      Config.fortyk.api.rpi.offline = offline;
+      await check();
+    });
 
-  it("accepts a token with no organisation, on any route, while its school is here and unowned", async () => {
-    await accepted({ schoolid: UNOWNED });
-    await accepted({ schoolid: UNOWNED, organisationid: null });
-  });
-
-  it("finds the unowned school by its name when the token carries no id (a token from before the claims existed)", async () => {
-    await accepted({ schoolid: null, schoolname: "Unowned School", organisationid: null });
-    await accepted({ schoolname: "Unowned School" });
-  });
-
-  it("refuses it online, always", async () => {
-    Config.fortyk.api.rpi.offline = false;
+  both("refuses a token with no organisation whose school is here and unowned", async () => {
     await refused({ schoolid: UNOWNED });
     await refused({ schoolid: UNOWNED, organisationid: null });
+  });
+
+  both("refuses it when it carries no id and names the unowned school by name (a token from before the claims existed)", async () => {
+    await refused({ schoolid: null, schoolname: "Unowned School", organisationid: null });
     await refused({ schoolname: "Unowned School" });
   });
 
-  it("refuses it once its school has an owner (the token is stale: it signs in again)", async () => {
+  both("refuses it once its school has an owner (the token is stale: it signs in again)", async () => {
     await refused({ schoolid: SCHOOL });
     await refused({ schoolid: SCHOOL, organisationid: null });
   });
 
-  it("refuses it when its school is not here, or the token names none", async () => {
+  both("refuses it when its school is not here, or the token names none", async () => {
     await refused({ schoolid: "5c000000-0000-4000-8000-00000000dead" });
     await refused({});
     await refused({ schoolname: "Nowhere School" });
   });
 
-  it("does not take an organisation claim that is not null as 'no organisation' (an empty or odd value is refused)", async () => {
+  both("refuses an empty or odd organisation claim", async () => {
     await refused({ schoolid: UNOWNED, organisationid: "" });
     await refused({ schoolid: UNOWNED, organisationid: 42 });
     await refused({ schoolid: UNOWNED, organisationid: "  " });
   });
 
-  it("does not let a token that HAS an organisation use the exception: its organisation and school are checked as usual", async () => {
+  both("checks a token that HAS an organisation as usual", async () => {
     orgs[ORG].organisationstatus = false;
     await refused({ schoolid: SCHOOL, organisationid: ORG });
     await refused({ schoolid: UNOWNED, organisationid: ORG });

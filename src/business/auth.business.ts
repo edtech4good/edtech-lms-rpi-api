@@ -48,13 +48,13 @@ export class AuthBusiness {
     if (schooluser && !schooluser.isactive) throw new ApiError(ErrorCode.NOT_ALLOWED, { message: "This account has been removed." });
     // The school the login belongs to (by name, as before; by the stored id only
     // when the name finds none) and that school's organisation, for the JWT claims. Either may be
-    // null; nothing is refused on them here.
+    // null; they are refused just below.
     const schoolBusiness = new SchoolBusiness();
     const schoolTheme = await schoolBusiness.getTheme(user.schoolname, () =>
       schoolBusiness.getLinkedSchoolId(user.schooluserid)
     );
-    // The login must belong to a school of an organisation that is here and active, else it cannot sign in (a
-    // classroom Pi whose own school has no organisation yet is the one exception; see business/token-claims.ts).
+    // The login must belong to a school of an organisation that is here and active, else it cannot sign in, on a
+    // classroom Pi as much as online (see business/token-claims.ts).
     // Only reached after a correct password, so the neutral refusal reveals nothing to a guesser.
     await assertCanSignIn(schoolTheme);
     if (schooluser) {
