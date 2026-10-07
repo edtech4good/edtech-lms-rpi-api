@@ -32,9 +32,9 @@ export interface studentsAttributes {
   standard?: string;
   schooltype?: string;
   schoolname?: string;
-  // The school by id (NULL until backfilled or written by a roster import that carries it).
+  // The school by id: required (S4), so a learner is always written with one.
   // Left out of every query by default: see ownership-scope.ts.
-  schoolid?: string | null;
+  schoolid: string;
   city: string;
   country: string;
   state: string;
@@ -101,7 +101,6 @@ export type studentsOptionalAttributes =
   | "standard"
   | "schooltype"
   | "schoolname"
-  | "schoolid"
   | "dateofjoin"
   | "gradeid"
   | "startinglevelid"
@@ -137,7 +136,7 @@ export class students
   standard?: string;
   schooltype?: string;
   schoolname?: string;
-  schoolid?: string | null;
+  schoolid!: string;
   city!: string;
   country!: string;
   state!: string;
@@ -286,8 +285,7 @@ export class students
         // real column collation; the model and the table can differ).
         schoolid: {
           type: DataTypes.STRING(36),
-          allowNull: true,
-          defaultValue: null,
+          allowNull: false,
         },
         city: {
           type: DataTypes.STRING(250),

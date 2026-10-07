@@ -12,7 +12,7 @@ export interface curriculumsAttributes {
   curriculumdescription?: string;
   subjectid?: string;
   isdeleted?: boolean;
-  organisationid?: string | null;
+  organisationid: string;
 }
 
 export type curriculumsPk = "curriculumid";
@@ -32,7 +32,7 @@ export class curriculums
   curriculumdescription?: string;
   isdeleted!: boolean;
   subjectid?: string;
-  organisationid!: string | null;
+  organisationid!: string;
 
   // curriculums hasMany grades via curriculumid
   grades!: grades[];
@@ -95,8 +95,7 @@ export class curriculums
         // See ownership-scope.ts; no `references` (the migration owns the key).
         organisationid: {
           type: DataTypes.STRING(36),
-          allowNull: true,
-          defaultValue: null,
+          allowNull: false,
         },
       },
       {

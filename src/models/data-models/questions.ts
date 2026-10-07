@@ -30,7 +30,7 @@ export interface questionsAttributes {
   lastupdated: Date;
   questionobject?: any;
   questioncorrectvalue?: number;
-  organisationid?: string | null;
+  organisationid: string;
 }
 
 export type questionsPk = "questionid";
@@ -46,8 +46,7 @@ export type questionsOptionalAttributes =
   | "isdeleted"
   | "questionstatus"
   | "questiontags"
-  | "lastupdated"
-  | "organisationid";
+  | "lastupdated";
 export type questionsCreationAttributes = Optional<
   questionsAttributes,
   questionsOptionalAttributes
@@ -72,7 +71,7 @@ export class questions
   lastupdated!: Date;
   questionobject?: any;
   questioncorrectvalue?: number;
-  organisationid!: string | null;
+  organisationid!: string;
 
   // questions hasMany lessonpracticequestions via questionid
   lessonpracticequestions!: lessonpracticequestions[];
@@ -290,8 +289,7 @@ export class questions
         // See ownership-scope.ts; no `references` (the migration owns the key).
         organisationid: {
           type: DataTypes.STRING(36),
-          allowNull: true,
-          defaultValue: null,
+          allowNull: false,
         }
       },
       {
