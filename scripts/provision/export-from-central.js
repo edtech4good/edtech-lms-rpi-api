@@ -9,8 +9,9 @@
  *
  * It signs in as a platform user, switches to the organisation (POST /auth/organisation), downloads
  * GET /sync/content (a zip with one file) and writes that file, pretty-printed, to the output path. Credentials
- * come from the environment only; nothing is printed but status lines. It signs out at the end: central keeps one
- * token per user, so signing in here would otherwise end that account's session in a browser.
+ * come from the environment only; nothing is printed but status lines. Central keeps one token per user, so signing
+ * in here ends that account's other session (a browser, say); that cannot be avoided. At the end the script signs
+ * out, which only drops its own token, so no token is left lying around.
  */
 const fs = require("fs");
 const path = require("path");
@@ -61,7 +62,7 @@ const json = { "content-type": "application/json" };
     process.exitCode = 1;
   })
   .finally(async () => {
-    // One token per user: signing in here evicts that account's other session (a browser, say), so sign out again.
+    // Signing in already ended the account's other sessions; this only drops this script's own token.
     if (token) {
       await fetch(`${base}/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${token}` } }).catch(() => undefined);
     }

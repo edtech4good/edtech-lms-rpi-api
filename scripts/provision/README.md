@@ -89,8 +89,10 @@ It refuses, writes nothing and exits non-zero when:
 - `--code` is not 2 to 16 lower-case letters and digits, or the country is not found (and cannot be created: see `--country`).
 
 After writing, and before committing, it checks in the same transaction that the organisation is there once and
-active, that the school is live and owned by it, that every login is in the school with the right role, and that
-no row of the payload is missing or has another owner. It prints counts only. Any failure rolls everything back.
+active, that the school is live and owned by it and is the organisation's **only** live school (another school that
+was live is only ever marked deleted with `--replace-school`), that every class the school had is still there, that
+every login is in the school with the right role, and that no row of the payload is missing or has another owner. It
+prints counts only. Any failure rolls everything back.
 
 ### Running it again
 
@@ -126,7 +128,9 @@ npm run provision -- --organisation "<name>" --code <code> --school "<name>" --r
 ```
 
 It sets a new random password for that login of this school (shown once, or written to the credentials file) and
-ends that login's session; it changes nothing else, and it refuses a login that is not in this school. Without
+ends that login's session; it changes nothing else, and it refuses a login that is not in this school. It works for
+**any** login of the school, a learner's included, not only the staff logins this command made, and it checks that
+exactly one row changed. Without
 `--apply` it prints what it would do.
 
 ## A new database
@@ -174,6 +178,14 @@ organisation id and code. A classroom server has its own organisation, so before
   the school and class go into the payload rather than beside it;
 - gives a curriculum baseline that named schools the local school;
 - adds the school's country to the payload if it does not carry it.
+
+**Countries are re-homed by name.** A country name is unique on a server, so if the payload's country has the same name
+as one this server already has under another id (the one a no-`--content` run created, say), the payload's row is
+replaced by this server's, and every reference to the payload's id is rewritten to it. One row, no collision.
+
+(`PUT /import/master` over HTTP has no such step: a payload whose country has the same name as a local country under
+another id updates the local row, and a school pointing at the payload's id would dangle, because the import runs with
+foreign-key checks off. That is a follow-up for the import itself.)
 
 **Content ids are not changed**, so a later join to central can recognise the same curriculum, lesson or question.
 The payload is checked before and after: every row of the re-homed payload must have the local owner.

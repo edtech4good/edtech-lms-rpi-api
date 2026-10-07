@@ -28,8 +28,8 @@
  * Ownership: every school and piece of content is owned by the organisation `edtech4good` (created here if it
  * is not, and refused if it was deleted: see lib/seed-organisations.js), and every login and learner has its
  * school's id. Rows seeded before owners existed get their NULL owner filled, and the school, its class, the
- * owned content rows, the logins and the learners are checked after the INSERT IGNOREs (the rest hangs from
- * those: a missing parent would have stopped it).
+ * owned content rows, the logins and the learners are checked after the INSERT IGNOREs. The rest (grades, levels,
+ * lessons, practices and so on) is not checked: INSERT IGNORE skips a row whose parent is missing without a word.
  *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  */
