@@ -98,15 +98,17 @@ describe("PUT /import/students for one school", () => {
 
   it("before its school has reached this server (S4): rows that carry the school id and rows with only a name are all refused, nothing written", async () => {
     schoolRows = [];
-    for (const rows of [
-      [learner(1), learner(2, { schoolid: A, schoolname: "សាលា A" })],
-      [learner(3, { schoolname: "សាលា A" })],
-    ]) {
+    for (const [rows, refusal] of [
+      // they carry the roster's school id, so they belong to it: the writer refuses them as rows of a school that is not here
+      [[learner(1), learner(2, { schoolid: A, schoolname: "សាលា A" })], "2 rows name no school this server has. A school must be here before its learners and logins. Nothing was written."],
+      // a name that resolves to no school cannot be shown to belong to the roster's school
+      [[learner(3, { schoolname: "សាលា A" })], "1 row does not belong to the school this roster is for. Nothing was written."],
+    ] as const) {
       jest.clearAllMocks();
       tnx.commit.mockResolvedValue(undefined);
       tnx.rollback.mockResolvedValue(undefined);
-      mockZipContaining({ schoolid: A, studentusers: rows });
-      await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/no school this server has|does not belong to the school this roster is for/) });
+      mockZipContaining({ schoolid: A, studentusers: [...rows] });
+      await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400, message: refusal });
       nothingWritten();
     }
   });

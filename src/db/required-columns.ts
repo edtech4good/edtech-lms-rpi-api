@@ -51,6 +51,12 @@ const identifier = (value: string): string => {
   return value;
 };
 
+/*
+ * The guard and the pre-flight count `IS NULL` only, not the empty string: every one of these columns has a
+ * foreign key, which rejects '' (no organisation or school has that id), and the only path that writes with
+ * foreign-key checks off (the format-3 content import) stamps a validator-checked UUID on every owned row.
+ */
+
 /** A required column and the rows that break it. */
 export interface Violation extends RequiredColumn {
   /** Rows whose value is NULL: all of them, soft-deleted included (an id is identity, not liveness). */
