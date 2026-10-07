@@ -209,9 +209,8 @@ export class ImportController {
               tnx
             );
           }
-          // Every login and every learner row must name a school this server has: refused here, before the
-          // first write (the writers below ask again).
-          await withRequiredSchoolIds(newstudents, tnx);
+          // Every learner row must name a school this server has, and is refused here, before the logins
+          // are written (the login writer and the learner writer each refuse their own rows again).
           await withRequiredSchoolIds(newstudents.map((x) => x.student ?? {}), tnx);
           const suresult = await su.importschoolusers(newstudents, tnx);
           await st.importstudents(
@@ -329,8 +328,6 @@ export class ImportController {
           newteachers = parsed.teachers;
           await assertRosterBelongsToSchool(newteachers, parsed.schoolid, tnx);
         }
-        // Refused before the first write: every teacher must name a school this server has.
-        await withRequiredSchoolIds(newteachers, tnx);
         await su.importschoolteachers(newteachers, tnx);
         await tnx.commit();
       } catch (e) {
