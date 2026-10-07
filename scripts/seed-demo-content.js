@@ -27,8 +27,9 @@
  *
  * Ownership: every school and piece of content is owned by the organisation `edtech4good` (created here if it
  * is not, and refused if it was deleted: see lib/seed-organisations.js), and every login and learner has its
- * school's id. Rows seeded before owners existed get their NULL owner filled, and every seeded row is checked
- * after the INSERT IGNOREs.
+ * school's id. Rows seeded before owners existed get their NULL owner filled, and the school, its class, the
+ * owned content rows, the logins and the learners are checked after the INSERT IGNOREs (the rest hangs from
+ * those: a missing parent would have stopped it).
  *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  */
@@ -279,6 +280,7 @@ async function main() {
       { table: "curriculums", key: "curriculumid", ids: [ID.curriculum], column: "organisationid", value: organisationid },
       { table: "documents", key: "documentid", ids: [ID.doc1, ID.doc2], column: "organisationid", value: organisationid },
       { table: "questions", key: "questionid", ids: QUESTIONS.map((_, i) => qid(i)), column: "organisationid", value: organisationid },
+      { table: "standards", key: "standardid", ids: [ID.standard], column: "schoolid", value: ID.school },
       { table: "schoolusers", key: "schooluserid", ids: [ID.teacherUser, ...STUDENTS.map((s) => s.su)], column: "schoolid", value: ID.school },
       { table: "students", key: "studentid", ids: [ID.teacher, ...STUDENTS.map((s) => s.id)], column: "schoolid", value: ID.school },
     ]);

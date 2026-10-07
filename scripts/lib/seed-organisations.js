@@ -62,7 +62,7 @@ async function ensureOrganisation(conn, code) {
  * Seeds insert with INSERT IGNORE, which turns a refused row (a missing parent, a NULL in a required column)
  * into a silent skip. So after inserting, each seed fills an owner or school that is still NULL on its own rows
  * (never overwriting one: a server whose rows already belong to another organisation keeps them) and then
- * checks that every row it meant to write is there and has the column set. Throws, naming the table, when not.
+ * checks that every row it names here is there and has the column set. Throws, naming the table, when not.
  *
  * `expected`: [{ table, key, ids, column, value }]: `ids` are the seeded primary keys, `value` what a NULL
  * `column` is filled with (the organisation's id for `organisationid`, the school's id for `schoolid`).

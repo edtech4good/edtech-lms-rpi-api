@@ -32,8 +32,9 @@
  *
  * Ownership: every school and piece of content here is owned by the organisation `miv` (created if it is not
  * here, and refused if it was deleted: see lib/seed-organisations.js), and both logins and learners have the
- * school's id. Rows seeded before owners existed get their NULL owner filled, and every seeded row is checked
- * after the INSERT IGNOREs.
+ * school's id. Rows seeded before owners existed get their NULL owner filled, and the school, its class, the
+ * owned content rows, the logins and the learners are checked after the INSERT IGNOREs (the rest hangs from
+ * those: a missing parent would have stopped it).
  *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  */
@@ -249,9 +250,6 @@ async function main() {
     await q(`INSERT IGNORE INTO countries (countryid, countryname, isdeleted) VALUES (?,?,0)`,
       [ID.country, "Cambodia"]);
 
-    await q(`INSERT IGNORE INTO standards (standardid, standardname, schoolname, schoolid, isdeleted) VALUES (?,?,?,?,0)`,
-      [ID.standard, "MSME", "Mekong Inclusive Ventures", ID.school]);
-
     await q(`INSERT IGNORE INTO subjects (subjectid, subjectname, subjectstatus, subjectdescription, isdeleted, organisationid) VALUES (?,?,1,?,0,?)`,
       [ID.subject, "Business Foundations", "DCRS subject", organisationid]);
 
@@ -268,6 +266,11 @@ async function main() {
     // 'kids' default the demo school uses. brandingconfig stays NULL.
     await q(`INSERT IGNORE INTO schools (schoolid, schoolname, countryid, curriculums, isdeleted, uitheme, organisationid) VALUES (?,?,?,?,0,?,?)`,
       [ID.school, "Mekong Inclusive Ventures", ID.country, JSON.stringify([ID.curriculum]), "corporate", organisationid]);
+
+    // After the school: `standards.schoolid` has a foreign key to it, so inserted before the school exists (a fresh
+    // database) the row was skipped silently and the class only appeared on a second run.
+    await q(`INSERT IGNORE INTO standards (standardid, standardname, schoolname, schoolid, isdeleted) VALUES (?,?,?,?,0)`,
+      [ID.standard, "MSME", "Mekong Inclusive Ventures", ID.school]);
 
     const lessons = [
       { id: ID.lesson1, name: "Why direction matters", order: 1, doc: ID.doc1, learning: ID.learning1, learningName: "Animation: No plan vs clear vision", learningDesc: "Shows the difference between running a business with no plan and one guided by a clear vision.", practice: ID.practice1, quiz: ID.quiz1, desc: "Why having a clear plan matters more than reacting to daily fires." },
@@ -372,6 +375,7 @@ async function main() {
       { table: "curriculums", key: "curriculumid", ids: [ID.curriculum], column: "organisationid", value: organisationid },
       { table: "documents", key: "documentid", ids: [ID.doc1, ID.doc2, ID.doc3, ID.doc4], column: "organisationid", value: organisationid },
       { table: "questions", key: "questionid", ids: QUESTIONS.map((Q) => ID[Q.key]), column: "organisationid", value: organisationid },
+      { table: "standards", key: "standardid", ids: [ID.standard], column: "schoolid", value: ID.school },
       { table: "schoolusers", key: "schooluserid", ids: [ID.studentUser, ID.facilitatorUser], column: "schoolid", value: ID.school },
       { table: "students", key: "studentid", ids: [ID.student, ID.facilitator], column: "schoolid", value: ID.school },
     ]);
