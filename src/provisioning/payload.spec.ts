@@ -36,6 +36,7 @@ const identity = (extra: Partial<LocalIdentity> = {}): LocalIdentity => ({
   },
   standards: [{ standardid: LOCAL_CLASS, standardname: "ថ្នាក់ទី ៣ក", isdeleted: false }],
   country: null,
+  localCountries: [],
   ...extra,
 });
 
@@ -220,6 +221,29 @@ describe("rehomeContent", () => {
     const { content, summary } = rehomeContent(original, identity({ country }));
     expect(content.tables.countries).toEqual([country]);
     expect(summary.countryAdded).toBe(true);
+  });
+
+  it("re-homes a payload country onto this server's country of the same name (names are unique), and every reference follows", () => {
+    const body = sample() as Record<string, Row[]>;
+    body.countries = [{ ...body.countries[0], countryname: "កម្ពុជា" }];
+    const localCountry = { countryid: "0c000000-0000-4000-8000-0000000000e1", countryname: " កម្ពុជា ", expectedusage: 5, isdeleted: false };
+    const { content, summary } = rehomeContent(
+      validatePayload(body),
+      identity({ school: { ...identity().school, countryid: localCountry.countryid }, localCountries: [localCountry] }),
+    );
+    expect(content.tables.countries).toEqual([{ countryid: localCountry.countryid, countryname: " កម្ពុជា ", expectedusage: 5, isdeleted: false }]);
+    expect(content.tables.schools.map((r) => r.countryid)).toEqual([localCountry.countryid]);
+    expect(JSON.stringify(content.tables)).not.toContain(CAMBODIA);
+    expect(summary.countriesRemapped).toBe(1);
+  });
+
+  it("leaves a payload country alone when this server has it under the same id, or does not have the name", () => {
+    const sameId = rehomeContent(validatePayload(sample()), identity({ localCountries: [{ countryid: CAMBODIA, countryname: "Cambodia", expectedusage: null, isdeleted: false }] }));
+    expect(sameId.summary.countriesRemapped).toBe(0);
+    expect(ids(sameId.content.tables.countries, "countryid")).toEqual([CAMBODIA]);
+    const other = rehomeContent(validatePayload(sample()), identity({ localCountries: [{ countryid: "0c000000-0000-4000-8000-0000000000e2", countryname: "Elsewhere", expectedusage: null, isdeleted: false }] }));
+    expect(other.summary.countriesRemapped).toBe(0);
+    expect(ids(other.content.tables.countries, "countryid")).toEqual([CAMBODIA]);
   });
 
   it("does not mutate the payload it was given", () => {

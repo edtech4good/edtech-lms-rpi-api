@@ -34,7 +34,9 @@ import { ProvisionError } from "./args";
  *    standards of every school in the payload, so a class left out of the payload would be destroyed;
  *  - a curriculum baseline's `schoolid` list (the schools it applies to): when it names any school it now names
  *    the local school, so the baseline applies where the payload meant it to;
- *  - `countries`: the local school's country is added when the payload does not carry it.
+ *  - `countries`: a country the payload carries that this server already has under another id (the name is
+ *    unique, so the two cannot both be written) is replaced by THIS server's row, and every reference to the
+ *    payload's id is rewritten to the local id; the school's country is added when the payload does not carry it.
  *
  * What it does NOT touch: content ids (so a later join to central can recognise the same curriculum, lesson or
  * question), content text, `countries` otherwise, and every row of the payload that has no owner column.
@@ -55,6 +57,8 @@ export interface LocalIdentity {
   standards: Array<{ standardid: string; standardname: string; isdeleted: boolean; created_at?: Date | null }>;
   /** A `countries` row to add to the payload when it does not carry the school's country. */
   country: Row | null;
+  /** Every country this server has (rows of `countries`): a payload country of the same name is re-homed onto it. */
+  localCountries: Row[];
 }
 
 export interface RehomeSummary {
@@ -65,6 +69,8 @@ export interface RehomeSummary {
   baselineListsRewritten: number;
   curricula: number;
   countryAdded: boolean;
+  /** Payload countries replaced by this server's row of the same name. */
+  countriesRemapped: number;
   /** Rows per table of the re-homed payload (what the import is given). */
   rows: Record<"organisations" | TableKey, number>;
 }
@@ -169,6 +175,38 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
     ...(standard.created_at ? { created_at: standard.created_at } : {}),
   }));
 
+  // A payload country this server already has by name, under another id, becomes the local row; references follow.
+  const norm = (name: string) => name.trim().normalize("NFC").toLowerCase();
+  const localByName = new Map(local.localCountries.map((row) => [norm(String(row.countryname)), row]));
+  const countryIds = new Map<string, string>();
+  const seenCountries = new Set<string>();
+  const countryRows: Row[] = [];
+  for (const row of tables.countries) {
+    const mine = localByName.get(norm(String(row.countryname)));
+    let out = row;
+    if (mine && lower(String(mine.countryid)) !== lower(String(row.countryid))) {
+      countryIds.set(lower(String(row.countryid)), String(mine.countryid));
+      out = { countryid: mine.countryid, countryname: mine.countryname, expectedusage: mine.expectedusage ?? null, isdeleted: false };
+    }
+    if (!seenCountries.has(lower(String(out.countryid)))) {
+      seenCountries.add(lower(String(out.countryid)));
+      countryRows.push(out);
+    }
+  }
+  tables.countries = countryRows;
+  if (countryIds.size > 0) {
+    for (const key of TABLE_KEYS) {
+      if (key === "schools") continue; // replaced below by the local school, which already has the local id
+      for (const ref of CONTENT_TABLES[key].refs ?? []) {
+        if (ref.to !== "countries") continue;
+        tables[key] = tables[key].map((row) => {
+          const mapped = countryIds.get(lower(String(row[ref.fk] ?? "")));
+          return mapped ? { ...row, [ref.fk]: mapped } : row;
+        });
+      }
+    }
+  }
+
   // A baseline that named schools now names the local school.
   let baselineListsRewritten = 0;
   tables.curriculumbaselines = tables.curriculumbaselines.map((row) => {
@@ -219,6 +257,7 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
       baselineListsRewritten,
       curricula: curriculumIds.length,
       countryAdded,
+      countriesRemapped: countryIds.size,
       rows,
     },
   };

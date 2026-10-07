@@ -91,6 +91,11 @@ export interface ProvisionPlan {
   logins: LoginPlan[];
   /** Other live schools of this organisation here, to be marked deleted (only with --replace-school). */
   otherSchoolsMarkedDeleted: number;
+  /** Their ids: without --replace-school each must still be live afterwards. */
+  otherLiveSchoolIds: string[];
+  replaceSchool: boolean;
+  /** Every class id the school had before this run (deleted ones too): each must still be here afterwards. */
+  classIdsBefore: string[];
   removals: Removals | null;
   content: null | { file: string; rehomed: Rehomed };
   reset: null | { schooluserid: string; username: string };
@@ -147,6 +152,8 @@ interface CountryChoice {
   dbRow: Row | null;
   /** The country row does not exist anywhere and is to be created from the name given (no payload only). */
   create: boolean;
+  /** Every country this server has: a payload country of the same name is re-homed onto it. */
+  local: Row[];
 }
 
 export interface Guards {
@@ -233,11 +240,15 @@ export class Provisioner {
     // The import (and --replace-school without a payload) marks every other live school of the organisation
     // deleted, and its logins can no longer sign in. A typo in --school must not do that silently.
     let otherSchools = 0;
+    let otherLiveSchoolIds: string[] = [];
     if (!reset && organisationAction === "reuse") {
-      otherSchools = await schools.scope("withOwnership").count({
+      const others = await schools.scope("withOwnership").findAll({
+        attributes: ["schoolid"],
         where: { organisationid: organisation.organisationid, isdeleted: false, schoolid: { [Op.ne]: schoolid } },
         transaction,
       });
+      otherLiveSchoolIds = others.map((o) => o.schoolid);
+      otherSchools = otherLiveSchoolIds.length;
       if (otherSchools > 0 && !options.replaceSchool) {
         throw new ProvisionError(
           `This organisation already has ${otherSchools === 1 ? "another school" : `${otherSchools} other schools`} here, and a classroom server holds one school: ` +
@@ -267,6 +278,9 @@ export class Provisioner {
         standardsKept: 0,
         logins: [],
         otherSchoolsMarkedDeleted: 0,
+        otherLiveSchoolIds: [],
+        replaceSchool: false,
+        classIdsBefore: [],
         removals: null,
         content: null,
         reset: { schooluserid: login.schooluserid, username: login.schoolusername },
@@ -289,7 +303,8 @@ export class Provisioner {
         standard = { action: "reuse", standardid: live.standardid, standardname: live.standardname };
       } else {
         standard = { action: "create", standardid: uuidv4(), standardname: options.className };
-        classRows.push({ standardid: standard.standardid, standardname: standard.standardname, isdeleted: false });
+        // with a date: rows of one bulk insert share their columns, so one with none would get NULL where the others have one
+        classRows.push({ standardid: standard.standardid, standardname: standard.standardname, isdeleted: false, created_at: new Date() });
       }
     }
 
@@ -324,6 +339,7 @@ export class Provisioner {
         school: { schoolid, schoolname, countryid: country.countryid, uitheme, brandingconfig, expectedcontribution, expectedusage },
         standards: classRows,
         country: country.dbRow,
+        localCountries: country.local,
       };
       const rehomed = rehomeContent(original, identity);
       await this.refuseForeignRows(rehomed.content, organisation.organisationid, transaction);
@@ -343,6 +359,9 @@ export class Provisioner {
       standardsKept: existingClasses.length,
       logins,
       otherSchoolsMarkedDeleted: otherSchools,
+      otherLiveSchoolIds,
+      replaceSchool: options.replaceSchool,
+      classIdsBefore: existingClasses.map((c) => c.standardid),
       removals,
       content,
       reset: null,
@@ -369,7 +388,10 @@ export class Provisioner {
         // Only the password changes; the login's session (one token per user) ends so the old password's token cannot go on.
         const password = generatePassword();
         const hash = hashPassword(password);
-        await schoolusers.update({ schooluserpasswordhash: hash } as never, { where: { schooluserid: plan.reset.schooluserid }, transaction });
+        const [affected] = await schoolusers.update({ schooluserpasswordhash: hash } as never, { where: { schooluserid: plan.reset.schooluserid }, transaction });
+        if (affected !== 1) {
+          throw new ProvisionError(`Check failed: the password update changed ${affected} rows, not exactly 1.`);
+        }
         await tokens.destroy({ where: { lmsuserid: plan.reset.schooluserid }, transaction });
         const row = await schoolusers.scope("withOwnership").findOne({ where: { schooluserid: plan.reset.schooluserid }, transaction });
         if (!row || !row.schoolid || lower(row.schoolid) !== lower(plan.school.schoolid) || !verifyPassword(password, row.schooluserpasswordhash)) {
@@ -560,13 +582,27 @@ export class Provisioner {
       const r = row as unknown as { countryid: unknown; countryname: unknown; isdeleted?: unknown };
       return !r.isdeleted && (byId ? lower(String(r.countryid)) === lower(given) : sameName(String(r.countryname), given));
     };
+    const all = await countries.findAll({ transaction });
+    const local: Row[] = all.map((c) => ({ countryid: c.countryid, countryname: c.countryname, expectedusage: c.expectedusage ?? null, isdeleted: false }));
     const inPayload = (original?.tables.countries ?? []).filter(matches);
     if (inPayload.length > 1) throw new ProvisionError("--country matches more than one country of the payload.");
-    const inDatabase = (await countries.findAll({ transaction })).filter((c) => matches(c));
+    const inDatabase = all.filter((c) => matches(c));
     if (inDatabase.length > 1 && inPayload.length === 0) throw new ProvisionError("--country matches more than one country here.");
     if (inPayload.length === 1) {
       const row = inPayload[0];
-      return { countryid: String(row.countryid), countryname: String(row.countryname), dbRow: null, create: false };
+      // The name is unique: a country of this name that is here under another id is the one to use, and the payload's row is re-homed onto it.
+      const same = all.filter((c) => sameName(c.countryname, String(row.countryname)));
+      if (same.length > 1) throw new ProvisionError("More than one country here has the name of the payload's country. Nothing was changed.");
+      if (same.length === 1 && lower(same[0].countryid) !== lower(String(row.countryid))) {
+        return {
+          countryid: same[0].countryid,
+          countryname: same[0].countryname,
+          dbRow: { countryid: same[0].countryid, countryname: same[0].countryname, expectedusage: same[0].expectedusage ?? null, isdeleted: false },
+          create: false,
+          local,
+        };
+      }
+      return { countryid: String(row.countryid), countryname: String(row.countryname), dbRow: null, create: false, local };
     }
     if (inDatabase.length === 1) {
       const row = inDatabase[0];
@@ -575,16 +611,23 @@ export class Provisioner {
         countryname: row.countryname,
         dbRow: { countryid: row.countryid, countryname: row.countryname, expectedusage: row.expectedusage ?? null, isdeleted: false },
         create: false,
+        local,
       };
     }
     if (!original && !byId) {
       if (Array.from(given).length > MAX_COUNTRY_NAME) {
         throw new ProvisionError(`--country is too long for a country name: at most ${MAX_COUNTRY_NAME} characters.`);
       }
-      return { countryid: uuidv4(), countryname: given, dbRow: null, create: true };
+      // A name a deleted country here already has cannot be used again (names are unique): say so rather than fail in the database.
+      if (all.some((c) => sameName(c.countryname, given))) {
+        throw new ProvisionError("--country names a country that is deleted here (country names are unique). Nothing was changed.");
+      }
+      return { countryid: uuidv4(), countryname: given, dbRow: null, create: true, local };
     }
     throw new ProvisionError(
-      "--country is not in the countries table of this server nor in the payload. Give a country id or a name the payload carries.",
+      original
+        ? "--country is not in the countries table of this server nor in the payload. Give a country id or a name the payload carries."
+        : "--country is not in the countries table of this server. Give the country's name (it is created when there is no --content) or the id of a country that is here.",
     );
   };
 
@@ -650,6 +693,22 @@ export class Provisioner {
     const school = await schools.scope("withOwnership").findOne({ where: { schoolid: plan.school.schoolid }, transaction });
     if (!school || school.isdeleted || !school.organisationid || lower(school.organisationid) !== lower(organisationid)) {
       throw new ProvisionError("Check failed: the school is not here, live and owned by the organisation.");
+    }
+    // One school per server: exactly one live school, and no school that was live before is gone unless --replace-school said so.
+    const live = await schools.scope("withOwnership").findAll({ attributes: ["schoolid"], where: { organisationid, isdeleted: false }, transaction });
+    if (live.length !== 1 || lower(live[0].schoolid) !== lower(plan.school.schoolid)) {
+      throw new ProvisionError(`Check failed: the organisation has ${live.length} live schools, not exactly the one named.`);
+    }
+    if (!plan.replaceSchool) {
+      const gone = plan.otherLiveSchoolIds.filter((id) => !live.some((l) => lower(l.schoolid) === lower(id)));
+      if (gone.length > 0) throw new ProvisionError("Check failed: another school of the organisation would be marked deleted, and --replace-school was not given.");
+    }
+    // Every class the school had is still here (the import replaces a school's classes as a whole).
+    if (plan.classIdsBefore.length > 0) {
+      const kept = await standards.count({ where: { standardid: { [Op.in]: plan.classIdsBefore }, schoolid: plan.school.schoolid }, transaction });
+      if (kept !== plan.classIdsBefore.length) {
+        throw new ProvisionError(`Check failed: ${plan.classIdsBefore.length - kept} class(es) the school had are gone.`);
+      }
     }
     let standardsFound = 0;
     if (plan.standard) {
