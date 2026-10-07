@@ -1,4 +1,4 @@
-import { ProvisionError, parseArgs } from "./args";
+import { ProvisionError, parseArgs, sameLoginName } from "./args";
 
 const base = ["--organisation", "Riverside Learning Network", "--code", "riverside", "--school", "Riverside Primary", "--country", "Cambodia", "--admin", "river.admin"];
 
@@ -33,6 +33,7 @@ describe("provision arguments", () => {
       content: "x.json",
       credentialsFile: "/tmp/c.txt",
       database: "db",
+      replaceSchool: false,
       apply: true,
       allowOnline: true,
     });
@@ -42,6 +43,7 @@ describe("provision arguments", () => {
       school: "Riverside Primary",
       country: "Cambodia",
       admin: "river.admin",
+      replaceSchool: false,
       apply: false,
       allowOnline: false,
     });
@@ -102,5 +104,48 @@ describe("provision arguments", () => {
     expect(refused(withFlag("--school", "..."))).toMatch(/^--school must be text/);
     expect(refused(withFlag("--school", "   "))).toMatch(/^--school is required\./);
     expect(refused([...base, "--class", "..."])).toMatch(/^--class must be text/);
+  });
+
+  it("takes --replace-school as a switch", () => {
+    expect(parseArgs([...base, "--replace-school"]).replaceSchool).toBe(true);
+    expect(refused([...base, "--replace-school=yes"])).toBe("--replace-school takes no value.");
+  });
+
+  describe("--reset-password", () => {
+    const reset = ["--organisation", "Riverside Learning Network", "--code", "riverside", "--school", "Riverside Primary", "--reset-password", "river.admin"];
+
+    it("needs only the organisation, code and school, and keeps the credentials file and database check", () => {
+      expect(parseArgs([...reset, "--credentials-file", "/tmp/c.txt", "--database", "db", "--apply"])).toEqual({
+        organisation: "Riverside Learning Network",
+        code: "riverside",
+        school: "Riverside Primary",
+        resetPassword: "river.admin",
+        credentialsFile: "/tmp/c.txt",
+        database: "db",
+        replaceSchool: false,
+        apply: true,
+        allowOnline: false,
+      });
+    });
+
+    it.each([
+      ["--admin", "someone.else"],
+      ["--teacher", "a.teacher"],
+      ["--class", "Class 3A"],
+      ["--content", "x.json"],
+      ["--country", "Cambodia"],
+    ])("cannot be combined with %s: it only sets a password", (flag, value) => {
+      expect(refused([...reset, flag, value])).toBe(`--reset-password only sets a password: it cannot be combined with ${flag}.`);
+    });
+
+    it("cannot be combined with --replace-school, and must name a well-formed login", () => {
+      expect(refused([...reset, "--replace-school"])).toBe("--reset-password only sets a password: it cannot be combined with --replace-school.");
+      expect(refused([...reset.slice(0, 6), "--reset-password", "x"])).toMatch(/^--reset-password must name a login/);
+    });
+  });
+
+  it("calls two login names the same when they differ only in case (the database's collation does)", () => {
+    expect(sameLoginName("River.Admin", "river.admin")).toBe(true);
+    expect(sameLoginName("river.admin", "river.admin2")).toBe(false);
   });
 });

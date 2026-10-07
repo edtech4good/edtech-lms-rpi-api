@@ -1,6 +1,18 @@
+import * as crypto from "crypto";
+
+// randomInt is a read-only export of the module: wrap it so a spec can see what draws it is asked for.
+jest.mock("crypto", () => {
+  const actual = jest.requireActual("crypto");
+  return { ...actual, randomInt: jest.fn(actual.randomInt) };
+});
+
+import { closeSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { ProvisionError, ProvisionOptions } from "./args";
-import { PASSWORD_LENGTH, checkEnvironment, generatePassword } from "./provision";
+import { PASSWORD_ALPHABET, PASSWORD_LENGTH, checkEnvironment, createCredentialsFile, generatePassword } from "./provision";
 import { describePlan, describeResult } from "./cli";
+import { ProvisionPlan } from "./provision";
 import { verifyPassword } from "src/services/password.service";
 
 const options = (extra: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
@@ -9,6 +21,7 @@ const options = (extra: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
   school: "Riverside Primary",
   country: "Cambodia",
   admin: "river.admin",
+  replaceSchool: false,
   apply: false,
   allowOnline: false,
   ...extra,
@@ -75,19 +88,52 @@ describe("what the command prints", () => {
     settingsconfig: null,
     isdeleted: false,
   };
-  const plan = {
+  const plan: ProvisionPlan = {
     database: "edtech_lms_rpi",
-    organisation: { action: "create" as const, row: organisation },
-    school: { action: "create" as const, schoolid: "22222222-2222-4222-8222-222222222222", schoolname: "Riverside Primary", countryid: null, countryname: "Cambodia" },
+    mode: "provision",
+    organisation: { action: "create", row: organisation },
+    school: { action: "create", schoolid: "22222222-2222-4222-8222-222222222222", schoolname: "Riverside Primary", countryid: null, countryname: "Cambodia" },
+    country: { action: "create", countryid: "44444444-4444-4444-8444-444444444444", countryname: "Cambodia" },
     standard: null,
-    logins: [{ kind: "admin" as const, username: "river.admin", action: "create" as const, schooluserid: "33333333-3333-4333-8333-333333333333" }],
+    standardsKept: 2,
+    logins: [{ kind: "admin", username: "river.admin", action: "create", schooluserid: "33333333-3333-4333-8333-333333333333" }],
     otherSchoolsMarkedDeleted: 0,
+    removals: null,
     content: null,
+    reset: null,
   };
 
   it("a dry run says nothing is written", () => {
     expect(describePlan(plan, false)).toContain("dry run: nothing is written");
     expect(describePlan(plan, true)).not.toContain("dry run");
+  });
+
+  it("a dry run shows (new) where --apply will mint an id of its own, and --apply shows the id", () => {
+    expect(describePlan(plan, false)).toContain("id (new)");
+    expect(describePlan(plan, false)).not.toContain(organisation.organisationid);
+    expect(describePlan(plan, true)).toContain(organisation.organisationid);
+  });
+
+  it("says a country is created when the server has none, and that the existing classes stay", () => {
+    const text = describePlan(plan, false);
+    expect(text).toContain('country       create  "Cambodia"');
+    expect(text).toContain("the school's 2 existing classes stay as they are");
+  });
+
+  it("lists what the import would delete or mark deleted, and the other school a replace would delete", () => {
+    const text = describePlan(
+      { ...plan, otherSchoolsMarkedDeleted: 1, removals: { classes: 0, questions: 3, documents: 1, subjects: 0, curricula: 2, schools: 1 } },
+      false,
+    );
+    expect(text).toContain("the import will DELETE (this organisation's rows the payload does not have): 3 questions, 1 document");
+    expect(text).toContain("the import will mark deleted: 2 curricula, 1 school");
+    expect(text).toContain("--replace-school: 1 other school of this organisation will be marked deleted");
+  });
+
+  it("describes a password reset as changing nothing else, and shows the new password once", () => {
+    const resetPlan: ProvisionPlan = { ...plan, mode: "reset", reset: { schooluserid: "33333333-3333-4333-8333-333333333333", username: "river.admin" } };
+    expect(describePlan(resetPlan, false)).toContain("new password for river.admin (its session ends); nothing else is changed");
+    expect(describeResult({ plan: resetPlan, applied: true, newLogins: [{ kind: "reset", username: "river.admin", password: "Abcdefghjk234567" }] })).toContain("new      river.admin   Abcdefghjk234567");
   });
 
   it("shows a new password once, with the warning, and never when a file got it", () => {
@@ -99,5 +145,46 @@ describe("what the command prints", () => {
     expect(filed).not.toContain("PASSWORDS");
     const none = describeResult({ plan, applied: true, newLogins: [] });
     expect(none).toContain("No login was created, so no password is shown");
+  });
+});
+
+describe("password generation uses the system's secure random source", () => {
+  it("draws every character with crypto.randomInt over the whole alphabet", () => {
+    const spy = crypto.randomInt as unknown as jest.Mock;
+    spy.mockClear();
+    const password = generatePassword();
+    expect(spy).toHaveBeenCalledTimes(PASSWORD_LENGTH);
+    for (const call of spy.mock.calls) expect(call).toEqual([PASSWORD_ALPHABET.length]);
+    expect(password).toHaveLength(PASSWORD_LENGTH);
+  });
+
+  it("takes each character from what that draw returned (a fixed draw gives a fixed password)", () => {
+    const spy = crypto.randomInt as unknown as jest.Mock;
+    const real = spy.getMockImplementation();
+    spy.mockImplementation(() => 0);
+    expect(generatePassword()).toBe(PASSWORD_ALPHABET[0].repeat(PASSWORD_LENGTH));
+    spy.mockImplementation(real);
+  });
+});
+
+describe("the credentials file", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "provision-creds-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("is created readable and writable by its owner only (mode 0600)", () => {
+    const path = join(dir, "credentials.txt");
+    const file = createCredentialsFile(path);
+    closeSync(file.fd);
+    expect((statSync(path).mode & 0o777).toString(8)).toBe("600");
+  });
+
+  it("is never created over a file that is there, and the file it refuses to replace is left as it was", () => {
+    const path = join(dir, "credentials.txt");
+    writeFileSync(path, "keep me", { mode: 0o644 });
+    expect(refusal(() => createCredentialsFile(path))).toBe(`Cannot create the credentials file (it must not exist yet): ${path}`);
+    expect(readFileSync(path, "utf8")).toBe("keep me");
   });
 });

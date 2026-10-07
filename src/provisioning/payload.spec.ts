@@ -34,7 +34,7 @@ const identity = (extra: Partial<LocalIdentity> = {}): LocalIdentity => ({
     expectedcontribution: null,
     expectedusage: null,
   },
-  standard: { standardid: LOCAL_CLASS, standardname: "ថ្នាក់ទី ៣ក" },
+  standards: [{ standardid: LOCAL_CLASS, standardname: "ថ្នាក់ទី ៣ក", isdeleted: false }],
   country: null,
   ...extra,
 });
@@ -177,9 +177,24 @@ describe("rehomeContent", () => {
     expect(summary.curricula).toBe(1);
   });
 
-  it("has no class at all when none was asked for (the payload's are dropped, not kept)", () => {
-    const { content } = rehomeContent(validatePayload(sample()), identity({ standard: null }));
+  it("has no class at all for a new school with none asked for (the payload's are dropped, not kept)", () => {
+    const { content } = rehomeContent(validatePayload(sample()), identity({ standards: [] }));
     expect(content.tables.standards).toEqual([]);
+  });
+
+  it("carries every class the school already has, deleted ones and creation dates included, plus the new one", () => {
+    const created = new Date("2026-09-01T03:00:00.000Z");
+    const existing = [
+      { standardid: "0c000000-0000-4000-8000-0000000000c2", standardname: "ថ្នាក់ទី ៤ខ", isdeleted: false, created_at: created },
+      { standardid: "0c000000-0000-4000-8000-0000000000c3", standardname: "Old class", isdeleted: true, created_at: created },
+      { standardid: LOCAL_CLASS, standardname: "ថ្នាក់ទី ៣ក", isdeleted: false },
+    ];
+    const { content } = rehomeContent(validatePayload(sample()), identity({ standards: existing }));
+    expect(content.tables.standards).toEqual([
+      { standardid: existing[0].standardid, standardname: "ថ្នាក់ទី ៤ខ", schoolid: LOCAL_SCHOOL, schoolname: "សាលាបឋមសិក្សា ទន្លេមេគង្គ", isdeleted: false, created_at: created },
+      { standardid: existing[1].standardid, standardname: "Old class", schoolid: LOCAL_SCHOOL, schoolname: "សាលាបឋមសិក្សា ទន្លេមេគង្គ", isdeleted: true, created_at: created },
+      { standardid: LOCAL_CLASS, standardname: "ថ្នាក់ទី ៣ក", schoolid: LOCAL_SCHOOL, schoolname: "សាលាបឋមសិក្សា ទន្លេមេគង្គ", isdeleted: false },
+    ]);
   });
 
   it("gives a baseline that named schools the local school, and leaves a baseline that named none alone", () => {

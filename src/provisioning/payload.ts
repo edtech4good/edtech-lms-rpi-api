@@ -29,7 +29,9 @@ import { ProvisionError } from "./args";
  *    they are replaced by the local school (owner: the local organisation; its `curriculums` list: every
  *    curriculum of the payload, which is how a teacher reaches them);
  *  - `standards` (classes): they hang from the schools just replaced, so the payload's are dropped and the
- *    local class, if one was asked for, is the only one;
+ *    local school's own classes (every one it has here, deleted ones too, with their ids and creation
+ *    dates) go in their place, plus the class that was asked for if it is new. The import replaces the
+ *    standards of every school in the payload, so a class left out of the payload would be destroyed;
  *  - a curriculum baseline's `schoolid` list (the schools it applies to): when it names any school it now names
  *    the local school, so the baseline applies where the payload meant it to;
  *  - `countries`: the local school's country is added when the payload does not carry it.
@@ -49,7 +51,8 @@ export interface LocalIdentity {
     expectedcontribution: number | null;
     expectedusage: number | null;
   };
-  standard: { standardid: string; standardname: string } | null;
+  /** Every class the local school has here (empty for a new school), and the class asked for if it is new. */
+  standards: Array<{ standardid: string; standardname: string; isdeleted: boolean; created_at?: Date | null }>;
   /** A `countries` row to add to the payload when it does not carry the school's country. */
   country: Row | null;
 }
@@ -157,17 +160,14 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
       organisationid: localId,
     },
   ];
-  tables.standards = local.standard
-    ? [
-        {
-          standardid: local.standard.standardid,
-          standardname: local.standard.standardname,
-          schoolid: local.school.schoolid,
-          schoolname: local.school.schoolname,
-          isdeleted: false,
-        },
-      ]
-    : [];
+  tables.standards = local.standards.map((standard) => ({
+    standardid: standard.standardid,
+    standardname: standard.standardname,
+    schoolid: local.school.schoolid,
+    schoolname: local.school.schoolname,
+    isdeleted: standard.isdeleted,
+    ...(standard.created_at ? { created_at: standard.created_at } : {}),
+  }));
 
   // A baseline that named schools now names the local school.
   let baselineListsRewritten = 0;

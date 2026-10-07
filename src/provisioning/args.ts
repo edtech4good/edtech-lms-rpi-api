@@ -7,7 +7,11 @@ import { ORGANISATION_CODE } from "src/modules/import/ownership.request.validato
  *   --organisation "<name>" --code <code> --school "<name>" --country <id or name>
  *   --admin <username> [--teacher <username>] [--class "<name>"]
  *   [--content <path to a .zip or .json>] [--credentials-file <path>]
- *   [--database <name>] [--apply] [--i-know-this-is-online]
+ *   [--database <name>] [--replace-school] [--apply] [--i-know-this-is-online]
+ *
+ * and, to set a new password for a login of the school whose password was lost:
+ *
+ *   --organisation "<name>" --code <code> --school "<name>" --reset-password <username> [--credentials-file <path>] --apply
  */
 
 /** Thrown for anything the operator can fix: printed as one line, exit status 1, nothing written. */
@@ -17,14 +21,20 @@ export interface ProvisionOptions {
   organisation: string;
   code: string;
   school: string;
-  country: string;
-  admin: string;
+  /** Not needed (and refused) with --reset-password. */
+  country?: string;
+  /** Not needed (and refused) with --reset-password. */
+  admin?: string;
   teacher?: string;
   className?: string;
   content?: string;
   credentialsFile?: string;
   /** When given, must be the name of the database the server is configured for. */
   database?: string;
+  /** The organisation already has another school here: allow marking it deleted (a classroom server holds one school). */
+  replaceSchool: boolean;
+  /** Set a new password for this login of the school, and change nothing else. */
+  resetPassword?: string;
   apply: boolean;
   allowOnline: boolean;
 }
@@ -32,7 +42,8 @@ export interface ProvisionOptions {
 export const USAGE = [
   "Usage: npm run provision -- --organisation \"<name>\" --code <code> --school \"<name>\" --country <country id or name>",
   "                            --admin <username> [--teacher <username>] [--class \"<name>\"]",
-  "                            [--content <path to .zip or .json>] [--credentials-file <path>] [--apply]",
+  "                            [--content <path to .zip or .json>] [--credentials-file <path>] [--replace-school] [--apply]",
+  "       npm run provision -- --organisation \"<name>\" --code <code> --school \"<name>\" --reset-password <username> [--credentials-file <path>] --apply",
   "",
   "Without --apply this prints the plan and writes nothing. With --apply it writes everything in one",
   "transaction and shows each new login's password ONCE (or writes them to --credentials-file, mode 0600).",
@@ -50,8 +61,13 @@ const VALUE_FLAGS: Record<string, keyof ProvisionOptions> = {
   content: "content",
   "credentials-file": "credentialsFile",
   database: "database",
+  "reset-password": "resetPassword",
 };
-const SWITCHES: Record<string, keyof ProvisionOptions> = { apply: "apply", "i-know-this-is-online": "allowOnline" };
+const SWITCHES: Record<string, keyof ProvisionOptions> = {
+  apply: "apply",
+  "i-know-this-is-online": "allowOnline",
+  "replace-school": "replaceSchool",
+};
 
 /** The longest a stored name may be (`schools.schoolname`, `standards.standardname`, `schoolusers.schoolusername` are VARCHAR(45)). */
 export const MAX_SHORT_NAME = 45;
@@ -117,18 +133,33 @@ export function parseArgs(argv: string[]): ProvisionOptions {
     throw new ProvisionError("--code must be 2 to 16 lower-case letters and digits.");
   }
   const school = checkName("--school", need("school", "school"), MAX_SHORT_NAME);
-  const country = need("country", "country").normalize("NFC").trim();
-  const admin = need("admin", "admin");
-  if (!USERNAME.test(admin)) throw new ProvisionError("--admin must be 3 to 45 letters, digits, dots, dashes or underscores.");
   const options: ProvisionOptions = {
     organisation,
     code,
     school,
-    country,
-    admin,
+    replaceSchool: raw.replaceSchool === true,
     apply: raw.apply === true,
     allowOnline: raw.allowOnline === true,
   };
+  if (typeof raw.resetPassword === "string") {
+    // Lost password: the one thing this mode does is set a new password, so nothing that provisions may come with it.
+    if (!USERNAME.test(raw.resetPassword)) throw new ProvisionError("--reset-password must name a login: 3 to 45 letters, digits, dots, dashes or underscores.");
+    for (const key of ["admin", "teacher", "className", "content", "country"] as const) {
+      if (raw[key] !== undefined) {
+        const flag = key === "className" ? "class" : key;
+        throw new ProvisionError(`--reset-password only sets a password: it cannot be combined with --${flag}.`);
+      }
+    }
+    if (options.replaceSchool) throw new ProvisionError("--reset-password only sets a password: it cannot be combined with --replace-school.");
+    options.resetPassword = raw.resetPassword;
+    if (typeof raw.credentialsFile === "string" && raw.credentialsFile !== "") options.credentialsFile = raw.credentialsFile;
+    if (typeof raw.database === "string" && raw.database !== "") options.database = raw.database;
+    return options;
+  }
+  options.country = need("country", "country").normalize("NFC").trim();
+  const admin = need("admin", "admin");
+  if (!USERNAME.test(admin)) throw new ProvisionError("--admin must be 3 to 45 letters, digits, dots, dashes or underscores.");
+  options.admin = admin;
   if (typeof raw.teacher === "string") {
     if (!USERNAME.test(raw.teacher)) throw new ProvisionError("--teacher must be 3 to 45 letters, digits, dots, dashes or underscores.");
     if (raw.teacher.toLowerCase() === admin.toLowerCase()) throw new ProvisionError("--admin and --teacher must be different logins.");
@@ -144,3 +175,6 @@ export function parseArgs(argv: string[]): ProvisionOptions {
 /** The text rule every reader of a school name uses (business/school-identity.ts): trim, NFC, lower-case. */
 const normalise = (name: string): string => name.trim().normalize("NFC").toLowerCase();
 export const sameName = (a: string, b: string): boolean => normalise(a) === normalise(b);
+
+/** A login name is the same as another when the database says so: its collation ignores case, so a name that differs only by case is the same login. */
+export const sameLoginName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();

@@ -7,15 +7,15 @@ import { v4 as uuidv4 } from "uuid";
 import { OrganisationContentImport } from "src/business/organisation-content.business";
 import { isSameSchoolName } from "src/business/school-identity";
 import { countries } from "src/models/data-models/countries";
-import { organisations, schoolusers } from "src/models/data-models/init-models";
+import { organisations, schoolusers, tokens } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { OrganisationContent, Row } from "src/modules/import/organisation-content.validator";
 import { OwnershipOrganisation } from "src/modules/import/ownership.request.validator";
 import { dbinstance } from "src/services/dbservice";
-import { hashPassword } from "src/services/password.service";
-import { ProvisionError, ProvisionOptions, sameName } from "./args";
+import { hashPassword, verifyPassword } from "src/services/password.service";
+import { ProvisionError, ProvisionOptions, sameLoginName, sameName } from "./args";
 import { LocalIdentity, Rehomed, RehomeSummary, readContentFile, rehomeContent, validatePayload } from "./payload";
 
 /**
@@ -28,17 +28,27 @@ import { LocalIdentity, Rehomed, RehomeSummary, readContentFile, rehomeContent, 
  *  - the organisation (a new UUID and the code given; reused when the code is already here under the same name),
  *  - the school (a new UUID, owned by that organisation) and, if asked, one class,
  *  - the first staff logins (an admin, and a teacher if asked), each with a random password,
+ *  - the country, when there is no payload to carry it and the server has not got it,
  *  - and, with a content payload, the content: the payload is re-homed to the local organisation (payload.ts)
  *    and imported by the same code `PUT /import/master` runs.
  *
+ * A classroom server holds ONE school. A second `--school` for the same organisation is refused unless
+ * `--replace-school` says the first is to be marked deleted; naming the first school again brings it back.
+ *
+ * `--reset-password <login>` is a separate mode: it sets a new password for a login of the school and changes
+ * nothing else.
+ *
  * Nothing here uses the network. Central is not involved: the ids minted here are this server's own.
  *
- * The school and the class go INTO the payload when there is one. The import replaces an organisation's
+ * The school and its classes go INTO the payload when there is one. The import replaces an organisation's
  * schools, classes and content as a whole (and marks a school the payload no longer has as deleted), so a school
- * or class created beside the payload would be marked deleted or wiped by it, on this run or the next.
+ * or class created beside the payload would be marked deleted or wiped by it, on this run or the next. For the
+ * same reason every class the school already has goes into the payload too.
  */
 
 export const ROLE_OF = { admin: SchoolRole.ADMIN, teacher: SchoolRole.TEACHER } as const;
+
+export type LoginKind = "admin" | "teacher" | "reset";
 
 export interface LoginPlan {
   kind: "admin" | "teacher";
@@ -47,15 +57,43 @@ export interface LoginPlan {
   schooluserid: string;
 }
 
+/** What the import would take away or mark deleted on this organisation, read before anything is written. */
+export interface Removals {
+  /** Classes of the school that are not in the payload (hard-deleted by the import). */
+  classes: number;
+  /** Rows of this organisation that the payload does not have (hard-deleted by the import). */
+  questions: number;
+  documents: number;
+  subjects: number;
+  /** Rows of this organisation that the payload does not have (kept, marked deleted). */
+  curricula: number;
+  schools: number;
+}
+
 export interface ProvisionPlan {
   database: string;
+  mode: "provision" | "reset";
   organisation: { action: "create" | "reuse"; row: OwnershipOrganisation };
-  school: { action: "create" | "reuse"; schoolid: string; schoolname: string; countryid: string | null; countryname: string | null };
+  school: {
+    action: "create" | "reuse" | "restore";
+    schoolid: string;
+    /** The stored name when the school is reused: it is never renamed, so a name that differs only in case keeps the stored one. */
+    schoolname: string;
+    countryid: string | null;
+    countryname: string | null;
+  };
+  /** `create`: the country row is made from the name given (no payload, and the server has none of that name). */
+  country: { action: "create" | "reuse"; countryid: string; countryname: string } | null;
+  /** The class asked for. */
   standard: { action: "create" | "reuse"; standardid: string; standardname: string } | null;
+  /** Classes the school already has here, which go into the payload with it. */
+  standardsKept: number;
   logins: LoginPlan[];
-  /** Schools this organisation already owns that the import will mark deleted (they are not in the payload). */
+  /** Other live schools of this organisation here, to be marked deleted (only with --replace-school). */
   otherSchoolsMarkedDeleted: number;
+  removals: Removals | null;
   content: null | { file: string; rehomed: Rehomed };
+  reset: null | { schooluserid: string; username: string };
 }
 
 export interface ProvisionVerification {
@@ -73,23 +111,33 @@ export interface ProvisionResult {
   applied: boolean;
   counts?: Record<string, unknown>;
   verification?: ProvisionVerification;
-  /** Each new login's password: shown once by the caller, never stored here, absent when written to a file. */
-  newLogins?: Array<{ kind: "admin" | "teacher"; username: string; password: string }>;
+  /** Each new password: shown once by the caller, never stored here, absent when written to a file. */
+  newLogins?: Array<{ kind: LoginKind; username: string; password: string }>;
   credentialsFile?: string;
 }
 
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+export const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 export const PASSWORD_LENGTH = 16;
 
-/** A random password from an alphabet without look-alike characters (about 93 bits). */
+/** A random password from an alphabet without look-alike characters (about 93 bits), from the system's secure random source. */
 export const generatePassword = (): string => {
   let out = "";
-  for (let i = 0; i < PASSWORD_LENGTH; i += 1) out += ALPHABET[randomInt(ALPHABET.length)];
+  for (let i = 0; i < PASSWORD_LENGTH; i += 1) out += PASSWORD_ALPHABET[randomInt(PASSWORD_ALPHABET.length)];
   return out;
+};
+
+/** Creates the credentials file: mode 0600, and never over an existing file. */
+export const createCredentialsFile = (path: string): { fd: number; path: string } => {
+  try {
+    return { fd: openSync(path, "wx", 0o600), path };
+  } catch {
+    throw new ProvisionError(`Cannot create the credentials file (it must not exist yet): ${path}`);
+  }
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHUNK = 1000;
+const MAX_COUNTRY_NAME = 45;
 const lower = (value: string) => value.toLowerCase();
 
 interface CountryChoice {
@@ -97,6 +145,8 @@ interface CountryChoice {
   countryname: string;
   /** The row to add to the payload when the payload does not carry the country. */
   dbRow: Row | null;
+  /** The country row does not exist anywhere and is to be created from the name given (no payload only). */
+  create: boolean;
 }
 
 export interface Guards {
@@ -129,69 +179,31 @@ export class Provisioner {
     checkEnvironment(options, this.guards);
     this.checkCredentialsFile(options);
 
+    const reset = options.resetPassword !== undefined;
     const original = options.content ? validatePayload(readContentFile(options.content)) : null;
 
     // ---- the organisation ----------------------------------------------------
-    const found = await organisations.findAll({ where: { organisationcode: options.code }, transaction });
-    if (found.length > 1) {
-      throw new ProvisionError(`More than one organisation here has the code "${options.code}". Nothing was changed.`);
-    }
-    let organisation: OwnershipOrganisation;
-    let organisationAction: "create" | "reuse";
-    if (found.length === 1) {
-      const row = found[0];
-      if (row.isdeleted) {
-        throw new ProvisionError(`The organisation with code "${options.code}" has been deleted, and a code is never reissued. Use another code.`);
-      }
-      if (!isSameSchoolName(row.organisationname, options.organisation)) {
-        throw new ProvisionError(
-          `The code "${options.code}" is already used by an organisation with a different name. Use that name, or another code.`,
-        );
-      }
-      if (!row.organisationstatus) {
-        throw new ProvisionError(`The organisation with code "${options.code}" is suspended here. It is not reactivated by this command.`);
-      }
-      organisation = {
-        organisationid: row.organisationid,
-        organisationname: row.organisationname,
-        organisationcode: row.organisationcode,
-        organisationstatus: true,
-        uitheme: row.uitheme,
-        brandingconfig: (row.brandingconfig ?? null) as OwnershipOrganisation["brandingconfig"],
-        settingsconfig: (row.settingsconfig ?? null) as OwnershipOrganisation["settingsconfig"],
-        isdeleted: false,
-      };
-      organisationAction = "reuse";
-    } else {
-      organisation = {
-        organisationid: uuidv4(),
-        organisationname: options.organisation,
-        organisationcode: options.code,
-        organisationstatus: true,
-        uitheme: original?.organisation.uitheme ?? "kids",
-        brandingconfig: null,
-        settingsconfig: null,
-        isdeleted: false,
-      };
-      organisationAction = "create";
-    }
+    const { organisation, action: organisationAction } = await this.resolveOrganisation(options, original, reset, transaction);
 
     // ---- the country ---------------------------------------------------------
-    const country = await this.resolveCountry(options.country, original, transaction);
+    const country = reset ? null : await this.resolveCountry(options.country as string, original, transaction);
 
     // ---- the school ----------------------------------------------------------
     const sameNameSchools = (await schools.scope("withOwnership").findAll({ where: { schoolname: options.school }, transaction })).filter((s) =>
       isSameSchoolName(s.schoolname, options.school),
     );
+    if (sameNameSchools.length > 1) {
+      throw new ProvisionError("More than one school here has that name. Nothing was changed.");
+    }
     let schoolid = uuidv4();
-    let schoolAction: "create" | "reuse" = "create";
+    let schoolAction: "create" | "reuse" | "restore" = "create";
+    // A school that is reused is never renamed: its stored name is used everywhere (the logins' schoolname too).
+    let schoolname = options.school;
     let uitheme = organisation.uitheme;
     let brandingconfig: object | null = null;
     let expectedcontribution: number | null = null;
     let expectedusage: number | null = null;
-    if (sameNameSchools.length > 1) {
-      throw new ProvisionError("More than one school here has that name. Nothing was changed.");
-    }
+    let schoolCountry: string | null = country?.countryid ?? null;
     if (sameNameSchools.length === 1) {
       const existing = sameNameSchools[0];
       if (!existing.organisationid || lower(existing.organisationid) !== lower(organisation.organisationid)) {
@@ -199,31 +211,86 @@ export class Provisioner {
           `A school with that name already exists here in ${existing.organisationid ? "another organisation" : "no organisation"}. Nothing was changed.`,
         );
       }
-      if (existing.isdeleted) {
-        throw new ProvisionError("A school with that name exists here but has been deleted. Use another name.");
-      }
-      if ((existing.countryid ?? null) !== null && lower(String(existing.countryid)) !== lower(country.countryid)) {
+      if (country && (existing.countryid ?? null) !== null && lower(String(existing.countryid)) !== lower(country.countryid)) {
         throw new ProvisionError("That school already exists here with another country. Nothing was changed.");
       }
+      if (reset && existing.isdeleted) {
+        throw new ProvisionError("That school is deleted. Name it again without --reset-password to bring it back first.");
+      }
       schoolid = existing.schoolid;
-      schoolAction = "reuse";
+      schoolAction = existing.isdeleted ? "restore" : "reuse";
+      schoolname = existing.schoolname;
       uitheme = existing.uitheme;
       brandingconfig = (existing.brandingconfig ?? null) as object | null;
       expectedcontribution = existing.expectedcontribution ?? null;
       expectedusage = existing.expectedusage ?? null;
+      schoolCountry = existing.countryid ?? schoolCountry;
+    } else if (reset) {
+      throw new ProvisionError("There is no school of that name here to reset a password in.");
     }
 
-    // ---- the class -----------------------------------------------------------
-    let standard: ProvisionPlan["standard"] = null;
-    if (options.className) {
-      let existingClass: standards | undefined;
-      if (schoolAction === "reuse") {
-        const classes = await standards.findAll({ where: { schoolid, isdeleted: false }, transaction });
-        existingClass = classes.find((c) => isSameSchoolName(c.standardname, options.className as string));
+    // ---- one school per server -----------------------------------------------
+    // The import (and --replace-school without a payload) marks every other live school of the organisation
+    // deleted, and its logins can no longer sign in. A typo in --school must not do that silently.
+    let otherSchools = 0;
+    if (!reset && organisationAction === "reuse") {
+      otherSchools = await schools.scope("withOwnership").count({
+        where: { organisationid: organisation.organisationid, isdeleted: false, schoolid: { [Op.ne]: schoolid } },
+        transaction,
+      });
+      if (otherSchools > 0 && !options.replaceSchool) {
+        throw new ProvisionError(
+          `This organisation already has ${otherSchools === 1 ? "another school" : `${otherSchools} other schools`} here, and a classroom server holds one school: ` +
+            "naming a different school would mark it deleted, and its logins could no longer sign in. " +
+            "Check the --school name. To replace the school on purpose, add --replace-school (naming the old school again brings it back).",
+        );
       }
-      standard = existingClass
-        ? { action: "reuse", standardid: existingClass.standardid, standardname: existingClass.standardname }
-        : { action: "create", standardid: uuidv4(), standardname: options.className };
+    }
+
+    // ---- reset a password -----------------------------------------------------
+    if (reset) {
+      const login = await schoolusers.scope("withOwnership").findOne({ where: { schoolusername: options.resetPassword }, transaction });
+      if (!login || !login.schoolid || lower(login.schoolid) !== lower(schoolid)) {
+        // one answer for a login that is not here and one of another school
+        throw new ProvisionError(`There is no login "${options.resetPassword}" in this school.`);
+      }
+      if (login.isdeleted || login.isdisabled) {
+        throw new ProvisionError(`The login "${options.resetPassword}" is deleted or disabled; a password cannot bring it back.`);
+      }
+      return {
+        database: this.guards.configuredDatabase,
+        mode: "reset",
+        organisation: { action: "reuse", row: organisation },
+        school: { action: "reuse", schoolid, schoolname, countryid: schoolCountry, countryname: null },
+        country: null,
+        standard: null,
+        standardsKept: 0,
+        logins: [],
+        otherSchoolsMarkedDeleted: 0,
+        removals: null,
+        content: null,
+        reset: { schooluserid: login.schooluserid, username: login.schoolusername },
+      };
+    }
+
+    // ---- the classes -----------------------------------------------------------
+    // Every class the school has goes into the payload (the import replaces the classes of the schools in it).
+    const existingClasses = schoolAction === "create" ? [] : await standards.findAll({ where: { schoolid }, transaction });
+    let standard: ProvisionPlan["standard"] = null;
+    const classRows: LocalIdentity["standards"] = existingClasses.map((c) => ({
+      standardid: c.standardid,
+      standardname: c.standardname,
+      isdeleted: Boolean(c.isdeleted),
+      created_at: c.created_at ?? null,
+    }));
+    if (options.className) {
+      const live = existingClasses.find((c) => !c.isdeleted && isSameSchoolName(c.standardname, options.className as string));
+      if (live) {
+        standard = { action: "reuse", standardid: live.standardid, standardname: live.standardname };
+      } else {
+        standard = { action: "create", standardid: uuidv4(), standardname: options.className };
+        classRows.push({ standardid: standard.standardid, standardname: standard.standardname, isdeleted: false });
+      }
     }
 
     // ---- the logins ----------------------------------------------------------
@@ -238,45 +305,47 @@ export class Provisioner {
       if (existing.isdeleted || existing.isdisabled) {
         throw new ProvisionError(`The login "${username}" exists here but is deleted or disabled. Use another name.`);
       }
-      if (schoolAction !== "reuse" || !existing.schoolid || lower(existing.schoolid) !== lower(schoolid)) {
+      if (schoolAction === "create" || !existing.schoolid || lower(existing.schoolid) !== lower(schoolid)) {
         throw new ProvisionError(`The login "${username}" already exists here for another school. Use another name.`);
       }
       if (Number(existing.schooluserrole) !== ROLE_OF[kind]) {
         throw new ProvisionError(`The login "${username}" already exists here with another role. Use another name.`);
       }
-      logins.push({ kind, username, action: "exists", schooluserid: existing.schooluserid });
+      // The database compares names without regard to case, so a name that differs only in case IS this login.
+      logins.push({ kind, username: existing.schoolusername, action: "exists", schooluserid: existing.schooluserid });
     }
 
     // ---- the content ---------------------------------------------------------
     let content: ProvisionPlan["content"] = null;
-    let otherSchoolsMarkedDeleted = 0;
-    if (original && options.content) {
+    let removals: Removals | null = null;
+    if (original && options.content && country) {
       const identity: LocalIdentity = {
         organisation,
-        school: { schoolid, schoolname: options.school, countryid: country.countryid, uitheme, brandingconfig, expectedcontribution, expectedusage },
-        standard: standard ? { standardid: standard.standardid, standardname: standard.standardname } : null,
+        school: { schoolid, schoolname, countryid: country.countryid, uitheme, brandingconfig, expectedcontribution, expectedusage },
+        standards: classRows,
         country: country.dbRow,
       };
       const rehomed = rehomeContent(original, identity);
       await this.refuseForeignRows(rehomed.content, organisation.organisationid, transaction);
       content = { file: options.content, rehomed };
       if (organisationAction === "reuse") {
-        const owned = await schools.scope("withOwnership").count({
-          where: { organisationid: organisation.organisationid, isdeleted: false, schoolid: { [Op.ne]: schoolid } },
-          transaction,
-        });
-        otherSchoolsMarkedDeleted = owned;
+        removals = await this.removalsOf(rehomed.content, organisation.organisationid, otherSchools, transaction);
       }
     }
 
     return {
       database: this.guards.configuredDatabase,
+      mode: "provision",
       organisation: { action: organisationAction, row: organisation },
-      school: { action: schoolAction, schoolid, schoolname: options.school, countryid: country.countryid, countryname: country.countryname },
+      school: { action: schoolAction, schoolid, schoolname, countryid: country?.countryid ?? null, countryname: country?.countryname ?? null },
+      country: country ? { action: country.create ? "create" : "reuse", countryid: country.countryid, countryname: country.countryname } : null,
       standard,
+      standardsKept: existingClasses.length,
       logins,
-      otherSchoolsMarkedDeleted,
+      otherSchoolsMarkedDeleted: otherSchools,
+      removals,
       content,
+      reset: null,
     };
   };
 
@@ -286,72 +355,96 @@ export class Provisioner {
     const transaction = await this.sequelize.transaction();
     try {
       const created = plan.logins.filter((l) => l.action === "create");
-      if (options.credentialsFile && created.length > 0) {
-        // mode 0600, and never over an existing file: a refusal here is before anything is written.
-        try {
-          credentials = { fd: openSync(options.credentialsFile, "wx", 0o600), path: options.credentialsFile };
-        } catch {
-          throw new ProvisionError(`Cannot create the credentials file (it must not exist yet): ${options.credentialsFile}`);
-        }
+      const needsFile = plan.reset !== null || created.length > 0;
+      if (options.credentialsFile && needsFile) {
+        // a refusal here is before anything is written
+        credentials = createCredentialsFile(options.credentialsFile);
       }
 
+      const newLogins: Array<{ kind: LoginKind; username: string; password: string }> = [];
       let counts: Record<string, unknown> | undefined;
-      if (plan.content) {
-        counts = (await new OrganisationContentImport(transaction).run(plan.content.rehomed.content)) as unknown as Record<string, unknown>;
-      } else {
-        if (plan.organisation.action === "create") {
-          await organisations.create({ ...plan.organisation.row } as never, { transaction });
-        }
-        if (plan.school.action === "create") {
-          await schools.create(
-            {
-              schoolid: plan.school.schoolid,
-              schoolname: plan.school.schoolname,
-              countryid: plan.school.countryid,
-              curriculums: [],
-              isdeleted: false,
-              uitheme: plan.organisation.row.uitheme,
-              brandingconfig: null,
-              organisationid: plan.organisation.row.organisationid,
-            } as never,
-            { transaction },
-          );
-        }
-        if (plan.standard && plan.standard.action === "create") {
-          await standards.create(
-            {
-              standardid: plan.standard.standardid,
-              standardname: plan.standard.standardname,
-              schoolid: plan.school.schoolid,
-              schoolname: plan.school.schoolname,
-              isdeleted: false,
-            } as never,
-            { transaction },
-          );
-        }
-      }
+      let verification: ProvisionVerification;
 
-      const newLogins: Array<{ kind: "admin" | "teacher"; username: string; password: string }> = [];
-      for (const login of created) {
+      if (plan.reset) {
+        // Only the password changes; the login's session (one token per user) ends so the old password's token cannot go on.
         const password = generatePassword();
-        await schoolusers.create(
-          {
-            schooluserid: login.schooluserid,
-            schoolusername: login.username,
-            schooluserpasswordhash: hashPassword(password),
-            schooluserrole: ROLE_OF[login.kind],
-            schooluserstatus: 1,
-            schoolname: plan.school.schoolname,
-            schoolid: plan.school.schoolid,
-            isdisabled: false,
-            isdeleted: false,
-          } as never,
-          { transaction },
-        );
-        newLogins.push({ kind: login.kind, username: login.username, password });
-      }
+        const hash = hashPassword(password);
+        await schoolusers.update({ schooluserpasswordhash: hash } as never, { where: { schooluserid: plan.reset.schooluserid }, transaction });
+        await tokens.destroy({ where: { lmsuserid: plan.reset.schooluserid }, transaction });
+        const row = await schoolusers.scope("withOwnership").findOne({ where: { schooluserid: plan.reset.schooluserid }, transaction });
+        if (!row || !row.schoolid || lower(row.schoolid) !== lower(plan.school.schoolid) || !verifyPassword(password, row.schooluserpasswordhash)) {
+          throw new ProvisionError("Check failed: the new password is not set on that login of the school.");
+        }
+        newLogins.push({ kind: "reset", username: plan.reset.username, password });
+        verification = { organisations: 1, schools: 1, standards: 0, logins: 1, payloadRowsChecked: 0, payloadRowsWrongOwner: 0 };
+      } else {
+        if (plan.country && plan.country.action === "create") {
+          await countries.create({ countryid: plan.country.countryid, countryname: plan.country.countryname, isdeleted: false } as never, { transaction });
+        }
+        if (plan.content) {
+          counts = (await new OrganisationContentImport(transaction).run(plan.content.rehomed.content)) as unknown as Record<string, unknown>;
+        } else {
+          if (plan.organisation.action === "create") {
+            await organisations.create({ ...plan.organisation.row } as never, { transaction });
+          }
+          if (plan.school.action === "create") {
+            await schools.create(
+              {
+                schoolid: plan.school.schoolid,
+                schoolname: plan.school.schoolname,
+                countryid: plan.school.countryid,
+                curriculums: [],
+                isdeleted: false,
+                uitheme: plan.organisation.row.uitheme,
+                brandingconfig: null,
+                organisationid: plan.organisation.row.organisationid,
+              } as never,
+              { transaction },
+            );
+          } else if (plan.school.action === "restore") {
+            await schools.update({ isdeleted: false } as never, { where: { schoolid: plan.school.schoolid }, transaction });
+          }
+          if (plan.otherSchoolsMarkedDeleted > 0) {
+            // what the import does with a payload, said outright for the case with none
+            await schools.update({ isdeleted: true } as never, {
+              where: { organisationid: plan.organisation.row.organisationid, isdeleted: false, schoolid: { [Op.ne]: plan.school.schoolid } },
+              transaction,
+            });
+          }
+          if (plan.standard && plan.standard.action === "create") {
+            await standards.create(
+              {
+                standardid: plan.standard.standardid,
+                standardname: plan.standard.standardname,
+                schoolid: plan.school.schoolid,
+                schoolname: plan.school.schoolname,
+                isdeleted: false,
+              } as never,
+              { transaction },
+            );
+          }
+        }
 
-      const verification = await this.verify(plan, transaction);
+        for (const login of created) {
+          const password = generatePassword();
+          await schoolusers.create(
+            {
+              schooluserid: login.schooluserid,
+              schoolusername: login.username,
+              schooluserpasswordhash: hashPassword(password),
+              schooluserrole: ROLE_OF[login.kind],
+              schooluserstatus: 1,
+              schoolname: plan.school.schoolname,
+              schoolid: plan.school.schoolid,
+              isdisabled: false,
+              isdeleted: false,
+            } as never,
+            { transaction },
+          );
+          newLogins.push({ kind: login.kind, username: login.username, password });
+        }
+        verification = await this.verify(plan, transaction);
+      }
 
       if (credentials) {
         const text = newLogins.map((l) => `${l.kind}\t${l.username}\t${l.password}`).join("\n") + "\n";
@@ -401,7 +494,66 @@ export class Provisioner {
     }
   };
 
-  /** A country by id, or by name as the `countries` table (or the payload) has it. */
+  /** The organisation by its code: reused under the same name, else a new one (never in reset mode). */
+  private resolveOrganisation = async (
+    options: ProvisionOptions,
+    original: OrganisationContent | null,
+    mustExist: boolean,
+    transaction?: Transaction,
+  ): Promise<{ organisation: OwnershipOrganisation; action: "create" | "reuse" }> => {
+    const found = await organisations.findAll({ where: { organisationcode: options.code }, transaction });
+    if (found.length > 1) {
+      throw new ProvisionError(`More than one organisation here has the code "${options.code}". Nothing was changed.`);
+    }
+    if (found.length === 1) {
+      const row = found[0];
+      if (row.isdeleted) {
+        throw new ProvisionError(`The organisation with code "${options.code}" has been deleted, and a code is never reissued. Use another code.`);
+      }
+      if (!isSameSchoolName(row.organisationname, options.organisation)) {
+        throw new ProvisionError(
+          `The code "${options.code}" is already used by an organisation with a different name. Use that name, or another code.`,
+        );
+      }
+      if (!row.organisationstatus) {
+        throw new ProvisionError(`The organisation with code "${options.code}" is suspended here. It is not reactivated by this command.`);
+      }
+      return {
+        action: "reuse",
+        organisation: {
+          organisationid: row.organisationid,
+          organisationname: row.organisationname,
+          organisationcode: row.organisationcode,
+          organisationstatus: true,
+          uitheme: row.uitheme,
+          brandingconfig: (row.brandingconfig ?? null) as OwnershipOrganisation["brandingconfig"],
+          settingsconfig: (row.settingsconfig ?? null) as OwnershipOrganisation["settingsconfig"],
+          isdeleted: false,
+        },
+      };
+    }
+    if (mustExist) {
+      throw new ProvisionError(`There is no organisation with code "${options.code}" here.`);
+    }
+    return {
+      action: "create",
+      organisation: {
+        organisationid: uuidv4(),
+        organisationname: options.organisation,
+        organisationcode: options.code,
+        organisationstatus: true,
+        uitheme: original?.organisation.uitheme ?? "kids",
+        brandingconfig: null,
+        settingsconfig: null,
+        isdeleted: false,
+      },
+    };
+  };
+
+  /**
+   * A country by id, or by name as the `countries` table (or the payload) has it. With NO payload to carry
+   * one, a name this server does not have yet is created (a fresh server's `countries` is empty); an id is not.
+   */
   private resolveCountry = async (given: string, original: OrganisationContent | null, transaction?: Transaction): Promise<CountryChoice> => {
     const byId = UUID.test(given);
     const matches = (row: Row | countries): boolean => {
@@ -414,7 +566,7 @@ export class Provisioner {
     if (inDatabase.length > 1 && inPayload.length === 0) throw new ProvisionError("--country matches more than one country here.");
     if (inPayload.length === 1) {
       const row = inPayload[0];
-      return { countryid: String(row.countryid), countryname: String(row.countryname), dbRow: null };
+      return { countryid: String(row.countryid), countryname: String(row.countryname), dbRow: null, create: false };
     }
     if (inDatabase.length === 1) {
       const row = inDatabase[0];
@@ -422,7 +574,14 @@ export class Provisioner {
         countryid: row.countryid,
         countryname: row.countryname,
         dbRow: { countryid: row.countryid, countryname: row.countryname, expectedusage: row.expectedusage ?? null, isdeleted: false },
+        create: false,
       };
+    }
+    if (!original && !byId) {
+      if (Array.from(given).length > MAX_COUNTRY_NAME) {
+        throw new ProvisionError(`--country is too long for a country name: at most ${MAX_COUNTRY_NAME} characters.`);
+      }
+      return { countryid: uuidv4(), countryname: given, dbRow: null, create: true };
     }
     throw new ProvisionError(
       "--country is not in the countries table of this server nor in the payload. Give a country id or a name the payload carries.",
@@ -454,6 +613,33 @@ export class Provisioner {
     }
   };
 
+  /** What the import would delete or mark deleted here, from reads alone (the payload is the whole truth about this organisation's content). */
+  private removalsOf = async (content: OrganisationContent, organisationid: string, otherSchools: number, transaction?: Transaction): Promise<Removals> => {
+    const missing = async (table: string, pk: string, payloadIds: string[], extraWhere = ""): Promise<number> => {
+      const [rows] = (await this.sequelize.query(`SELECT \`${pk}\` AS id FROM \`${table}\` WHERE \`organisationid\` = :organisationid ${extraWhere}`, {
+        replacements: { organisationid },
+        transaction,
+      })) as unknown as [Array<{ id: string }>, unknown];
+      const kept = new Set(payloadIds.map(lower));
+      return rows.filter((r) => !kept.has(lower(String(r.id)))).length;
+    };
+    const idsOf = (key: "questions" | "documents" | "subjects" | "curriculums", pk: string) => content.tables[key].map((r) => String(r[pk]));
+    const schoolIds = content.tables.schools.map((r) => String(r.schoolid));
+    const [classRows] = (await this.sequelize.query(`SELECT \`standardid\` AS id FROM \`standards\` WHERE \`schoolid\` IN (:schoolIds)`, {
+      replacements: { schoolIds },
+      transaction,
+    })) as unknown as [Array<{ id: string }>, unknown];
+    const payloadClasses = new Set(content.tables.standards.map((r) => lower(String(r.standardid))));
+    return {
+      classes: classRows.filter((r) => !payloadClasses.has(lower(String(r.id)))).length,
+      questions: await missing("questions", "questionid", idsOf("questions", "questionid")),
+      documents: await missing("documents", "documentid", idsOf("documents", "documentid")),
+      subjects: await missing("subjects", "subjectid", idsOf("subjects", "subjectid")),
+      curricula: await missing("curriculums", "curriculumid", idsOf("curriculums", "curriculumid"), "AND `isdeleted` = 0"),
+      schools: otherSchools,
+    };
+  };
+
   /** Counts only. Throws (so the transaction rolls back) when anything is not as it should be. */
   private verify = async (plan: ProvisionPlan, transaction: Transaction): Promise<ProvisionVerification> => {
     const organisationid = plan.organisation.row.organisationid;
@@ -470,11 +656,20 @@ export class Provisioner {
       standardsFound = await standards.count({ where: { standardid: plan.standard.standardid, schoolid: plan.school.schoolid, isdeleted: false }, transaction });
       if (standardsFound !== 1) throw new ProvisionError("Check failed: the class is not here.");
     }
+    if (plan.content) {
+      const wanted = plan.content.rehomed.content.tables.standards.map((r) => String(r.standardid));
+      const present = wanted.length === 0 ? 0 : await standards.count({ where: { standardid: { [Op.in]: wanted }, schoolid: plan.school.schoolid }, transaction });
+      if (present !== wanted.length) throw new ProvisionError("Check failed: a class of the school is missing.");
+    }
+    if (plan.country) {
+      const country = await countries.count({ where: { countryid: plan.country.countryid, isdeleted: false }, transaction });
+      if (country !== 1) throw new ProvisionError("Check failed: the country is not here.");
+    }
     for (const login of plan.logins) {
       const row = await schoolusers.scope("withOwnership").findOne({ where: { schooluserid: login.schooluserid }, transaction });
       if (
         !row ||
-        row.schoolusername !== login.username ||
+        !sameLoginName(row.schoolusername, login.username) ||
         !row.schoolid ||
         lower(row.schoolid) !== lower(plan.school.schoolid) ||
         Number(row.schooluserrole) !== ROLE_OF[login.kind] ||
