@@ -13,7 +13,7 @@
  *   - each migration alone on an EMPTY database, so a `createTable` behind an "already exists"
  *     early return (an old migration superseded by a baseline) is still reached.
  * Every `createTable` call must carry `charset: "utf8mb4"` and `collate: "utf8mb4_unicode_ci"`, and
- * every raw `CREATE TABLE` must say `COLLATE=utf8mb4_unicode_ci`. A migration that derives the pair
+ * every raw `CREATE TABLE` must carry the table options `CHARSET=utf8mb4` and `COLLATE=utf8mb4_unicode_ci`. A migration that derives the pair
  * from a real column (`tableOptionsMatchingCurriculums`, which the baseline fixed) gets
  * `utf8mb4_unicode_ci` back from the fake, exactly as the baseline column answers on a real server.
  *
@@ -36,12 +36,12 @@ const files = fs
   .filter((f) => /\.(ts|js)$/.test(f) && !/\.spec\.(ts|js)$/.test(f) && !/\.d\.ts$/.test(f))
   .sort();
 
-type Create = { file: string; table: string; via: "createTable" | "sql"; charset?: unknown; collate?: unknown; sql?: string };
+type Create = { pass: string; file: string; table: string; via: "createTable" | "sql"; charset?: unknown; collate?: unknown; sql?: string };
 
 const TX = { id: "the-transaction" };
 
 /** A world of tables, and a QueryInterface that records what is created in it. */
-const makeWorld = (file: () => string, creates: Create[]) => {
+const makeWorld = (pass: string, file: () => string, creates: Create[]) => {
   const tables = new Map<string, Record<string, unknown>>();
   const addTable = (name: string, cols: Record<string, unknown> = {}) => {
     tables.set(name, { ...(tables.get(name) ?? {}), ...cols });
@@ -51,7 +51,7 @@ const makeWorld = (file: () => string, creates: Create[]) => {
     const created = /CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?/i.exec(sql);
     if (created) {
       addTable(created[1]);
-      creates.push({ file: file(), table: created[1], via: "sql", sql });
+      creates.push({ pass, file: file(), table: created[1], via: "sql", sql });
       return Promise.resolve([[], 0]);
     }
     if (/INFORMATION_SCHEMA\.COLUMNS/i.test(sql) && /COLLATION_NAME|CHARACTER_SET_NAME/i.test(sql)) {
@@ -82,7 +82,7 @@ const makeWorld = (file: () => string, creates: Create[]) => {
     describeTable: jest.fn((name: string) => Promise.resolve({ ...(tables.get(name) ?? {}) })),
     createTable: jest.fn((name: string, attrs: Record<string, unknown> = {}, options: { charset?: unknown; collate?: unknown } = {}) => {
       addTable(name, attrs);
-      creates.push({ file: file(), table: name, via: "createTable", charset: options?.charset, collate: options?.collate });
+      creates.push({ pass, file: file(), table: name, via: "createTable", charset: options?.charset, collate: options?.collate });
       return Promise.resolve();
     }),
     dropTable: jest.fn((name: string) => {
@@ -115,7 +115,7 @@ beforeAll(async () => {
   // Some migrations log what they back-filled; that is noise here.
   jest.spyOn(console, "log").mockImplementation(() => undefined);
   // 1. In order, one world: what `db:migrate` does on a fresh database.
-  const seq = makeWorld(() => current, creates);
+  const seq = makeWorld("in-order", () => current, creates);
   for (const f of files) {
     current = f;
     try {
@@ -129,7 +129,7 @@ beforeAll(async () => {
   // 2. Each migration alone on an empty database: reaches a createTable that an early return hides.
   for (const f of files) {
     current = f;
-    const alone = makeWorld(() => current, creates);
+    const alone = makeWorld("alone", () => current, creates);
     try {
       await load(f).up(alone.qi, Sequelize);
     } catch {
@@ -151,7 +151,18 @@ const problems = (c: Create): string[] => {
     }
     return out;
   }
-  return new RegExp(`COLLATE\\s*=?\\s*${WANT_COLLATE}\\b`, "i").test(c.sql ?? "") ? [] : ["raw CREATE TABLE has no COLLATE=utf8mb4_unicode_ci"];
+  // The TABLE options: after a closing parenthesis, `CHARSET=utf8mb4` and `COLLATE=utf8mb4_unicode_ci`
+  // (with the `=`). A column-level `CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci` has no `=` and
+  // would leave the table on the database default, so it does not count.
+  const out: string[] = [];
+  const segments = [...(c.sql ?? "").matchAll(/\)([^()]*)/g)].map((m) => m[1]);
+  if (!segments.some((t) => new RegExp(`\\b(?:CHARSET|CHARACTER\\s+SET)\\s*=\\s*${WANT_CHARSET}\\b`, "i").test(t))) {
+    out.push("raw CREATE TABLE has no table option CHARSET=utf8mb4");
+  }
+  if (!segments.some((t) => new RegExp(`\\bCOLLATE\\s*=\\s*${WANT_COLLATE}\\b`, "i").test(t))) {
+    out.push("raw CREATE TABLE has no table option COLLATE=utf8mb4_unicode_ci");
+  }
+  return out;
 };
 
 describe("migrations name their collation", () => {
@@ -176,6 +187,28 @@ describe("migrations name their collation", () => {
     for (const f of unreached) {
       expect(fs.readFileSync(path.join(DIR, f), "utf8")).not.toMatch(/0900|general_ci/);
     }
+  });
+
+  it("every createTable( call in a migration's source is reached: recorded creates equal source calls, per file", () => {
+    // Counted per file, not per file-has-one: a second createTable behind a condition that is false in
+    // both passes would otherwise go unchecked. Each pass is counted alone (the same call is reached
+    // again in the other pass); the larger of the two is what that pass could reach.
+    const code = (f: string): string =>
+      fs
+        .readFileSync(path.join(DIR, f), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+    const mismatched = files
+      .map((f) => {
+        const inSource = (code(f).match(/\bcreateTable\s*\(/g) ?? []).length;
+        const reached = Math.max(
+          ...["in-order", "alone"].map((pass) => creates.filter((c) => c.file === f && c.via === "createTable" && c.pass === pass).length),
+        );
+        return { f, inSource, reached };
+      })
+      .filter((r) => r.inSource !== r.reached)
+      .map((r) => `${r.f}: ${r.inSource} createTable( in source, ${r.reached} reached`);
+    expect(mismatched).toEqual([]);
   });
 
   it("a migration's own source never asks for a collation other than utf8mb4_unicode_ci", () => {
