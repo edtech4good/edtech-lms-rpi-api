@@ -39,7 +39,7 @@ npm run build
 #      RPI_DB_NAME=…  RPI_DB_USER=…  RPI_DB_PASSWORD=…  RPI_DB_HOST=…
 #      RPI_APPLICATION_SECRET=…  RPI_SERVER_SYNC_KEY=…
 
-# 3. Bring up the database (see "A new database" below: on an empty database this takes three steps)
+# 3. Bring up the database (see "A new database" below; on an empty database this is the one command)
 npm run db:migrate
 
 # 4. Look first: with no --apply it prints the plan and writes nothing
@@ -135,17 +135,17 @@ exactly one row changed. Without
 
 ## A new database
 
-On an **empty** database, `npm run db:migrate` stops at
-`20260818090000-unique-studentprogress-submission` with `Table '…studentprogressquestions' doesn't exist`: that
-table is created by the server's own start-up (`sequelize.sync()`), not by a migration. So:
+Create the database empty with the character set `utf8mb4` and the collation `utf8mb4_unicode_ci`
+(`CREATE DATABASE <name> CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`), then run
+`npm run db:migrate` once. It builds every table, including the four that only the server's own start-up used to
+create (`studentprogressquestions`, `lessonpracticequestions`, `lessonquizquestions`, `tokens`: migration
+`20260818080000-create-sync-only-tables-baseline`), and finishes in that one run; there is nothing to start first.
 
 ```bash
-npm run db:migrate      # stops at that migration on a new database
-npm start               # run once, wait for "Application is running", then stop it (Ctrl-C)
-npm run db:migrate      # finishes
+npm run db:migrate
 ```
 
-An existing server's database has the table already and migrates in one go.
+An existing server's database has those tables already: the migration notices, changes nothing and is only recorded.
 
 ## Signing in
 
