@@ -10,10 +10,16 @@ import { closeSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "os";
 import { join } from "path";
 import { ProvisionError, ProvisionOptions } from "./args";
-import { PASSWORD_ALPHABET, PASSWORD_LENGTH, checkEnvironment, createCredentialsFile, generatePassword } from "./provision";
+import { PASSWORD_ALPHABET, PASSWORD_LENGTH, Provisioner, checkEnvironment, createCredentialsFile, generatePassword } from "./provision";
 import { describePlan, describeResult } from "./cli";
 import { ProvisionPlan } from "./provision";
 import { verifyPassword } from "src/services/password.service";
+import { countries } from "src/models/data-models/countries";
+import { organisations } from "src/models/data-models/organisations";
+import { schools } from "src/models/data-models/school";
+import { schoolusers } from "src/models/data-models/schoolusers";
+import { dbinstance } from "src/services/dbservice";
+import { collateCountryName } from "src/test-support/country-names";
 
 const options = (extra: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
   organisation: "Riverside Learning Network",
@@ -205,5 +211,46 @@ describe("the credentials file", () => {
     writeFileSync(path, "keep me", { mode: 0o644 });
     expect(refusal(() => createCredentialsFile(path))).toBe(`Cannot create the credentials file (it must not exist yet): ${path}`);
     expect(readFileSync(path, "utf8")).toBe("keep me");
+  });
+});
+
+describe("Provisioner.plan: --country names the SECOND of two payload countries the database calls equal", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it("the plan's country and the school's country are the first (kept) one, the payload's school points at it, and the printed plan names it", async () => {
+    const FIRST = "b0000000-0000-4000-8000-0000000000f1";
+    const SECOND = "b0000000-0000-4000-8000-0000000000f2";
+    const dir = mkdtempSync(join(tmpdir(), "provision-plan-"));
+    try {
+      const payload = JSON.parse(readFileSync("scripts/provision/sample-content.json", "utf8"));
+      const first = { ...payload.countries[0], countryid: FIRST, countryname: "Testland" };
+      const second = { ...first, countryid: SECOND, countryname: "TÉSTLAND " }; // the same name for the database (case, accent, trailing space)
+      payload.countries = [first, second];
+      payload.schools = payload.schools.map((sc: Record<string, unknown>) => ({ ...sc, countryid: FIRST }));
+      const file = join(dir, "content.json");
+      writeFileSync(file, JSON.stringify(payload));
+
+      // a fresh server: no organisation, school, login or country; the only queries that matter are the two the country lookup asks MySQL
+      jest.spyOn(organisations, "findAll").mockResolvedValue([] as never);
+      jest.spyOn(countries, "findAll").mockResolvedValue([] as never);
+      jest.spyOn(schools, "scope").mockReturnValue({ findAll: async () => [] } as never);
+      jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: async () => null } as never);
+      jest.spyOn(dbinstance.getdbinstance(), "query").mockImplementation((async (sql: string, opts?: { replacements?: { a: string; b: string } }) => {
+        if (/INFORMATION_SCHEMA/i.test(sql)) return [{ cs: "utf8mb4", coll: "utf8mb4_unicode_ci" }];
+        if (/AS same$/i.test(sql.trim()) && opts?.replacements) return [{ same: collateCountryName(opts.replacements.a) === collateCountryName(opts.replacements.b) ? 1 : 0 }];
+        return [[]]; // the rows of another organisation's content: none
+      }) as never);
+
+      const plan = await new Provisioner({ offline: true, configuredDatabase: "edtech_lms_rpi" }).plan(options({ country: SECOND, admin: "river.admin", content: file }));
+
+      expect(plan.country).toEqual({ action: "reuse", countryid: FIRST, countryname: "Testland" });
+      expect(plan.school).toMatchObject({ countryid: FIRST, countryname: "Testland" });
+      expect(plan.content?.rehomed.content.tables.countries.map((r) => r.countryid)).toEqual([FIRST]);
+      expect(plan.content?.rehomed.content.tables.schools.map((r) => r.countryid)).toEqual([FIRST]);
+      expect(describePlan(plan, false)).toContain('"Riverside Primary"  id (new)  country Testland');
+      expect(describePlan(plan, false)).not.toContain("TÉSTLAND");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
