@@ -48,9 +48,7 @@ import { columnCollation, tableNameList, tableOptionsMatchingCurriculums } from 
  * `down()` cannot know whether it was this migration or `sync()` that created a
  * table, and these tables hold learners' results, so it never deletes data: it drops
  * a table only when it is EMPTY (nothing is lost, and a boot-time `sync()` or the
- * next `up()` rebuilds it identically) and leaves a table that has rows. Dropping
- * empty ones is what lets `db:migrate:undo:all` on a new database get back past the
- * parent tables' own `down()` (which cannot drop a parent a child still references).
+ * next `up()` rebuilds it identically) and leaves a table that has rows alone.
  * Each is handled only if present.
  */
 
@@ -207,9 +205,9 @@ module.exports = {
         if (!present.has(b.name)) {
           continue;
         }
-        const [rows] = await queryInterface.sequelize.query(`SELECT COUNT(*) AS n FROM \`${b.name}\``, { transaction });
-        const n = Number((rows as Array<{ n: number | string }>)[0]?.n ?? 0);
-        if (n === 0) {
+        // An existence probe, not a count: one row is enough to know the table holds data.
+        const [rows] = await queryInterface.sequelize.query(`SELECT 1 AS present FROM \`${b.name}\` LIMIT 1`, { transaction });
+        if ((rows as unknown[]).length === 0) {
           await queryInterface.dropTable(b.name, { transaction });
         }
       }

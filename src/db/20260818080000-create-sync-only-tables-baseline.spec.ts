@@ -35,9 +35,10 @@ const makeQI = (state: State = {}) => {
     sequelize: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       query: jest.fn((sql: string, opts?: any): Promise<unknown> => {
-        if (/COUNT\(\*\)/.test(sql)) {
+        if (/^SELECT 1 AS present FROM/.test(sql)) {
+          // down()'s existence probe: a row back means the table holds data.
           const name = /FROM `(\w+)`/.exec(sql)![1];
-          return Promise.resolve([[{ n: state.rows?.[name] ?? 0 }]]);
+          return Promise.resolve([(state.rows?.[name] ?? 0) > 0 ? [{ present: 1 }] : []]);
         }
         if (/INFORMATION_SCHEMA\.COLUMNS/.test(sql)) {
           // tableOptionsMatchingCurriculums names curriculums.curriculumid in the SQL; the others pass replacements.

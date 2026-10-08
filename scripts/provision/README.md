@@ -135,7 +135,8 @@ exactly one row changed. Without
 
 ## A new database
 
-Create the database empty with the character set `utf8mb4` and the collation `utf8mb4_unicode_ci`, then run
+Create the database empty with the character set `utf8mb4` and the collation `utf8mb4_unicode_ci`
+(`CREATE DATABASE <name> CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`), then run
 `npm run db:migrate` once. It builds every table, including the four that only the server's own start-up used to
 create (`studentprogressquestions`, `lessonpracticequestions`, `lessonquizquestions`, `tokens`: migration
 `20260818080000-create-sync-only-tables-baseline`), and finishes in that one run; there is nothing to start first.
