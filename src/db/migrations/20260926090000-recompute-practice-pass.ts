@@ -42,7 +42,7 @@ const PRACTICE = 1; // Progress.LESSONPRACTICE
 module.exports = {
   up: async (queryInterface: QueryInterface): Promise<void> => {
     await queryInterface.sequelize.query(
-      `CREATE TABLE studentprogress_practicepass_bak (PRIMARY KEY (studentprogressid)) AS
+      `CREATE TABLE studentprogress_practicepass_bak (PRIMARY KEY (studentprogressid)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci AS
        SELECT studentprogressid, ispass, resultpercentage, marks
        FROM studentprogress
        WHERE progresstype = ${PRACTICE}`,

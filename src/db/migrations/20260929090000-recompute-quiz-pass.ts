@@ -86,7 +86,7 @@ END`;
 module.exports = {
   up: async (queryInterface: QueryInterface): Promise<void> => {
     await queryInterface.sequelize.query(
-      `CREATE TABLE studentprogress_quizpass_bak (PRIMARY KEY (studentprogressid)) AS
+      `CREATE TABLE studentprogress_quizpass_bak (PRIMARY KEY (studentprogressid)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci AS
        SELECT studentprogressid, ispass, resultpercentage, marks, scores
        FROM studentprogress
        WHERE progresstype IN (${LESSONQUIZ}, ${LEVELQUIZ}, ${BASELINEQUESTION})`,
