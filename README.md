@@ -92,7 +92,7 @@ A school can run this code on a classroom server without ever touching the onlin
 
 - `npm run start:dev` runs Nest in watch mode.
 - `npm run build` then `npm start` (or `npm run start:prod`, same thing) is the production path. The build lands in `build/` and both run `build/server.js`.
-- `npm run db:migrate` runs the Sequelize migrations. The last one (S4) makes the owner and school columns required and **refuses, changing nothing, while any row has none**.
+- `npm run db:migrate` runs the Sequelize migrations, which build the whole schema: tables, columns and indexes, so the server's first boot changes nothing. S4 makes the owner and school columns required and **refuses, changing nothing, while any row has none**.
 - `npm run db:check-owners [-- --ids]` is the pre-flight for S4: it prints, per column, how many rows have no owner or school (with `--ids`, which), and exits 1 when any do. Run it before `db:migrate`.
 - `npm run provision -- …` provisions a classroom server (see above and `scripts/provision/README.md`).
 - `npm run lint` and `npm run format` run ESLint and Prettier.
