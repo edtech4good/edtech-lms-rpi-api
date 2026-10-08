@@ -151,6 +151,11 @@ const install = (initial: Store) => {
           const twin = store.schools.find((e) => e.schoolid !== r.schoolid && collate(e.schoolname) === collate(r.schoolname));
           if (twin) throw new UniqueConstraintError({ message: "Duplicate entry for key schoolname" });
         }
+        if (name === "countries") {
+          // `countries.countryname` is unique (the real table has the key), and the column collation judges equality
+          const twin = store.countries.find((e) => e.countryid !== r.countryid && collate(e.countryname) === collate(r.countryname));
+          if (twin) throw new UniqueConstraintError({ message: "Duplicate entry for key countryname" });
+        }
         if (existing) {
           // ON DUPLICATE KEY UPDATE: only the listed columns change
           for (const column of opts.updateOnDuplicate ?? []) if (column in r) existing[column] = r[column];
@@ -592,6 +597,151 @@ describe("PUT /import/master with a format-3 payload", () => {
       const once = cloneDeep(store);
       await importIt(payloadOf(content("x", 1, ORG_X)));
       expect(store).toEqual(once);
+    });
+  });
+
+  describe("a payload country whose name is here under another id (a server set up apart)", () => {
+    // The payload (content("x", 1)) carries country c-kh "កម្ពុជា" and its school points at c-kh. This server has the
+    // same country under a DIFFERENT id.
+    const local = (over: Row = {}): Row => ({ countryid: "c-local", countryname: "កម្ពុជា", expectedusage: 7, isdeleted: false, ...over });
+    const countriesWritten = () => writes.filter((w) => w === "countries.bulkCreate").length;
+
+    it("is replaced by this server's row: the local id wins, the payload's row is never written, the school follows, and the answer says how many", async () => {
+      install({ countries: [local()] });
+      const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result).toMatchObject({ error: false, data: true, organisationid: ORG_X, countriesRehomed: 1 });
+      expect(store.countries).toEqual([local()]); // one row, the local one, byte-identical (its expectedusage kept)
+      expect(store.schools.map((s) => [s.schoolid, s.countryid])).toEqual([["x-school-1", "c-local"]]);
+      expect(tnx.commit).toHaveBeenCalledTimes(1);
+      // the existing counts keep their shape: the school and the country are both written
+      expect(result.counts.schools).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
+      expect(result.counts.countries).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
+      expect(logged.some((l) => l.includes("1 payload country was replaced by this server's country of the same name"))).toBe(true);
+      expect(logged.join("\n")).not.toContain("c-local");
+    });
+
+    it("every reference to the payload's id follows, and a country that does not collide is untouched", async () => {
+      const payload = content("x", 1, ORG_X);
+      const second = content("x", 3, ORG_X);
+      second.schools[0].countryid = "c-th";
+      payload.schools.push(second.schools[0]);
+      payload.countries.push({ countryid: "c-th", countryname: "ថៃ", expectedusage: 5, isdeleted: false });
+      payload.standards.push(second.standards[0]);
+      install({ countries: [local(), { countryid: "c-th", countryname: "ថៃ", expectedusage: 5, isdeleted: false }] });
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(1);
+      expect(store.countries.map((c) => c.countryid).sort()).toEqual(["c-local", "c-th"]);
+      expect(Object.fromEntries(store.schools.map((s) => [s.schoolid, s.countryid]))).toEqual({ "x-school-1": "c-local", "x-school-3": "c-th" });
+    });
+
+    it("two payload countries of the same name collapse onto the one local row, and both ids are rewritten", async () => {
+      const payload = content("x", 1, ORG_X);
+      const second = content("x", 3, ORG_X);
+      second.schools[0].countryid = "c-kh-2";
+      payload.schools.push(second.schools[0]);
+      payload.standards.push(second.standards[0]);
+      payload.countries.push({ countryid: "c-kh-2", countryname: "កម្ពុជា", expectedusage: 1, isdeleted: false });
+      install({ countries: [local()] });
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(2);
+      expect(store.countries).toEqual([local()]);
+      expect(Object.fromEntries(store.schools.map((s) => [s.schoolid, s.countryid]))).toEqual({ "x-school-1": "c-local", "x-school-3": "c-local" });
+    });
+
+    it("names are compared as the rest of the code compares them (trim, NFC, lower-case), not by the column's collation", async () => {
+      const payload = content("x", 1, ORG_X);
+      payload.countries[0].countryname = "  Côte d'Ivoire ".normalize("NFD").toUpperCase();
+      install({ countries: [local({ countryname: "Côte d'Ivoire".normalize("NFC") })] });
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(1);
+      expect(store.countries.map((c) => [c.countryid, c.countryname])).toEqual([["c-local", "Côte d'Ivoire".normalize("NFC")]]);
+      expect(store.schools[0].countryid).toBe("c-local");
+    });
+
+    it("a name that differs by a Khmer mark is a different country: it is not re-homed (and the database's own uniqueness decides whether it can be written)", async () => {
+      const payload = content("x", 1, ORG_X);
+      payload.countries[0].countryname = "កម្ពុជ"; // the last vowel sign is missing
+      install({ countries: [local()] });
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(0);
+      expect(store.countries.map((c) => c.countryid).sort()).toEqual(["c-kh", "c-local"]);
+      expect(store.schools[0].countryid).toBe("c-kh");
+    });
+
+    it("the local row is deleted: it is brought back (as the provisioning tool does), and the school points at it", async () => {
+      install({ countries: [local({ isdeleted: true })] });
+      const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(1);
+      expect(store.countries).toEqual([local({ isdeleted: false })]);
+      expect(store.schools[0].countryid).toBe("c-local");
+      expect(logged.some((l) => l.includes("(1 brought back from deleted)"))).toBe(true);
+    });
+
+    it("the same id is upserted as before: renamed, nothing re-homed", async () => {
+      install({ countries: [local({ countryid: "c-kh", countryname: "Old name" })] });
+      const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(0);
+      expect(store.countries).toEqual([{ countryid: "c-kh", countryname: "កម្ពុជា", expectedusage: 1, isdeleted: false }]);
+      expect(store.schools[0].countryid).toBe("c-kh");
+    });
+
+    it("a name this server does not have is a new country, written by id", async () => {
+      install({ countries: [local({ countryname: "ថៃ" })] });
+      const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(0);
+      expect(store.countries.map((c) => [c.countryid, c.countryname]).sort()).toEqual([["c-kh", "កម្ពុជា"], ["c-local", "ថៃ"]]);
+      expect(store.schools[0].countryid).toBe("c-kh");
+    });
+
+    it("importing the same payload again changes nothing, and says the same", async () => {
+      install({ countries: [local()] });
+      const first: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      const once = cloneDeep(store);
+      const second: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(store).toEqual(once);
+      expect(second.countriesRehomed).toBe(1);
+      // a replace deletes and re-creates the content, so only the rows written (not those deleted) repeat
+      const written = (r: any) => Object.fromEntries(Object.entries(r.counts).map(([k, v]: [string, any]) => [k, v.written])); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(written(second)).toEqual(written(first));
+      expect(second.counts.countries).toEqual(first.counts.countries);
+    });
+
+    it("more than one country here has that name: refused whole, nothing written (a guess could attach the school to the wrong one)", async () => {
+      const state = { countries: [local(), local({ countryid: "c-local-2" })] };
+      install(state);
+      const snapshot = cloneDeep(store);
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)))).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/More than one country here has the name of one of the payload's countries\. Nothing was written/),
+      });
+      expect(store).toEqual(snapshot);
+      expect(writes).toEqual([]); // refused from reads alone
+      expect(tnx.commit).not.toHaveBeenCalled();
+    });
+
+    it("a school that points at a country this server does not have is refused after the write, and the whole import is rolled back (the check can see a dangling id the foreign-key switch hides)", async () => {
+      install({});
+      // a country write that does nothing and says nothing: the school is then written pointing at nothing
+      jest.spyOn(countries, "bulkCreate").mockImplementation((async () => []) as never);
+      const snapshot = cloneDeep(store);
+      await expect(importIt(payloadOf(content("x", 1, ORG_X)))).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/would point at a country this server does not have\. Nothing was written\. schools: 1 row points at a country \(countryid\) that is not here\./),
+      });
+      expect(store).toEqual(snapshot);
+      expect(tnx.commit).not.toHaveBeenCalled();
+      expect(tnx.rollback).toHaveBeenCalledTimes(1);
+      expect(queries[queries.length - 1]).toMatch(/FOREIGN_KEY_CHECKS = 1/); // the session setting is put back on this path too
+    });
+
+    it("a school with no country at all is fine: nothing to point at", async () => {
+      const payload = content("x", 1, ORG_X);
+      payload.schools[0].countryid = null;
+      payload.countries = [];
+      install({});
+      await expect(importIt(payloadOf(payload))).resolves.toMatchObject({ countriesRehomed: 0 });
+      expect(store.schools[0].countryid).toBeNull();
+      expect(countriesWritten()).toBe(0);
     });
   });
 
