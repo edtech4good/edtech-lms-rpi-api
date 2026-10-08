@@ -14,12 +14,12 @@ export interface schoolsAttributes {
   isdeleted?: Boolean;
   uitheme?: string;
   brandingconfig?: object | null;
-  organisationid?: string | null;
+  organisationid: string;
 }
 
 export type schoolsPk = "schoolid";
 export type schoolsId = schools[schoolsPk];
-export type schoolsOptionalAttributes = "schoolid" | "isdeleted" | "uitheme" | "brandingconfig" | "organisationid";
+export type schoolsOptionalAttributes = "schoolid" | "isdeleted" | "uitheme" | "brandingconfig";
 export type schoolsCreationAttributes = Optional<schoolsAttributes, schoolsOptionalAttributes>;
 
 export class schools extends Model<schoolsAttributes, schoolsCreationAttributes> implements schoolsAttributes {
@@ -32,7 +32,7 @@ export class schools extends Model<schoolsAttributes, schoolsCreationAttributes>
   isdeleted!: Boolean;
   uitheme!: string;
   brandingconfig!: object | null;
-  organisationid!: string | null;
+  organisationid!: string;
 
   // grades belongsTo curriculums via curriculumid
   countries!: countries;
@@ -93,8 +93,7 @@ export class schools extends Model<schoolsAttributes, schoolsCreationAttributes>
       // reads the real column collation (the model and the table can differ).
       organisationid: {
         type: DataTypes.STRING(36),
-        allowNull: true,
-        defaultValue: null
+        allowNull: false,
       },
     }, {
       sequelize,

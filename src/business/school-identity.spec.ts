@@ -17,6 +17,7 @@ import {
   schoolScopeOfLogin,
   studentsOfSchool,
   withImportSchoolIds,
+  withRequiredSchoolIds,
 } from "./school-identity";
 
 /**
@@ -298,6 +299,45 @@ describe("withImportSchoolIds: the id written with a roster row", () => {
     const transaction = { id: "t" } as never;
     await expect(withImportSchoolIds([{ schoolname: "Twin" }], transaction)).rejects.toBeInstanceOf(ApiError);
     expect(findAll.mock.calls[0][0].transaction).toBe(transaction);
+  });
+});
+
+describe("withRequiredSchoolIds: a roster row with no school is refused before it is written (S4)", () => {
+  beforeEach(() =>
+    install([
+      { schoolid: A, schoolname: "School A" },
+      { schoolid: B, schoolname: "School B" },
+    ]),
+  );
+
+  it("returns every row with the id of its school, as withImportSchoolIds does", async () => {
+    const rows = await withRequiredSchoolIds([{ studentid: "1", schoolname: " school a " } as never, { schoolid: B }, { schoolname: "School B", schoolid: B }]);
+    expect(rows.map((r) => r.schoolid)).toEqual([A, B, B]);
+  });
+
+  it.each([
+    ["a name this server does not know", { schoolname: "Not Here Yet" }],
+    ["an id of a school this server does not have", { schoolid: C }],
+    ["an id this server does not have with a name it does not know", { schoolid: C, schoolname: "Not Here Yet" }],
+    ["no school at all", {}],
+    ["a blank name", { schoolname: "   " }],
+    ["a name that is null", { schoolname: null }],
+  ])("refuses the whole write for a row with %s: a 400 that counts the row and names nothing", async (_label, row) => {
+    const error = await withRequiredSchoolIds([{ schoolname: "School A" }, row as never]).catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.getStatus()).toBe(400);
+    expect(error.code).toBe(ErrorCode.INVALID_INPUT);
+    expect(error.message).toBe("1 row names no school this server has. A school must be here before its learners and logins. Nothing was written.");
+    expect(JSON.stringify(error.getResponse())).not.toContain("Not Here Yet");
+  });
+
+  it("counts every such row", async () => {
+    const error = await withRequiredSchoolIds([{}, { schoolname: "School A" }, { schoolname: "Nowhere" }]).catch((e) => e);
+    expect(error.message).toMatch(/^2 rows name no school this server has\./);
+  });
+
+  it("an empty list is no refusal", async () => {
+    await expect(withRequiredSchoolIds([])).resolves.toEqual([]);
   });
 });
 

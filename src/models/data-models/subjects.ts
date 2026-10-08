@@ -9,7 +9,7 @@ export interface subjectsAttributes {
   subjectstatus?: boolean;
   subjectdescription?: string;
   isdeleted?: boolean;
-  organisationid?: string | null;
+  organisationid: string;
 }
 
 export type subjectsPk = "subjectid";
@@ -28,7 +28,7 @@ export class subjects
   subjectstatus!: boolean;
   subjectdescription?: string;
   isdeleted!: boolean;
-  organisationid!: string | null;
+  organisationid!: string;
 
   static initModel(sequelize: Sequelize.Sequelize): typeof subjects {
     subjects.init(
@@ -59,8 +59,7 @@ export class subjects
         // See ownership-scope.ts; no `references` (the migration owns the key).
         organisationid: {
           type: DataTypes.STRING(36),
-          allowNull: true,
-          defaultValue: null,
+          allowNull: false,
         },
       },
       {

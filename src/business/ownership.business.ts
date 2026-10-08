@@ -287,7 +287,7 @@ export class OwnershipBusiness {
         // a row that gained an owner since it was read is never overwritten.
         const [count] = await model.update(
           { organisationid },
-          { where: { [pk]: { [Op.in]: part }, organisationid: null }, transaction }
+          { where: { [pk]: { [Op.in]: part }, organisationid: null } as never, transaction }
         );
         result.applied[key] += count;
       }

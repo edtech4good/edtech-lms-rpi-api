@@ -13,7 +13,7 @@ export interface schoolusersAttributes {
   schooluserstatus: number;
   schoolname: string;
   // The school by id. Left out of every query by default: see ownership-scope.ts.
-  schoolid?: string | null;
+  schoolid: string;
   isdisabled: boolean;
   isdeleted?: boolean;
 
@@ -23,7 +23,7 @@ export interface schoolusersAttributes {
 
 export type schoolusersPk = "schooluserid";
 export type schoolusersId = schoolusers[schoolusersPk];
-export type schoolusersOptionalAttributes = "schooluserid" | "schooluserstatus" | "schoolname" | "schoolid" | "isdisabled" | "isdeleted";
+export type schoolusersOptionalAttributes = "schooluserid" | "schooluserstatus" | "schoolname" | "isdisabled" | "isdeleted";
 export type schoolusersCreationAttributes = Optional<schoolusersAttributes, schoolusersOptionalAttributes>;
 
 export class schoolusers extends Model<schoolusersAttributes, schoolusersCreationAttributes> implements schoolusersAttributes {
@@ -33,7 +33,7 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
   schooluserrole!: number;
   schooluserstatus!: number;
   schoolname!: string;
-  schoolid!: string | null;
+  schoolid!: string;
   isdisabled!: boolean;
   isdeleted!: boolean;
   studentappusages?: studentappusages[];
@@ -83,8 +83,7 @@ export class schoolusers extends Model<schoolusersAttributes, schoolusersCreatio
     // No `references`: the migration owns the foreign key.
     schoolid: {
       type: DataTypes.STRING(36),
-      allowNull: true,
-      defaultValue: null
+      allowNull: false,
     },
     isdisabled: {
       type: DataTypes.BOOLEAN,

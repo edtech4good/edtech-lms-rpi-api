@@ -40,7 +40,15 @@ holds one school. The rules, in `src/business/`:
   organisation claim is refused on a classroom server as much as online: 401
   over HTTP (the strategy refuses the token before the controller runs); the
   controller's own 403 is defence in depth.
-  `PUT /import/ownership` fills empty owners only.
+  `PUT /import/ownership` fills empty owners only (since S4 there are none; it
+  remains for databases that have not reached S4).
+- Seven columns are required (NOT NULL): `organisationid` on `schools`,
+  `curriculums`, `questions`, `documents`, `subjects`, and `schoolid` on `students`
+  and `schoolusers` (`src/db/required-columns.ts` is the one list, and the models
+  say the same). The migration refuses, changing nothing, while any row has none;
+  `npm run db:check-owners` is the operator's pre-flight. A writer refuses first:
+  a roster row that names no school this server has is a 400 before anything is
+  written (`withRequiredSchoolIds`), so a school must be here before its roster.
 - `src/provisioning/` (run as `npm run provision`, recipe in
   `scripts/provision/README.md`) is how a fresh classroom server gets its first
   organisation, school and logins with no network and no central: one

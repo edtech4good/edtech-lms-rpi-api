@@ -36,9 +36,8 @@ import { SyncBusiness } from "./sync.business";
  *
  *  1. The organisation row is upserted by id.
  *  2. The payload's owned rows are checked against what is here: a row whose id is
- *     already owned by ANOTHER organisation refuses the whole file (400). A row
- *     whose id is here with no owner is the same row (ids are central's) and takes
- *     the header's organisation when it is written; those are counted as `adopted`.
+ *     already owned by ANOTHER organisation refuses the whole file (400). (Every
+ *     stored row has an owner, since S4.)
  *  3. This organisation's content is replaced: its questions, documents and
  *     subjects (by `organisationid`) are deleted, and so is everything under the
  *     curricula IN the payload (baselines, grades, levels, lessons, learnings,
@@ -54,8 +53,8 @@ import { SyncBusiness } from "./sync.business";
  *     organisation; under anything else it refuses the file (400).
  *  5. This organisation's schools and curricula that the payload no longer has are
  *     marked `isdeleted` (learners hold ids into them), never destroyed.
- *  6. Learners and logins that were pushed before their school are given their
- *     `schoolid` (the same fill the retired format-2 import ran).
+ *  6. Learners and logins stored before S4 with no `schoolid` are given it (a repair
+ *     step: since S4 a roster is refused until its school is here, so none are left).
  *
  * Countries are global: upserted, never deleted. Nothing else is touched. The
  * caller commits (or rolls back) the transaction.
@@ -68,8 +67,6 @@ export interface TableCounts {
   written: number;
   /** Rows kept but marked `isdeleted` because the payload no longer has them. */
   markedDeleted: number;
-  /** Rows written over an existing row with no owner, which now has the organisation. */
-  adopted: number;
 }
 
 export type ContentCounts = Record<"organisations" | TableKey, TableCounts>;
@@ -159,7 +156,7 @@ const OWNED_UPDATE: Partial<Record<TableKey, string[]>> = {
 
 const OWNED: TableKey[] = ["schools", "curriculums", "questions", "documents", "subjects"];
 
-const emptyCounts = (): TableCounts => ({ deleted: 0, written: 0, markedDeleted: 0, adopted: 0 });
+const emptyCounts = (): TableCounts => ({ deleted: 0, written: 0, markedDeleted: 0 });
 const lower = (value: string) => value.toLowerCase();
 const rows = (n: number) => (n === 1 ? "1 row" : `${n} rows`);
 
@@ -198,6 +195,10 @@ export class OrganisationContentImport {
   private apply = async (content: OrganisationContent): Promise<void> => {
     const { organisationid } = content;
     const t = this.transaction;
+    // Every owned row is written with this id: a header that is not one refuses the file before anything is read or written.
+    if (typeof organisationid !== "string" || organisationid.trim().length === 0) {
+      throw new ApiError(ErrorCode.INVALID_INPUT, { message: "The payload names no organisation. Nothing was written." });
+    }
 
     // What this organisation owns here now, before anything is changed.
     const ownedSchoolsBefore = await this.idsOwnedBy("schools", organisationid);
@@ -348,8 +349,7 @@ export class OrganisationContentImport {
 
   /**
    * A payload row of an owned table whose id is here under a DIFFERENT
-   * organisation refuses the whole file, naming the table and how many rows. A
-   * row whose id is here with no owner is counted as adopted.
+   * organisation refuses the whole file, naming the table and how many rows.
    */
   private refuseRowsOfOtherOrganisations = async (content: OrganisationContent): Promise<void> => {
     const header = lower(content.organisationid);
@@ -357,7 +357,6 @@ export class OrganisationContentImport {
     for (const key of OWNED) {
       const pk = PKS[key];
       let foreign = 0;
-      let adopted = 0;
       for (const part of chunk(content.tables[key].map((r) => String(r[pk])), CHUNK)) {
         const found = (await MODELS[key].scope("withOwnership").findAll({
           attributes: [pk, "organisationid"],
@@ -367,11 +366,9 @@ export class OrganisationContentImport {
         })) as unknown as Array<Record<string, string | null>>;
         for (const row of found) {
           const owner = row.organisationid;
-          if (owner === null || owner === undefined || owner === "") adopted += 1;
-          else if (lower(String(owner)) !== header) foreign += 1;
+          if (owner !== null && owner !== undefined && owner !== "" && lower(String(owner)) !== header) foreign += 1;
         }
       }
-      this.counts[key].adopted = adopted;
       if (foreign > 0) {
         refused.push(`${key}: ${rows(foreign)} already belong${foreign === 1 ? "s" : ""} to another organisation here`);
       }

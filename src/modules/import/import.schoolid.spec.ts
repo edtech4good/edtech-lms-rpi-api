@@ -128,16 +128,39 @@ describe("PUT /import/students", () => {
     expect(updateList(schoolusers)).toEqual(expect.arrayContaining(["schoolname", "schoolid"]));
   });
 
-  it("a school this server does not have yet, or none, is written with a NULL id and the import still succeeds", async () => {
+  it("a school this server does not have, or none, refuses the whole import: 400 naming a count, rolled back, nothing written", async () => {
     mockZipContaining({
       studentusers: [
-        learner(1, { schoolname: "Not Here Yet", student: { studentid: "s1", schooluserid: "su1", schoolname: "Not Here Yet" } }),
-        learner(2, { schoolname: undefined, student: { studentid: "s2", schooluserid: "su2" } }),
+        learner(1),
+        learner(2, { schoolname: "Not Here Yet", student: { studentid: "s2", schooluserid: "su2", schoolname: "Not Here Yet" } }),
+        learner(3, { schoolname: undefined, student: { studentid: "s3", schooluserid: "su3" } }),
       ],
     });
-    await expect(new ImportController().studentsimport(file, user)).resolves.toEqual({ error: false, data: true });
-    expect(learnerRows().map((r) => r.schoolid)).toEqual([null, null]);
-    expect(tnx.commit).toHaveBeenCalledTimes(1);
+    const err = await new ImportController().studentsimport(file, user).catch((e) => e);
+    expect(err).toMatchObject({ status: 400 });
+    expect(JSON.stringify(err.getResponse())).toContain(
+      "2 rows name no school this server has. A school must be here before its learners and logins. Nothing was written.",
+    );
+    expect(JSON.stringify(err.getResponse())).not.toContain("Not Here Yet");
+    expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
+    expect(students.bulkCreate).not.toHaveBeenCalled();
+    expect(tnx.rollback).toHaveBeenCalledTimes(1);
+    expect(tnx.commit).not.toHaveBeenCalled();
+  });
+
+  it("a learner row alone with no school refuses the import before the logins are written", async () => {
+    mockZipContaining({ studentusers: [learner(1, { student: { studentid: "s1", schooluserid: "su1" } })] });
+    await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
+    expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
+    expect(students.bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("a login with a school id this server does not have is refused as well", async () => {
+    mockZipContaining({
+      studentusers: [learner(1, { schoolid: "5c000000-0000-4000-8000-0000000000ff", schoolname: undefined, student: { studentid: "s1", schooluserid: "su1", schoolname: "School A" } })],
+    });
+    await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
+    expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
   });
 
   it("the school lookups run inside the import's transaction", async () => {
@@ -173,6 +196,16 @@ describe("PUT /import/teachers", () => {
     await new ImportController().teachersimport(file, user);
     expect(loginRows()[0]).toMatchObject({ schoolid: B });
     expect(updateList(schoolusers)).toEqual(expect.arrayContaining(["schoolname", "schoolid"]));
+  });
+
+  it("a teacher with no school, or a school this server does not have, refuses the import: 400, rolled back, nothing written", async () => {
+    mockZipContaining([teacher(), teacher({ schooluserid: "t2", schoolusername: "teacher2", schoolname: "Not Here Yet" }), teacher({ schooluserid: "t3", schoolusername: "teacher3", schoolname: undefined })]);
+    const err = await new ImportController().teachersimport(file, user).catch((e) => e);
+    expect(err).toMatchObject({ status: 400 });
+    expect(JSON.stringify(err.getResponse())).toContain("2 rows name no school this server has.");
+    expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
+    expect(tnx.rollback).toHaveBeenCalledTimes(1);
+    expect(tnx.commit).not.toHaveBeenCalled();
   });
 
   it("a teacher who moves school takes the new id", async () => {

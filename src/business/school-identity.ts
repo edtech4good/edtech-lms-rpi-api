@@ -230,10 +230,9 @@ export const schoolOfStudent = (studentid: unknown): WhereOptions =>
  *  - otherwise the row's `schoolname` is resolved (once per distinct name) to a
  *    school's id; a name that matches two schools fails the whole write;
  *  - otherwise (no school given, a name that matches none here, an id of a
- *    school this server does not have yet) the row is written with a NULL
- *    `schoolid`, as it was before ids existed. Rows are never refused for this:
- *    a classroom server may receive its roster before its schools, and the master
- *    import fills the ids in when the schools arrive.
+ *    school this server does not have) the row's `schoolid` is NULL in the result.
+ *    The writers do not take that result: `schoolid` is a required column (S4),
+ *    so they use `withRequiredSchoolIds`, which refuses the whole write instead.
  *
  * The name is stored as it was sent; only the id is added.
  */
@@ -273,6 +272,28 @@ export async function withImportSchoolIds<T extends { schoolid?: string | null; 
     out.push({ ...row, schoolid });
   }
   return out;
+}
+
+/**
+ * `withImportSchoolIds` for a write: every row must end up with the id of a school
+ * this server has. A row that names no school, a name that matches none here, or an
+ * id of a school this server does not have refuses the WHOLE write with a 400 that
+ * counts the rows (never names them), before anything is written: a learner or a
+ * school login with no school is a row nobody owns, and the column that holds the id
+ * is required (S4). A school's roster can only arrive once the school is here
+ * (provisioned, or pushed with its organisation's content).
+ */
+export async function withRequiredSchoolIds<T extends { schoolid?: string | null; schoolname?: string | null }>(
+  rows: T[],
+  transaction?: Transaction,
+): Promise<Array<T & { schoolid: string }>> {
+  const resolved = await withImportSchoolIds(rows, transaction);
+  const without = resolved.filter((row) => !isGiven(row.schoolid)).length;
+  if (without > 0) {
+    const message = `${without} ${without === 1 ? "row names" : "rows name"} no school this server has. A school must be here before its learners and logins. Nothing was written.`;
+    throw new RosterSchoolError(ErrorCode.INVALID_INPUT, { message, fields: [{ field: "schoolid", message }] });
+  }
+  return resolved as Array<T & { schoolid: string }>;
 }
 
 type SchoolRef = { schoolid?: unknown; schoolname?: unknown };

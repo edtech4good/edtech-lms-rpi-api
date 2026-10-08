@@ -15,7 +15,7 @@ import {
 import { CurriculumBusiness } from "./curriculum.business";
 import { GradeBusiness } from "./grade.business";
 import { learnersInScope, ReportScope } from "./report-scope";
-import { schoolRefIsOwn, SchoolScope, studentsOfSchool, withImportSchoolIds } from "./school-identity";
+import { schoolRefIsOwn, SchoolScope, studentsOfSchool, withRequiredSchoolIds } from "./school-identity";
 
 export interface StudentProgressSummaryCurrentLevel {
   levelid: string;
@@ -117,8 +117,9 @@ export class StudentBusiness {
     //   ],
     // });
     // Each row's `schoolid` follows its school name (or the id it carries), so a
-    // learner who changes school gets the new id with the new name.
-    const withSchools = await withImportSchoolIds(newstudents, transaction);
+    // learner who changes school gets the new id with the new name. A learner whose
+    // school this server does not have refuses the whole write (the column is required).
+    const withSchools = await withRequiredSchoolIds(newstudents, transaction);
     for await (const student of withSchools) {
       try {
         // if(student.studentid == 'c55bcaa8-2c21-44d4-a48e-2d0445a8f232' || 
