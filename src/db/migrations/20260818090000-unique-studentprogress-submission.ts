@@ -34,6 +34,14 @@ import { QueryInterface, QueryTypes, Transaction } from "sequelize";
  * before this fix. That is a known, accepted gap — this migration only
  * de-duplicates the raw progress rows and prevents new duplicates; it does
  * not attempt to unwind downstream aggregate drift.
+ *
+ * `down` puts a plain `studentid` index back before dropping the unique one
+ * (the foreign key needs it). After `down` then `up` the table therefore
+ * carries that plain `KEY studentid` beside the unique key, because MySQL only
+ * drops a foreign-key index it created itself; the extra index is redundant
+ * and harmless. `db:migrate:undo:all` on a fresh database now gets past this
+ * migration but still stops at `20230407050046-create-schools-table` (`schools`
+ * is referenced by `standards_ibfk_1`): pre-existing and out of scope here.
  */
 // DISTINCT matters once a group has 3+ duplicate rows: sp1 would otherwise
 // join against every smaller sp2 in the group and emit its own
