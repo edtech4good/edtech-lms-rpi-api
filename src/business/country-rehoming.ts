@@ -1,30 +1,40 @@
+import { Transaction, QueryTypes } from "sequelize";
+import { countries } from "src/models/data-models/countries";
 import { CONTENT_TABLES, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
-import { normaliseSchoolName } from "./school-identity";
+import { dbinstance } from "src/services/dbservice";
 
 /**
  * Countries are a shared reference table whose NAME is unique. Two servers that were set up
  * apart (a classroom server provisioned offline, or two central installations) can each hold a
  * country of the same name under a DIFFERENT id. A payload that carries such a country cannot be
- * written by id: the name collides, or a school ends up pointing at an id that is not here.
+ * written by id: the unique key on the name fires.
  *
  * The one rule, used by the content import (`PUT /import/master`) and by the classroom-server
  * provisioning tool, which re-homes its payload before importing it:
  *
- *  - a payload country whose name is a country here under the SAME id is left as it is (the
- *    import upserts it by id, as it always has);
- *  - a payload country whose name is a country here under ANOTHER id is replaced by this
- *    server's row: the local id wins, the payload's row is never written, and every reference
- *    to the payload's id is rewritten to the local id. Content ids are not touched;
- *  - a local country of that name that is soft-deleted is brought back (the row that replaces
- *    the payload's is written live): a school points at it, so it must be usable;
+ *  - WHAT IS "THE SAME NAME" IS DECIDED BY THE DATABASE, never by this code. `countries.countryname`
+ *    has a UNIQUE key under the column's collation (`utf8mb4_unicode_ci` on every real database), and
+ *    that key is what collides: a write of a country whose name the collation calls equal to another
+ *    row's does not raise, it UPDATES that row (the writer is an INSERT ... ON DUPLICATE KEY UPDATE,
+ *    and the name key fires it too). So a text rule of our own (trim, NFC, lower-case) could say
+ *    "different" where MySQL says "equal" and a local country would be silently renamed. The names are
+ *    therefore compared by a lookup that asks MySQL (`mysqlCountryNames`): `WHERE countryname = ?` uses
+ *    the column collation, which ignores case, accents, trailing spaces and some Khmer marks.
+ *  - a payload country whose name is a country here under the SAME id is left as it is (the import
+ *    upserts it by id, as it always has, and the payload's spelling of its own country wins);
+ *  - a payload country whose name the database calls equal to a country here under ANOTHER id is
+ *    replaced by this server's row: the local id wins, the payload's row is never written, the local
+ *    row keeps its own spelling (it is never renamed by an import), and every reference to the
+ *    payload's id is rewritten to the local id. Content ids are not touched;
+ *  - a local country of that name that is soft-deleted is brought back (the row that replaces the
+ *    payload's is written live): a school points at it, so it must be usable;
+ *  - two payload countries whose names the database calls equal, with no local match, collapse onto
+ *    the first, and the second's id is rewritten to the first's, before anything is written;
  *  - a name this server does not have is a new country: written by id, as it always has been;
- *  - more than one local country of that name is ambiguous and is refused, not guessed.
+ *  - more than one local country the database calls equal to the name is ambiguous and is refused.
  *
- * Names are compared as the rest of the code compares a name (trim, Unicode NFC, lower-case:
- * `school-identity.ts`), never by the column's collation. The collation of `countries.countryname`
- * is the judge of what the database itself refuses (it ignores accents, and trailing spaces); a
- * name that the database calls equal and this rule calls different is not re-homed, and the write
- * is refused by the database as a duplicate, with nothing written.
+ * Two steps, so a caller that cannot wait (the provisioning tool re-homes a payload in plain code)
+ * can look first: `matchCountriesByName` asks the lookup, `rehomeCountriesByName` is pure.
  */
 
 export interface LocalCountry {
@@ -32,6 +42,14 @@ export interface LocalCountry {
   countryname: string;
   expectedusage?: number | null;
   isdeleted?: boolean | number | null;
+}
+
+/** The two questions only the database can answer about a name. */
+export interface CountryNameLookup {
+  /** The local countries whose name the database calls equal to `name` (the column's collation decides). */
+  findByName(name: string): Promise<LocalCountry[]>;
+  /** Whether the database calls the two names equal. */
+  sameName(a: string, b: string): Promise<boolean>;
 }
 
 /** More than one country here has the name of a payload country. */
@@ -42,48 +60,93 @@ export class AmbiguousCountryName extends Error {
   }
 }
 
+/** What the lookup said about a payload's countries; build it with `matchCountriesByName`. */
+export interface CountryMatches {
+  /** For a payload country name as given: the local countries the database calls equal to it. */
+  local: Map<string, LocalCountry[]>;
+  /** For a payload country name as given with no local match: the first payload name the database calls equal to it. */
+  firstEqual: Map<string, string>;
+}
+
+export const NO_COUNTRY_MATCHES: CountryMatches = { local: new Map(), firstEqual: new Map() };
+
 export interface CountryRehoming {
   /** The payload's countries as they are to be written: re-homed ones are this server's own row; no id twice. */
   rows: Row[];
-  /** Payload country id (lower-cased) to the local id that replaces it. */
+  /** Payload country id (lower-cased) to the id that replaces it (a local country's, or the first of two payload countries of one name). */
   idMap: Map<string, string>;
   /** Of those, how many are local rows that were soft-deleted and are written live. */
   revived: number;
+  /** Of those, how many are a second payload country of a name already carried by another payload row (no local match). */
+  collapsed: number;
 }
 
 const lower = (value: string) => value.toLowerCase();
 
-export function rehomeCountriesByName(payload: Row[], local: LocalCountry[]): CountryRehoming {
-  const byName = new Map<string, LocalCountry[]>();
-  for (const row of local) {
-    const key = normaliseSchoolName(String(row.countryname));
-    byName.set(key, [...(byName.get(key) ?? []), row]);
+export async function matchCountriesByName(payload: Row[], lookup: CountryNameLookup): Promise<CountryMatches> {
+  const local = new Map<string, LocalCountry[]>();
+  const firstEqual = new Map<string, string>();
+  const representatives: string[] = [];
+  for (const row of payload) {
+    const name = String(row.countryname);
+    if (local.has(name)) continue;
+    const found = await lookup.findByName(name);
+    local.set(name, found);
+    if (found.length > 0) continue;
+    let first = name;
+    for (const other of representatives) {
+      if (await lookup.sameName(other, name)) {
+        first = other;
+        break;
+      }
+    }
+    if (first === name) representatives.push(name);
+    firstEqual.set(name, first);
   }
+  return { local, firstEqual };
+}
+
+export function rehomeCountriesByName(payload: Row[], matches: CountryMatches): CountryRehoming {
   const idMap = new Map<string, string>();
   const seen = new Set<string>();
+  const idOfName = new Map<string, string>(); // for a name with no local match: the id the first payload row of its kind carries
   const rows: Row[] = [];
   let revived = 0;
+  let collapsed = 0;
   for (const row of payload) {
-    const sameName = byName.get(normaliseSchoolName(String(row.countryname))) ?? [];
+    const name = String(row.countryname);
+    const sameName = matches.local.get(name) ?? [];
     let out: Row = row;
-    if (sameName.length > 0 && !sameName.some((c) => lower(String(c.countryid)) === lower(String(row.countryid)))) {
-      if (sameName.length > 1) throw new AmbiguousCountryName();
-      const mine = sameName[0];
-      idMap.set(lower(String(row.countryid)), String(mine.countryid));
-      out = { countryid: mine.countryid, countryname: mine.countryname, expectedusage: mine.expectedusage ?? null, isdeleted: false };
-      if (mine.isdeleted) revived += 1;
+    if (sameName.length > 0) {
+      if (!sameName.some((c) => lower(String(c.countryid)) === lower(String(row.countryid)))) {
+        if (sameName.length > 1) throw new AmbiguousCountryName();
+        const mine = sameName[0];
+        idMap.set(lower(String(row.countryid)), String(mine.countryid));
+        out = { countryid: mine.countryid, countryname: mine.countryname, expectedusage: mine.expectedusage ?? null, isdeleted: false };
+        if (mine.isdeleted) revived += 1;
+      }
+    } else {
+      const first = matches.firstEqual.get(name) ?? name;
+      const keeper = idOfName.get(first);
+      if (keeper === undefined) {
+        idOfName.set(first, String(row.countryid));
+      } else if (lower(keeper) !== lower(String(row.countryid))) {
+        idMap.set(lower(String(row.countryid)), keeper);
+        collapsed += 1;
+        continue;
+      }
     }
     if (!seen.has(lower(String(out.countryid)))) {
       seen.add(lower(String(out.countryid)));
       rows.push(out);
     }
   }
-  return { rows, idMap, revived };
+  return { rows, idMap, revived, collapsed };
 }
 
 /**
  * Every column of the payload that holds a country id (the references the payload format declares,
- * `CONTENT_TABLES`) is rewritten from a payload id to the local id. `skip` names tables not to touch.
+ * `CONTENT_TABLES`) is rewritten from a payload id to the replacing id. `skip` names tables not to touch.
  */
 export function rewriteCountryReferences<T extends Record<TableKey, Row[]>>(tables: T, idMap: Map<string, string>, skip: TableKey[] = []): T {
   if (idMap.size === 0) return tables;
@@ -99,4 +162,51 @@ export function rewriteCountryReferences<T extends Record<TableKey, Row[]>>(tabl
     }
   }
   return out;
+}
+
+/**
+ * The lookup that asks MySQL, inside the caller's transaction. `countryname = ?` is compared under the
+ * column's own collation, which is also what its UNIQUE key uses; `sameName` compares two literals under
+ * that same collation (read from the column, not assumed).
+ */
+export function mysqlCountryNames(transaction?: Transaction): CountryNameLookup {
+  let collation: Promise<{ charset: string; collation: string }> | null = null;
+  const columnCollation = () => {
+    collation ??= dbinstance
+      .getdbinstance()
+      .query(
+        `SELECT CHARACTER_SET_NAME AS cs, COLLATION_NAME AS coll FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'countries' AND COLUMN_NAME = 'countryname' LIMIT 1`,
+        { type: QueryTypes.SELECT, transaction },
+      )
+      .then((found) => {
+        const r = (found as Array<{ cs?: string; coll?: string }>)[0];
+        // interpolated into SQL below, so only a plain identifier is accepted
+        if (!r?.cs || !r?.coll || !/^[a-z0-9_]+$/i.test(r.cs) || !/^[a-z0-9_]+$/i.test(r.coll)) {
+          throw new Error("cannot read the collation of countries.countryname");
+        }
+        return { charset: r.cs, collation: r.coll };
+      });
+    return collation;
+  };
+  return {
+    findByName: async (name) =>
+      (await countries.findAll({
+        attributes: ["countryid", "countryname", "expectedusage", "isdeleted"],
+        where: { countryname: name },
+        raw: true,
+        transaction,
+      })) as unknown as LocalCountry[],
+    sameName: async (a, b) => {
+      const { charset, collation: coll } = await columnCollation();
+      const found = await dbinstance
+        .getdbinstance()
+        .query(`SELECT (CONVERT(:a USING ${charset}) COLLATE ${coll}) = (CONVERT(:b USING ${charset}) COLLATE ${coll}) AS same`, {
+          replacements: { a, b },
+          type: QueryTypes.SELECT,
+          transaction,
+        });
+      return Number((found as Array<{ same: number | string }>)[0]?.same) === 1;
+    },
+  };
 }

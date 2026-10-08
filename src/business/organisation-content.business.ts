@@ -27,7 +27,7 @@ import { subjects } from "src/models/data-models/subjects";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { dbinstance } from "src/services/dbservice";
 import { CONTENT_TABLES, OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
-import { AmbiguousCountryName, rehomeCountriesByName, rewriteCountryReferences } from "./country-rehoming";
+import { AmbiguousCountryName, matchCountriesByName, mysqlCountryNames, rehomeCountriesByName, rewriteCountryReferences } from "./country-rehoming";
 import { SyncBusiness } from "./sync.business";
 
 /**
@@ -48,9 +48,10 @@ import { SyncBusiness } from "./sync.business";
  *     that the payload no longer has is not deleted, and neither is anything under
  *     it: it is marked `isdeleted` (step 5) and what hangs from it stays, inert.
  *     Nothing owned by another organisation and nothing with no owner is deleted.
- *  4. The payload's countries are matched to this server's by NAME first (country-rehoming.ts):
- *     one whose name is a country here under another id is replaced by this server's row, and
- *     every reference to its id (a school's `countryid`) follows; nothing is inserted for it.
+ *  4. The payload's countries are matched to this server's by NAME first, as the database compares
+ *     names (country-rehoming.ts): one whose name is a country here under another id is replaced by
+ *     this server's row (which keeps its own spelling), and every reference to its id (a school's
+ *     `countryid`) follows; nothing is inserted for it.
  *     Then the payload's rows are written with their owners. Schools, curricula and
  *     countries are upserted by id. A child row whose id is still here after step 3
  *     is replaced by id when it sits under an absent curriculum or school of this
@@ -281,14 +282,11 @@ export class OrganisationContentImport {
    * row, and every reference to its id follows (country-rehoming.ts). Reads only: nothing is written.
    */
   private rehomeCountries = async (tables: Record<TableKey, Row[]>): Promise<Record<TableKey, Row[]>> => {
-    const local = (await countries.findAll({
-      attributes: ["countryid", "countryname", "expectedusage", "isdeleted"],
-      raw: true,
-      transaction: this.transaction,
-    })) as unknown as Array<{ countryid: string; countryname: string; expectedusage: number | null; isdeleted: boolean | number }>;
     let result: ReturnType<typeof rehomeCountriesByName>;
     try {
-      result = rehomeCountriesByName(tables.countries, local);
+      // what is "the same name" is asked of the database (its collation, the one its unique key uses), inside this transaction
+      const matches = await matchCountriesByName(tables.countries, mysqlCountryNames(this.transaction));
+      result = rehomeCountriesByName(tables.countries, matches);
     } catch (e) {
       if (e instanceof AmbiguousCountryName) {
         throw new ApiError(ErrorCode.INVALID_INPUT, {
@@ -300,8 +298,8 @@ export class OrganisationContentImport {
     this.countriesRehomed = result.idMap.size;
     if (result.idMap.size > 0) {
       Logger.info(
-        `import contents for one organisation: ${result.idMap.size} payload ${result.idMap.size === 1 ? "country was" : "countries were"} replaced by this server's country of the same name` +
-          `${result.revived > 0 ? ` (${result.revived} brought back from deleted)` : ""}`,
+        `import contents for one organisation: ${result.idMap.size} payload ${result.idMap.size === 1 ? "country was" : "countries were"} replaced by a country of the same name` +
+          `${result.revived > 0 ? ` (${result.revived} brought back from deleted)` : ""}${result.collapsed > 0 ? ` (${result.collapsed} onto another country of the payload)` : ""}`,
       );
     }
     return rewriteCountryReferences({ ...tables, countries: result.rows }, result.idMap);

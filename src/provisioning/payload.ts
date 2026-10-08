@@ -11,7 +11,7 @@ import {
   validateOrganisationContent,
 } from "src/modules/import/organisation-content.validator";
 import { OwnershipOrganisation } from "src/modules/import/ownership.request.validator";
-import { AmbiguousCountryName, LocalCountry, rehomeCountriesByName, rewriteCountryReferences } from "src/business/country-rehoming";
+import { AmbiguousCountryName, CountryMatches, NO_COUNTRY_MATCHES, rehomeCountriesByName, rewriteCountryReferences } from "src/business/country-rehoming";
 import { ProvisionError } from "./args";
 
 /**
@@ -36,8 +36,9 @@ import { ProvisionError } from "./args";
  *  - a curriculum baseline's `schoolid` list (the schools it applies to): when it names any school it now names
  *    the local school, so the baseline applies where the payload meant it to;
  *  - `countries`: a country the payload carries that this server already has under another id (the name is
- *    unique, so the two cannot both be written) is replaced by THIS server's row, and every reference to the
- *    payload's id is rewritten to the local id; the school's country is added when the payload does not carry it.
+ *    unique, so the two cannot both be written; "the same name" is the database's, business/country-rehoming.ts) is
+ *    replaced by THIS server's row, and every reference to the payload's id is rewritten to the local id; the
+ *    school's country is added when the payload does not carry it.
  *
  * What it does NOT touch: content ids (so a later join to central can recognise the same curriculum, lesson or
  * question), content text, `countries` otherwise, and every row of the payload that has no owner column.
@@ -58,8 +59,11 @@ export interface LocalIdentity {
   standards: Array<{ standardid: string; standardname: string; isdeleted: boolean; created_at?: Date | null }>;
   /** A `countries` row to add to the payload when it does not carry the school's country. */
   country: Row | null;
-  /** Every country this server has (rows of `countries`): a payload country of the same name is re-homed onto it. */
-  localCountries: Row[];
+  /**
+   * What the database said about the payload's country names (`matchCountriesByName`): a payload country whose
+   * name a country here has under another id is re-homed onto it.
+   */
+  countryMatches?: CountryMatches;
 }
 
 export interface RehomeSummary {
@@ -180,7 +184,7 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
   // (the rule the content import applies too: business/country-rehoming.ts).
   let countryIds: Map<string, string>;
   try {
-    const rehomedCountries = rehomeCountriesByName(tables.countries, local.localCountries as unknown as LocalCountry[]);
+    const rehomedCountries = rehomeCountriesByName(tables.countries, local.countryMatches ?? NO_COUNTRY_MATCHES);
     tables.countries = rehomedCountries.rows;
     countryIds = rehomedCountries.idMap;
   } catch (e) {

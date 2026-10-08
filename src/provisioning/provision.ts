@@ -6,6 +6,7 @@ import { Op, Transaction } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
 import { OrganisationContentImport } from "src/business/organisation-content.business";
 import { isSameSchoolName } from "src/business/school-identity";
+import { LocalCountry, matchCountriesByName, mysqlCountryNames } from "src/business/country-rehoming";
 import { countries } from "src/models/data-models/countries";
 import { organisations, schoolusers, tokens } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
@@ -15,7 +16,7 @@ import { OrganisationContent, Row } from "src/modules/import/organisation-conten
 import { OwnershipOrganisation } from "src/modules/import/ownership.request.validator";
 import { dbinstance } from "src/services/dbservice";
 import { hashPassword, verifyPassword } from "src/services/password.service";
-import { ProvisionError, ProvisionOptions, sameLoginName, sameName } from "./args";
+import { ProvisionError, ProvisionOptions, sameLoginName } from "./args";
 import { LocalIdentity, Rehomed, RehomeSummary, readContentFile, rehomeContent, validatePayload } from "./payload";
 
 /**
@@ -150,8 +151,6 @@ interface CountryChoice {
   dbRow: Row | null;
   /** The country row does not exist anywhere and is to be created from the name given (no payload only). */
   create: boolean;
-  /** Every country this server has: a payload country of the same name is re-homed onto it. */
-  local: Row[];
   /** The local country that is used is deleted here, and is brought back (a country is a shared reference row; a classroom server has no screen that deletes one). */
   revive: boolean;
 }
@@ -338,7 +337,7 @@ export class Provisioner {
         school: { schoolid, schoolname, countryid: country.countryid, uitheme, brandingconfig, expectedcontribution, expectedusage },
         standards: classRows,
         country: country.dbRow,
-        localCountries: country.local,
+        countryMatches: await matchCountriesByName(original.tables.countries, mysqlCountryNames(transaction)),
       };
       const rehomed = rehomeContent(original, identity);
       await this.refuseForeignRows(rehomed.content, organisation.organisationid, transaction);
@@ -585,44 +584,45 @@ export class Provisioner {
    */
   private resolveCountry = async (given: string, original: OrganisationContent | null, transaction?: Transaction): Promise<CountryChoice> => {
     const byId = UUID.test(given);
-    const matches = (row: Row | countries): boolean => {
-      const r = row as unknown as { countryid: unknown; countryname: unknown };
-      return byId ? lower(String(r.countryid)) === lower(given) : sameName(String(r.countryname), given);
-    };
-    const all = await countries.findAll({ transaction });
-    const local: Row[] = all.map((c) => ({ countryid: c.countryid, countryname: c.countryname, expectedusage: c.expectedusage ?? null, isdeleted: false }));
-    const dbRow = (c: countries): Row => ({ countryid: c.countryid, countryname: c.countryname, expectedusage: c.expectedusage ?? null, isdeleted: false });
+    // "The same name" is the database's (its collation, which its unique key uses): business/country-rehoming.ts.
+    const lookup = mysqlCountryNames(transaction);
+    const dbRow = (c: LocalCountry): Row => ({ countryid: c.countryid, countryname: c.countryname, expectedusage: c.expectedusage ?? null, isdeleted: false });
     // One rule for a country that is deleted here: it is brought back, in the payload path and the other alike.
-    const inPayload = (original?.tables.countries ?? []).filter((row) => !row.isdeleted && matches(row));
+    const inPayload: Row[] = [];
+    for (const row of original?.tables.countries ?? []) {
+      if (row.isdeleted) continue;
+      if (byId ? lower(String(row.countryid)) === lower(given) : await lookup.sameName(String(row.countryname), given)) inPayload.push(row);
+    }
     if (inPayload.length > 1) throw new ProvisionError("--country matches more than one country of the payload.");
-    const inDatabase = all.filter((c) => matches(c));
+    const inDatabase: LocalCountry[] = byId
+      ? ((await countries.findAll({ attributes: ["countryid", "countryname", "expectedusage", "isdeleted"], where: { countryid: given }, raw: true, transaction })) as unknown as LocalCountry[])
+      : await lookup.findByName(given);
     if (inDatabase.length > 1 && inPayload.length === 0) throw new ProvisionError("--country matches more than one country here.");
     if (inPayload.length === 1) {
       const row = inPayload[0];
       // The name is unique: a country of this name that is here (under whatever id) is the one to use, and the payload's row is re-homed onto it.
-      const same = all.filter((c) => sameName(c.countryname, String(row.countryname)));
+      const same = await lookup.findByName(String(row.countryname));
       if (same.length > 1) throw new ProvisionError("More than one country here has the name of the payload's country. Nothing was changed.");
       if (same.length === 1 && lower(same[0].countryid) !== lower(String(row.countryid))) {
-        return { countryid: same[0].countryid, countryname: same[0].countryname, dbRow: dbRow(same[0]), create: false, local, revive: Boolean(same[0].isdeleted) };
+        return { countryid: same[0].countryid, countryname: same[0].countryname, dbRow: dbRow(same[0]), create: false, revive: Boolean(same[0].isdeleted) };
       }
       return {
         countryid: String(row.countryid),
         countryname: String(row.countryname),
         dbRow: null,
         create: false,
-        local,
         revive: same.length === 1 && Boolean(same[0].isdeleted),
       };
     }
     if (inDatabase.length === 1) {
       const row = inDatabase[0];
-      return { countryid: row.countryid, countryname: row.countryname, dbRow: dbRow(row), create: false, local, revive: Boolean(row.isdeleted) };
+      return { countryid: row.countryid, countryname: row.countryname, dbRow: dbRow(row), create: false, revive: Boolean(row.isdeleted) };
     }
     if (!original && !byId) {
       if (Array.from(given).length > MAX_COUNTRY_NAME) {
         throw new ProvisionError(`--country is too long for a country name: at most ${MAX_COUNTRY_NAME} characters.`);
       }
-      return { countryid: uuidv4(), countryname: given, dbRow: null, create: true, local, revive: false };
+      return { countryid: uuidv4(), countryname: given, dbRow: null, create: true, revive: false };
     }
     throw new ProvisionError(
       original
