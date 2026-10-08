@@ -188,7 +188,7 @@ function modifyStatement(queryInterface: QueryInterface, target: RequiredColumn,
  * (1138) and changes nothing. The session's own mode is restored afterwards, even
  * when `work` throws. Nothing is sent when the mode is already strict.
  */
-async function inStrictMode(queryInterface: QueryInterface, transaction: Transaction, work: () => Promise<void>): Promise<void> {
+export async function inStrictMode(queryInterface: QueryInterface, transaction: Transaction, work: () => Promise<void>): Promise<void> {
   const rows = (await queryInterface.sequelize.query("SELECT @@SESSION.sql_mode AS mode", {
     type: QueryTypes.SELECT,
     transaction,
