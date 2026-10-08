@@ -78,6 +78,13 @@ holds one school. The rules, in `src/business/`:
 - Migrations: `up`/`down` in a transaction, idempotent, collation read from a
   real column (`src/db/migration-helpers.ts`). Deploy order and who must sign
   in again go in the PR.
+- Every table a migration creates names `charset: "utf8mb4"` and `collate:
+  "utf8mb4_unicode_ci"`, like the baseline tables: a table that takes the database
+  default (`utf8mb4_0900_ai_ci` on a stock MySQL 8) cannot be the target of a
+  foreign key to a baseline table. `src/db/migrations-name-their-collation.spec.ts`
+  loads every migration and fails on one that forgets. A new database should still
+  be created as `utf8mb4_unicode_ci` for consistency with existing servers; it is
+  no longer required.
 - A fresh database must migrate end to end with `npm run db:migrate` alone. A table
   that only `sequelize.sync()` creates gets a baseline migration (idempotent; see
   `20260818080000-create-sync-only-tables-baseline`), because a later migration may read it.

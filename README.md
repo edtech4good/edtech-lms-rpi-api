@@ -50,6 +50,8 @@ npm run db:migrate
 npm run start:dev
 ```
 
+Create the database empty first. `utf8mb4` / `utf8mb4_unicode_ci` is recommended, for consistency with existing servers, but not required: every migration names the collation of the tables it creates, so a MySQL 8 default (`utf8mb4_0900_ai_ci`) migrates cleanly too.
+
 The API listens on port 3000 by default. Swagger is at `/docs`.
 
 Configuration lives in `src/config.ts`. The deployed containers pass one JSON value in `FORTYKAPIRPICONFIG`. For local work the flat variables are enough:
