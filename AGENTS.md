@@ -81,6 +81,10 @@ holds one school. The rules, in `src/business/`:
 - A fresh database must migrate end to end with `npm run db:migrate` alone. A table
   that only `sequelize.sync()` creates gets a baseline migration (idempotent; see
   `20260818080000-create-sync-only-tables-baseline`), because a later migration may read it.
+- A migration-built database must be complete: the server's first boot (`sequelize.sync()`) must find
+  nothing to alter. An index a model declares (`indexes:`) therefore needs a migration that creates it with
+  the same name and columns (`20261008130000-indexes-sync-created`). The check: `SHOW CREATE TABLE` for every
+  table after `db:migrate`, again after one boot; the two must be identical.
 
 ## Khmer text
 
