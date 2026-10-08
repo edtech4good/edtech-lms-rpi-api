@@ -242,6 +242,19 @@ describe("rehomeContent", () => {
     expect(summary.countriesRemapped).toBe(1);
   });
 
+  it("the school's country is the one that is kept when the payload carries two countries the database calls equal and the school was given the second", async () => {
+    const SECOND = "0c000000-0000-4000-8000-0000000000e5";
+    const body = sample() as Record<string, Row[]>;
+    body.countries = [{ ...body.countries[0], countryname: "Cambodia" }, { ...body.countries[0], countryid: SECOND, countryname: "CAMBODIA " }];
+    const { content, summary } = rehomeContent(
+      validatePayload(body),
+      identity({ school: { ...identity().school, countryid: SECOND }, countryMatches: await matchesFor(body, []) }),
+    );
+    expect(ids(content.tables.countries, "countryid")).toEqual([CAMBODIA]);
+    expect(content.tables.schools.map((r) => r.countryid)).toEqual([CAMBODIA]);
+    expect(summary.countriesRemapped).toBe(1);
+  });
+
   it("re-homes onto a country that is deleted here as a live row (it is brought back, the one rule for a deleted country)", async () => {
     const deletedLocal = { countryid: "0c000000-0000-4000-8000-0000000000e3", countryname: "Cambodia", expectedusage: null, isdeleted: true };
     const { content } = rehomeContent(

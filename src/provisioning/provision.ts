@@ -6,7 +6,7 @@ import { Op, Transaction } from "sequelize";
 import { v4 as uuidv4 } from "uuid";
 import { OrganisationContentImport } from "src/business/organisation-content.business";
 import { isSameSchoolName } from "src/business/school-identity";
-import { LocalCountry, matchCountriesByName, mysqlCountryNames } from "src/business/country-rehoming";
+import { LocalCountry, matchCountriesByName, mysqlCountryNames, rehomeCountriesByName } from "src/business/country-rehoming";
 import { countries } from "src/models/data-models/countries";
 import { organisations, schoolusers, tokens } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
@@ -192,7 +192,18 @@ export class Provisioner {
     const { organisation, action: organisationAction } = await this.resolveOrganisation(options, original, reset, transaction);
 
     // ---- the country ---------------------------------------------------------
-    const country = reset ? null : await this.resolveCountry(options.country as string, original, transaction);
+    let country = reset ? null : await this.resolveCountry(options.country as string, original, transaction);
+    // What the database says about the payload's country names (the one rule the content import applies too).
+    const countryMatches = original ? await matchCountriesByName(original.tables.countries, mysqlCountryNames(transaction)) : undefined;
+    if (country && original && countryMatches) {
+      // --country named a payload country that the database calls the same as an EARLIER one of the payload: the earlier one is
+      // the one that is written, so it is the school's country (the second's row never reaches the database).
+      const folded = rehomeCountriesByName(original.tables.countries, countryMatches).idMap.get(lower(country.countryid));
+      if (folded) {
+        const keeper = original.tables.countries.find((r) => lower(String(r.countryid)) === lower(folded));
+        country = { ...country, countryid: folded, countryname: String(keeper?.countryname ?? country.countryname) };
+      }
+    }
 
     // ---- the school ----------------------------------------------------------
     const sameNameSchools = (await schools.scope("withOwnership").findAll({ where: { schoolname: options.school }, transaction })).filter((s) =>
@@ -337,7 +348,7 @@ export class Provisioner {
         school: { schoolid, schoolname, countryid: country.countryid, uitheme, brandingconfig, expectedcontribution, expectedusage },
         standards: classRows,
         country: country.dbRow,
-        countryMatches: await matchCountriesByName(original.tables.countries, mysqlCountryNames(transaction)),
+        countryMatches,
       };
       const rehomed = rehomeContent(original, identity);
       await this.refuseForeignRows(rehomed.content, organisation.organisationid, transaction);

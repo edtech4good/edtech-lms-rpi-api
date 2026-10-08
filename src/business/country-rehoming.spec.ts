@@ -64,6 +64,16 @@ describe("rehomeCountriesByName", () => {
     expect(out.collapsed).toBe(1);
   });
 
+  it("the kept row of a collapse is the first LIVE one of the payload, else the first", async () => {
+    const dead = (id: string, name: string) => ({ ...payloadRow(id, name), isdeleted: true });
+    const liveSecond = await rehome([dead("p1", "Newland"), payloadRow("p2", "NEWLAND"), payloadRow("p3", "newland ")], []);
+    expect(liveSecond.rows.map((r) => r.countryid)).toEqual(["p2"]);
+    expect([...liveSecond.idMap].sort()).toEqual([["p1", "p2"], ["p3", "p2"]]);
+    const allDead = await rehome([dead("p1", "Newland"), dead("p2", "NEWLAND")], []);
+    expect(allDead.rows.map((r) => r.countryid)).toEqual(["p1"]);
+    expect([...allDead.idMap]).toEqual([["p2", "p1"]]);
+  });
+
   it("more than one local country of that name is refused, not guessed; unless one of them IS the payload's id", async () => {
     const here = [local("l1", "ថៃ"), local("l2", "ថៃ")];
     await expect(rehome([payloadRow("p1", "ថៃ")], here)).rejects.toBeInstanceOf(AmbiguousCountryName);

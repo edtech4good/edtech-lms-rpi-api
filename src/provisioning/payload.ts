@@ -193,8 +193,9 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
     }
     throw e;
   }
-  // the school (key "schools") was replaced above by the local school, which already has the local id
-  Object.assign(tables, rewriteCountryReferences(tables, countryIds, ["schools"]));
+  // The school was replaced above by the local school; its country is rewritten like any other reference (it may be
+  // a payload country that was folded into an earlier one of the same name).
+  Object.assign(tables, rewriteCountryReferences(tables, countryIds));
 
   // A baseline that named schools now names the local school.
   let baselineListsRewritten = 0;
@@ -209,7 +210,8 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
 
   // The school's country must be a row of the payload (the import refuses a school that points outside it).
   let countryAdded = false;
-  if (local.school.countryid && !tables.countries.some((row) => lower(String(row.countryid)) === lower(local.school.countryid as string))) {
+  const schoolCountry = countryIds.get(lower(local.school.countryid ?? "")) ?? local.school.countryid; // as rewritten above
+  if (schoolCountry && !tables.countries.some((row) => lower(String(row.countryid)) === lower(schoolCountry))) {
     if (!local.country) {
       throw new ProvisionError("The school's country is neither in the payload nor in this database.");
     }

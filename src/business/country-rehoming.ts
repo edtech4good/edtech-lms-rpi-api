@@ -13,7 +13,9 @@ import { dbinstance } from "src/services/dbservice";
  * provisioning tool, which re-homes its payload before importing it:
  *
  *  - WHAT IS "THE SAME NAME" IS DECIDED BY THE DATABASE, never by this code. `countries.countryname`
- *    has a UNIQUE key under the column's collation (`utf8mb4_unicode_ci` on every real database), and
+ *    has a UNIQUE key under the column's collation (the table takes the database's default when it is
+ *    created, so it is `utf8mb4_unicode_ci` on some databases and not on others: the code reads the real
+ *    collation from the column at run time, and the specs' fake approximates `utf8mb4_unicode_ci` only), and
  *    that key is what collides: a write of a country whose name the collation calls equal to another
  *    row's does not raise, it UPDATES that row (the writer is an INSERT ... ON DUPLICATE KEY UPDATE,
  *    and the name key fires it too). So a text rule of our own (trim, NFC, lower-case) could say
@@ -109,7 +111,15 @@ export async function matchCountriesByName(payload: Row[], lookup: CountryNameLo
 export function rehomeCountriesByName(payload: Row[], matches: CountryMatches): CountryRehoming {
   const idMap = new Map<string, string>();
   const seen = new Set<string>();
-  const idOfName = new Map<string, string>(); // for a name with no local match: the id the first payload row of its kind carries
+  // For a name with no local match, the payload row that is kept among those the database calls equal: the first LIVE one, else the first.
+  const keeperOf = new Map<string, Row>();
+  const classOf = (row: Row) => matches.firstEqual.get(String(row.countryname)) ?? String(row.countryname);
+  for (const row of payload) {
+    if ((matches.local.get(String(row.countryname)) ?? []).length > 0) continue;
+    const kind = classOf(row);
+    const kept = keeperOf.get(kind);
+    if (kept === undefined || (kept.isdeleted && !row.isdeleted)) keeperOf.set(kind, row);
+  }
   const rows: Row[] = [];
   let revived = 0;
   let collapsed = 0;
@@ -126,12 +136,9 @@ export function rehomeCountriesByName(payload: Row[], matches: CountryMatches): 
         if (mine.isdeleted) revived += 1;
       }
     } else {
-      const first = matches.firstEqual.get(name) ?? name;
-      const keeper = idOfName.get(first);
-      if (keeper === undefined) {
-        idOfName.set(first, String(row.countryid));
-      } else if (lower(keeper) !== lower(String(row.countryid))) {
-        idMap.set(lower(String(row.countryid)), keeper);
+      const keeper = keeperOf.get(classOf(row)) as Row;
+      if (lower(String(keeper.countryid)) !== lower(String(row.countryid))) {
+        idMap.set(lower(String(row.countryid)), String(keeper.countryid));
         collapsed += 1;
         continue;
       }
