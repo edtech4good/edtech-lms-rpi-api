@@ -17,6 +17,10 @@ import { QueryInterface, QueryTypes, Transaction } from "sequelize";
  * declares only the primary key). This migration adds it where it is missing and
  * changes nothing where it is there.
  *
+ * The model deliberately declares no unique index, so on a database whose `countries` table
+ * `sync()` built, the key arrives only through this migration, which refuses with names and
+ * ids when duplicates exist: run `db:migrate` before the first boot.
+ *
  * ## The guard
  *
  * Before any DDL, `up()` groups the table by `countryname` (MySQL groups under the
@@ -90,7 +94,7 @@ async function readIndexes(
     }
     byName.set(r.index_name, entry);
   }
-  return [...byName.values()];
+  return Array.from(byName.values());
 }
 
 /** Every row that shares its name (under the column's collation) with another, grouped, or empty. */
@@ -116,7 +120,7 @@ async function findDuplicates(queryInterface: QueryInterface, transaction: Trans
 }
 
 function describeDuplicates(groups: Map<string, DuplicateRow[]>): string {
-  const all = [...groups.values()];
+  const all = Array.from(groups.values());
   const shown = all.slice(0, LISTED_GROUPS);
   const lines = shown.map(
     (g) => `  ${g.length} rows are the same name under the column's collation: ${g.map((r) => `${JSON.stringify(r.countryname)} (${r.countryid})`).join(", ")}`,
