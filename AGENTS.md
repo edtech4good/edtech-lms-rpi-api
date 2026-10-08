@@ -78,6 +78,9 @@ holds one school. The rules, in `src/business/`:
 - Migrations: `up`/`down` in a transaction, idempotent, collation read from a
   real column (`src/db/migration-helpers.ts`). Deploy order and who must sign
   in again go in the PR.
+- A fresh database must migrate end to end with `npm run db:migrate` alone. A table
+  that only `sequelize.sync()` creates gets a baseline migration (idempotent; see
+  `20260818080000-create-sync-only-tables-baseline`), because a later migration may read it.
 
 ## Khmer text
 
