@@ -34,6 +34,11 @@ import { tableNameList } from "../migration-helpers";
  * `schools_countryid_foreign_idx` index dropped, by name, if still there. The foreign
  * key constraint itself is not touched and keeps its name.
  *
+ * One case is therefore not a strict no-op: if `schools` carries an EXPLICIT
+ * `schools_countryid_foreign_idx` beside `countryid` (as after down() followed by a
+ * boot), up() drops that explicit index by name, where `sync()` would have left both.
+ * Harmless: it covers the same column and the foreign key keeps `countryid`.
+ *
  * ## Idempotence and a database that `sync()` already ran on
  *
  * Every existing server has these indexes already, because its first boot added them.
