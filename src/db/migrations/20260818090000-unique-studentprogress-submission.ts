@@ -1,4 +1,4 @@
-import { QueryInterface, Transaction } from "sequelize";
+import { QueryInterface, QueryTypes, Transaction } from "sequelize";
 
 /**
  * Enforces the natural submission key for `studentprogress` rows so a
@@ -34,6 +34,14 @@ import { QueryInterface, Transaction } from "sequelize";
  * before this fix. That is a known, accepted gap — this migration only
  * de-duplicates the raw progress rows and prevents new duplicates; it does
  * not attempt to unwind downstream aggregate drift.
+ *
+ * `down` puts a plain `studentid` index back before dropping the unique one
+ * (the foreign key needs it). After `down` then `up` the table therefore
+ * carries that plain `KEY studentid` beside the unique key, because MySQL only
+ * drops a foreign-key index it created itself; the extra index is redundant
+ * and harmless. `db:migrate:undo:all` on a fresh database now gets past this
+ * migration but still stops at `20230407050046-create-schools-table` (`schools`
+ * is referenced by `standards_ibfk_1`): pre-existing and out of scope here.
  */
 // DISTINCT matters once a group has 3+ duplicate rows: sp1 would otherwise
 // join against every smaller sp2 in the group and emit its own
@@ -48,6 +56,39 @@ const LOSERS_SUBQUERY = `
    AND sp2.starttime = sp1.starttime
    AND sp2.studentprogressid < sp1.studentprogressid
 `;
+
+const UNIQUE_INDEX = "uq_studentprogress_submission";
+
+interface IndexRow {
+  index_name: string;
+  seq_in_index: number | string;
+  column_name: string | null;
+  sub_part: number | string | null;
+}
+
+/** The indexes of `studentprogress` (name, ordered columns, whether any column is a prefix), from information_schema. */
+async function readIndexes(
+  queryInterface: QueryInterface,
+  transaction: Transaction,
+): Promise<Array<{ name: string; columns: string[]; prefixed: boolean }>> {
+  const rows = (await queryInterface.sequelize.query(
+    `SELECT INDEX_NAME AS index_name, SEQ_IN_INDEX AS seq_in_index, COLUMN_NAME AS column_name, SUB_PART AS sub_part
+       FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'studentprogress'
+      ORDER BY INDEX_NAME, SEQ_IN_INDEX`,
+    { type: QueryTypes.SELECT, transaction },
+  )) as IndexRow[];
+  const byName = new Map<string, { name: string; columns: string[]; prefixed: boolean }>();
+  for (const r of rows) {
+    const entry = byName.get(r.index_name) ?? { name: r.index_name, columns: [], prefixed: false };
+    entry.columns.push(r.column_name ?? "(expression)");
+    if (r.sub_part !== null && r.sub_part !== undefined) {
+      entry.prefixed = true;
+    }
+    byName.set(r.index_name, entry);
+  }
+  return [...byName.values()];
+}
 
 module.exports = {
   up: (queryInterface: QueryInterface): Promise<void> =>
@@ -103,10 +144,26 @@ module.exports = {
       // Only removes the unique index. Duplicate rows collapsed by `up` are
       // NOT resurrected, and aggregate tables were never retroactively
       // corrected for historical double-counts — both known, accepted.
-      await queryInterface.removeIndex(
-        "studentprogress",
-        "uq_studentprogress_submission",
-        { transaction },
-      );
+      //
+      // The foreign key studentprogress_ibfk_1 (studentid -> students) needs an
+      // index that starts with studentid. When `up` added the unique index
+      // (studentid, studentprogressreferenceid, starttime), MySQL dropped the
+      // plain `studentid` index the table had, since the unique index now served
+      // the key. So dropping the unique index while nothing else starts with
+      // studentid fails (1553 "needed in a foreign key constraint"), and
+      // `db:migrate:undo:all` stopped here. Put the plain index back FIRST, under
+      // the name it had before `up`, then drop the unique one: the table is left
+      // as `up` found it. Both steps are skipped when they have nothing to do, so
+      // a re-run after a half-finished `down` finishes it.
+      const indexes = await readIndexes(queryInterface, transaction);
+      const unique = indexes.find((i) => i.name === UNIQUE_INDEX);
+      if (!unique) {
+        return;
+      }
+      const servesForeignKey = indexes.some((i) => i.name !== UNIQUE_INDEX && !i.prefixed && i.columns[0] === "studentid");
+      if (!servesForeignKey) {
+        await queryInterface.addIndex("studentprogress", ["studentid"], { name: "studentid", transaction });
+      }
+      await queryInterface.removeIndex("studentprogress", UNIQUE_INDEX, { transaction });
     }),
 };
