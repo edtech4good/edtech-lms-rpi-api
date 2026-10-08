@@ -11,6 +11,7 @@ import {
   validateOrganisationContent,
 } from "src/modules/import/organisation-content.validator";
 import { OwnershipOrganisation } from "src/modules/import/ownership.request.validator";
+import { AmbiguousCountryName, LocalCountry, rehomeCountriesByName, rewriteCountryReferences } from "src/business/country-rehoming";
 import { ProvisionError } from "./args";
 
 /**
@@ -175,37 +176,21 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
     ...(standard.created_at ? { created_at: standard.created_at } : {}),
   }));
 
-  // A payload country this server already has by name, under another id, becomes the local row; references follow.
-  const norm = (name: string) => name.trim().normalize("NFC").toLowerCase();
-  const localByName = new Map(local.localCountries.map((row) => [norm(String(row.countryname)), row]));
-  const countryIds = new Map<string, string>();
-  const seenCountries = new Set<string>();
-  const countryRows: Row[] = [];
-  for (const row of tables.countries) {
-    const mine = localByName.get(norm(String(row.countryname)));
-    let out = row;
-    if (mine && lower(String(mine.countryid)) !== lower(String(row.countryid))) {
-      countryIds.set(lower(String(row.countryid)), String(mine.countryid));
-      out = { countryid: mine.countryid, countryname: mine.countryname, expectedusage: mine.expectedusage ?? null, isdeleted: false };
+  // A payload country this server already has by name, under another id, becomes the local row; references follow
+  // (the rule the content import applies too: business/country-rehoming.ts).
+  let countryIds: Map<string, string>;
+  try {
+    const rehomedCountries = rehomeCountriesByName(tables.countries, local.localCountries as unknown as LocalCountry[]);
+    tables.countries = rehomedCountries.rows;
+    countryIds = rehomedCountries.idMap;
+  } catch (e) {
+    if (e instanceof AmbiguousCountryName) {
+      throw new ProvisionError("More than one country here has the name of the payload's country. Nothing was changed.");
     }
-    if (!seenCountries.has(lower(String(out.countryid)))) {
-      seenCountries.add(lower(String(out.countryid)));
-      countryRows.push(out);
-    }
+    throw e;
   }
-  tables.countries = countryRows;
-  if (countryIds.size > 0) {
-    for (const key of TABLE_KEYS) {
-      if (key === "schools") continue; // replaced below by the local school, which already has the local id
-      for (const ref of CONTENT_TABLES[key].refs ?? []) {
-        if (ref.to !== "countries") continue;
-        tables[key] = tables[key].map((row) => {
-          const mapped = countryIds.get(lower(String(row[ref.fk] ?? "")));
-          return mapped ? { ...row, [ref.fk]: mapped } : row;
-        });
-      }
-    }
-  }
+  // the school (key "schools") was replaced above by the local school, which already has the local id
+  Object.assign(tables, rewriteCountryReferences(tables, countryIds, ["schools"]));
 
   // A baseline that named schools now names the local school.
   let baselineListsRewritten = 0;

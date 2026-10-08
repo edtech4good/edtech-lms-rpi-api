@@ -27,6 +27,7 @@ import { subjects } from "src/models/data-models/subjects";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { dbinstance } from "src/services/dbservice";
 import { CONTENT_TABLES, OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
+import { AmbiguousCountryName, rehomeCountriesByName, rewriteCountryReferences } from "./country-rehoming";
 import { SyncBusiness } from "./sync.business";
 
 /**
@@ -47,7 +48,10 @@ import { SyncBusiness } from "./sync.business";
  *     that the payload no longer has is not deleted, and neither is anything under
  *     it: it is marked `isdeleted` (step 5) and what hangs from it stays, inert.
  *     Nothing owned by another organisation and nothing with no owner is deleted.
- *  4. The payload's rows are written with their owners. Schools, curricula and
+ *  4. The payload's countries are matched to this server's by NAME first (country-rehoming.ts):
+ *     one whose name is a country here under another id is replaced by this server's row, and
+ *     every reference to its id (a school's `countryid`) follows; nothing is inserted for it.
+ *     Then the payload's rows are written with their owners. Schools, curricula and
  *     countries are upserted by id. A child row whose id is still here after step 3
  *     is replaced by id when it sits under an absent curriculum or school of this
  *     organisation; under anything else it refuses the file (400).
@@ -55,6 +59,8 @@ import { SyncBusiness } from "./sync.business";
  *     marked `isdeleted` (learners hold ids into them), never destroyed.
  *  6. Learners and logins stored before S4 with no `schoolid` are given it (a repair
  *     step: since S4 a roster is refused until its school is here, so none are left).
+ *  7. Checked before the transaction may commit: no school of the payload points at a country
+ *     this server does not have. A violation refuses the file (400) and nothing is kept.
  *
  * Countries are global: upserted, never deleted. Nothing else is touched. The
  * caller commits (or rolls back) the transaction.
@@ -76,6 +82,8 @@ export interface OrganisationContentResult {
   data: true;
   organisationid: string;
   counts: ContentCounts;
+  /** Payload countries replaced by this server's country of the same name; 0 when no name collided. */
+  countriesRehomed: number;
 }
 
 type AnyModel = typeof schools;
@@ -162,6 +170,8 @@ const rows = (n: number) => (n === 1 ? "1 row" : `${n} rows`);
 
 export class OrganisationContentImport {
   private readonly counts = {} as ContentCounts;
+  /** Payload countries replaced by this server's row of the same name (read after `run`). */
+  countriesRehomed = 0;
 
   constructor(private readonly transaction: Transaction) {
     for (const key of ["organisations", ...TABLE_KEYS] as Array<"organisations" | TableKey>) {
@@ -206,7 +216,7 @@ export class OrganisationContentImport {
 
     // Refused from reads alone, before the first write.
     await this.refuseRowsOfOtherOrganisations(content);
-    const tables = await this.trimLists(content);
+    const tables = await this.rehomeCountries(await this.trimLists(content));
 
     await organisations.bulkCreate([{ ...content.organisation }] as never, { transaction: t, updateOnDuplicate: ORGANISATION_UPDATE as never });
     this.counts.organisations.written = 1;
@@ -261,6 +271,86 @@ export class OrganisationContentImport {
     await this.markMissing("curriculums", organisationid, ownedCurriculaBefore, tables.curriculums);
 
     await new SyncBusiness(t).linkRosterToSchools();
+
+    // ---- checked in the same transaction, before it can commit ------------------
+    await this.checkCountryReferences(tables);
+  };
+
+  /**
+   * A payload country whose name is a country here under another id is replaced by this server's
+   * row, and every reference to its id follows (country-rehoming.ts). Reads only: nothing is written.
+   */
+  private rehomeCountries = async (tables: Record<TableKey, Row[]>): Promise<Record<TableKey, Row[]>> => {
+    const local = (await countries.findAll({
+      attributes: ["countryid", "countryname", "expectedusage", "isdeleted"],
+      raw: true,
+      transaction: this.transaction,
+    })) as unknown as Array<{ countryid: string; countryname: string; expectedusage: number | null; isdeleted: boolean | number }>;
+    let result: ReturnType<typeof rehomeCountriesByName>;
+    try {
+      result = rehomeCountriesByName(tables.countries, local);
+    } catch (e) {
+      if (e instanceof AmbiguousCountryName) {
+        throw new ApiError(ErrorCode.INVALID_INPUT, {
+          message: "More than one country here has the name of one of the payload's countries. Nothing was written.",
+        });
+      }
+      throw e;
+    }
+    this.countriesRehomed = result.idMap.size;
+    if (result.idMap.size > 0) {
+      Logger.info(
+        `import contents for one organisation: ${result.idMap.size} payload ${result.idMap.size === 1 ? "country was" : "countries were"} replaced by this server's country of the same name` +
+          `${result.revived > 0 ? ` (${result.revived} brought back from deleted)` : ""}`,
+      );
+    }
+    return rewriteCountryReferences({ ...tables, countries: result.rows }, result.idMap);
+  };
+
+  /**
+   * After everything is written: every country id a row of the payload holds (a school's `countryid`)
+   * is a row of `countries` here. A dangling id is invisible while foreign keys are not checked, so this
+   * is what says so: the file is refused (400) and the caller rolls the transaction back.
+   */
+  private checkCountryReferences = async (tables: Record<TableKey, Row[]>): Promise<void> => {
+    const problems: string[] = [];
+    for (const key of TABLE_KEYS) {
+      for (const ref of CONTENT_TABLES[key].refs ?? []) {
+        if (ref.to !== "countries") continue;
+        const pk = PKS[key];
+        const stored: string[] = [];
+        for (const part of chunk(tables[key].map((r) => String(r[pk])), CHUNK)) {
+          const found = (await MODELS[key].scope("withOwnership").findAll({
+            attributes: [pk, ref.fk],
+            where: { [pk]: { [Op.in]: part } },
+            raw: true,
+            transaction: this.transaction,
+          })) as unknown as Array<Record<string, string | null>>;
+          for (const r of found) {
+            const value = r[ref.fk];
+            if (value !== null && value !== undefined && value !== "") stored.push(String(value));
+          }
+        }
+        const present = new Set<string>();
+        for (const part of chunk([...new Set(stored)], CHUNK)) {
+          const found = (await countries.findAll({
+            attributes: ["countryid"],
+            where: { countryid: { [Op.in]: part } },
+            raw: true,
+            transaction: this.transaction,
+          })) as unknown as Array<{ countryid: string }>;
+          for (const r of found) present.add(lower(String(r.countryid)));
+        }
+        const dangling = stored.filter((id) => !present.has(lower(id))).length;
+        if (dangling > 0) problems.push(`${key}: ${rows(dangling)} point${dangling === 1 ? "s" : ""} at a country (${ref.fk}) that is not here`);
+      }
+    }
+    if (problems.length > 0) {
+      throw new ApiError(ErrorCode.INVALID_INPUT, {
+        message: `After the import a row would point at a country this server does not have. Nothing was written. ${problems.join("; ")}.`,
+        fields: problems.map((message) => ({ field: message.split(":")[0], message })),
+      });
+    }
   };
 
   // ---------------------------------------------------------------------------
