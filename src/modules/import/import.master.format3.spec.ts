@@ -28,6 +28,7 @@ import { Config, Logger } from "src/config";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { OrganisationContentImport } from "src/business/organisation-content.business";
+import { collateCountryName } from "src/test-support/country-names";
 import { ImportController } from "./import.controller";
 
 /**
@@ -123,6 +124,12 @@ const install = (initial: Store) => {
         const given = (opts.where as { logic: string }).logic;
         return cloneDeep(store.schools.filter((r) => collate(String(r.schoolname)) === collate(given))).map((r) => ({ isdeleted: false, ...r }));
       }
+      if (name === "countries" && typeof (opts.where as { countryname?: unknown } | undefined)?.countryname === "string") {
+        // `WHERE countryname = ?` compares under the column collation (approximated in src/test-support/country-names.ts)
+        const given = (opts.where as { countryname: string }).countryname;
+        const hits = store.countries.filter((r) => collateCountryName(r.countryname) === collateCountryName(given));
+        return cloneDeep(hits).map((r) => (Array.isArray(opts.attributes) ? Object.fromEntries((opts.attributes as string[]).map((a) => [a, r[a] ?? null])) : r));
+      }
       const found = store[name].filter((r) => matches(r, opts.where));
       return cloneDeep(found).map((r) => (Array.isArray(opts.attributes) ? Object.fromEntries((opts.attributes as string[]).map((a) => [a, r[a] ?? null])) : r));
     }) as never);
@@ -152,9 +159,21 @@ const install = (initial: Store) => {
           if (twin) throw new UniqueConstraintError({ message: "Duplicate entry for key schoolname" });
         }
         if (name === "countries") {
-          // `countries.countryname` is unique (the real table has the key), and the column collation judges equality
-          const twin = store.countries.find((e) => e.countryid !== r.countryid && collate(e.countryname) === collate(r.countryname));
-          if (twin) throw new UniqueConstraintError({ message: "Duplicate entry for key countryname" });
+          // INSERT ... ON DUPLICATE KEY UPDATE with TWO unique keys (the id, and `countryname` under the column collation):
+          // a row that collides on EITHER key updates the row it collides with (the listed columns only; the id never
+          // changes); a row that would make an update collide with a different row's name is refused.
+          const byName = store.countries.find((e) => collateCountryName(e.countryname) === collateCountryName(r.countryname));
+          const target = existing ?? byName;
+          if (target) {
+            const updated = { ...target };
+            for (const column of opts.updateOnDuplicate ?? []) if (column in r) updated[column] = r[column];
+            const clash = store.countries.find((e) => e !== target && collateCountryName(e.countryname) === collateCountryName(updated.countryname));
+            if (clash) throw new UniqueConstraintError({ message: "Duplicate entry for key countryname" });
+            Object.assign(target, updated);
+          } else {
+            store.countries.push(cloneDeep(r));
+          }
+          continue;
         }
         if (existing) {
           // ON DUPLICATE KEY UPDATE: only the listed columns change
@@ -179,8 +198,11 @@ beforeEach(() => {
     store = cloneDeep(began); // a rolled-back transaction leaves what it began with
   });
   jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
-  jest.spyOn(dbinstance.getdbinstance(), "query").mockImplementation((async (sql: string) => {
+  jest.spyOn(dbinstance.getdbinstance(), "query").mockImplementation((async (sql: string, opts?: { replacements?: { a: string; b: string } }) => {
     queries.push(sql);
+    // the two things the country lookup asks MySQL: the column's collation, and whether two literals are equal under it
+    if (/INFORMATION_SCHEMA/i.test(sql)) return [{ cs: "utf8mb4", coll: "utf8mb4_unicode_ci" }];
+    if (/AS same$/i.test(sql.trim()) && opts?.replacements) return [{ same: collateCountryName(opts.replacements.a) === collateCountryName(opts.replacements.b) ? 1 : 0 }];
     return [];
   }) as never);
 });
@@ -616,7 +638,7 @@ describe("PUT /import/master with a format-3 payload", () => {
       // the existing counts keep their shape: the school and the country are both written
       expect(result.counts.schools).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
       expect(result.counts.countries).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
-      expect(logged.some((l) => l.includes("1 payload country was replaced by this server's country of the same name"))).toBe(true);
+      expect(logged.some((l) => l.includes("1 payload country was replaced by a country of the same name"))).toBe(true);
       expect(logged.join("\n")).not.toContain("c-local");
     });
 
@@ -648,24 +670,69 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(Object.fromEntries(store.schools.map((s) => [s.schoolid, s.countryid]))).toEqual({ "x-school-1": "c-local", "x-school-3": "c-local" });
     });
 
-    it("names are compared as the rest of the code compares them (trim, NFC, lower-case), not by the column's collation", async () => {
+    // "The same name" is the DATABASE's: `countries.countryname` is unique under utf8mb4_unicode_ci, and a write of a name that
+    // collation calls equal to another row's does not fail, it UPDATES that row. The fake database approximates the collation
+    // (src/test-support/country-names.ts: case, accents, trailing spaces and the Khmer marks ំ ៉ ់ are ignored; a leading space
+    // and a missing Khmer vowel sign are not), checked by hand against MySQL 8.
+    it("an accent, a case or a trailing-space difference is the same name (as MySQL says): the payload country is re-homed and the local row keeps its own spelling", async () => {
       const payload = content("x", 1, ORG_X);
-      payload.countries[0].countryname = "  Côte d'Ivoire ".normalize("NFD").toUpperCase();
-      install({ countries: [local({ countryname: "Côte d'Ivoire".normalize("NFC") })] });
+      payload.countries[0].countryname = "CÔTE D'IVOIRE  ".normalize("NFD");
+      install({ countries: [local({ countryname: "Cote d'Ivoire" })] });
       const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
       expect(result.countriesRehomed).toBe(1);
-      expect(store.countries.map((c) => [c.countryid, c.countryname])).toEqual([["c-local", "Côte d'Ivoire".normalize("NFC")]]);
+      expect(store.countries).toEqual([local({ countryname: "Cote d'Ivoire" })]); // not renamed, expectedusage kept
       expect(store.schools[0].countryid).toBe("c-local");
     });
 
-    it("a name that differs by a Khmer mark is a different country: it is not re-homed (and the database's own uniqueness decides whether it can be written)", async () => {
+    it("the accent case with NO school pointing at the payload's country: the local country is still not renamed or overwritten (a write by id would have updated it silently)", async () => {
       const payload = content("x", 1, ORG_X);
-      payload.countries[0].countryname = "កម្ពុជ"; // the last vowel sign is missing
+      payload.countries[0].countryname = "Téstland";
+      payload.schools[0].countryid = null;
+      install({ countries: [local({ countryname: "Testland", expectedusage: 7 })] });
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(1);
+      expect(store.countries).toEqual([local({ countryname: "Testland", expectedusage: 7 })]);
+    });
+
+    it("a Khmer mark the collation gives no weight (៉) is the same name; a missing vowel sign (ា) is a different one", async () => {
+      const ignorable = content("x", 1, ORG_X);
+      ignorable.countries[0].countryname = "កម្ពុជ៉ា";
+      install({ countries: [local()] });
+      expect(((await importIt(payloadOf(ignorable))) as any).countriesRehomed).toBe(1); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(store.countries).toEqual([local()]);
+
+      const different = content("x", 1, ORG_X);
+      different.countries[0].countryname = "កម្ពុជ"; // MySQL: "កម្ពុជ" <> "កម្ពុជា" under utf8mb4_unicode_ci (and under 0900_ai_ci)
+      install({ countries: [local()] });
+      const result: any = await importIt(payloadOf(different)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(0);
+      expect(store.countries.map((c) => c.countryid).sort()).toEqual(["c-kh", "c-local"]);
+      expect(store.schools[0].countryid).toBe("c-kh");
+    });
+
+    it("a leading space is part of the name for the database: a different country, written by id", async () => {
+      const payload = content("x", 1, ORG_X);
+      payload.countries[0].countryname = " កម្ពុជា";
       install({ countries: [local()] });
       const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
       expect(result.countriesRehomed).toBe(0);
       expect(store.countries.map((c) => c.countryid).sort()).toEqual(["c-kh", "c-local"]);
-      expect(store.schools[0].countryid).toBe("c-kh");
+    });
+
+    it("two payload countries whose names the database calls equal, with no local match, are collapsed onto the first before anything is written", async () => {
+      const payload = content("x", 1, ORG_X);
+      const second = content("x", 3, ORG_X);
+      payload.countries[0].countryname = "Newland";
+      second.schools[0].countryid = "c-kh-2";
+      payload.schools.push(second.schools[0]);
+      payload.standards.push(second.standards[0]);
+      payload.countries.push({ countryid: "c-kh-2", countryname: "NEWLÄND ", expectedusage: 4, isdeleted: false });
+      install({});
+      const result: any = await importIt(payloadOf(payload)); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result.countriesRehomed).toBe(1); // the second payload country was replaced by the first
+      expect(store.countries).toEqual([{ countryid: "c-kh", countryname: "Newland", expectedusage: 1, isdeleted: false }]);
+      expect(Object.fromEntries(store.schools.map((s) => [s.schoolid, s.countryid]))).toEqual({ "x-school-1": "c-kh", "x-school-3": "c-kh" });
+      expect(logged.some((l) => l.includes("(1 onto another country of the payload)"))).toBe(true);
     });
 
     it("the local row is deleted: it is brought back (as the provisioning tool does), and the school points at it", async () => {
@@ -732,6 +799,16 @@ describe("PUT /import/master with a format-3 payload", () => {
       expect(tnx.commit).not.toHaveBeenCalled();
       expect(tnx.rollback).toHaveBeenCalledTimes(1);
       expect(queries[queries.length - 1]).toMatch(/FOREIGN_KEY_CHECKS = 1/); // the session setting is put back on this path too
+    });
+
+    it("the post-write check looks at the payload's own schools only: a dangling school elsewhere (another organisation's) does not block the import and is left as it was", async () => {
+      const before = dbBefore();
+      before.schools.find((s) => s.schoolid === "y-school-1")!.countryid = "c-gone"; // already dangling, and not in the payload
+      install(before);
+      const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(result).toMatchObject({ error: false, data: true });
+      expect(store.schools.find((s) => s.schoolid === "y-school-1")!.countryid).toBe("c-gone");
+      expect(tnx.commit).toHaveBeenCalledTimes(1);
     });
 
     it("a school with no country at all is fine: nothing to point at", async () => {
