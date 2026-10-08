@@ -43,6 +43,8 @@ Each submission logs one info-level line (no learner identifiers) with the count
 
 ## Running it locally
 
+Create the database empty first. `utf8mb4` / `utf8mb4_unicode_ci` is recommended, for consistency with existing servers, but not required: every migration names the collation of the tables it creates, so a MySQL 8 default (`utf8mb4_0900_ai_ci`) migrates cleanly too.
+
 ```bash
 npm install
 cp env.example .env
