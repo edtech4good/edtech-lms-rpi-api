@@ -4,6 +4,8 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
 import { ProvisionError } from "./args";
+import { matchCountriesByName } from "src/business/country-rehoming";
+import { fakeCountryNames } from "src/test-support/country-names";
 import { LocalIdentity, readContentFile, rehomeContent, validatePayload } from "./payload";
 
 const SAMPLE = join(__dirname, "..", "..", "scripts", "provision", "sample-content.json");
@@ -36,9 +38,12 @@ const identity = (extra: Partial<LocalIdentity> = {}): LocalIdentity => ({
   },
   standards: [{ standardid: LOCAL_CLASS, standardname: "ថ្នាក់ទី ៣ក", isdeleted: false }],
   country: null,
-  localCountries: [],
   ...extra,
 });
+
+/** What the database says about the payload's country names, given the countries this server has. */
+const matchesFor = (body: Record<string, Row[]>, local: Array<Record<string, unknown>>) =>
+  matchCountriesByName(body.countries, fakeCountryNames(local as never));
 
 const refusal = (fn: () => unknown): string => {
   try {
@@ -223,34 +228,54 @@ describe("rehomeContent", () => {
     expect(summary.countryAdded).toBe(true);
   });
 
-  it("re-homes a payload country onto this server's country of the same name (names are unique), and every reference follows", () => {
+  it("re-homes a payload country onto this server's country of the same name (the database's equality: a trailing space does not matter), and every reference follows", async () => {
     const body = sample() as Record<string, Row[]>;
     body.countries = [{ ...body.countries[0], countryname: "កម្ពុជា" }];
-    const localCountry = { countryid: "0c000000-0000-4000-8000-0000000000e1", countryname: " កម្ពុជា ", expectedusage: 5, isdeleted: false };
+    const localCountry = { countryid: "0c000000-0000-4000-8000-0000000000e1", countryname: "កម្ពុជា ", expectedusage: 5, isdeleted: false };
     const { content, summary } = rehomeContent(
       validatePayload(body),
-      identity({ school: { ...identity().school, countryid: localCountry.countryid }, localCountries: [localCountry] }),
+      identity({ school: { ...identity().school, countryid: localCountry.countryid }, countryMatches: await matchesFor(body, [localCountry]) }),
     );
-    expect(content.tables.countries).toEqual([{ countryid: localCountry.countryid, countryname: " កម្ពុជា ", expectedusage: 5, isdeleted: false }]);
+    expect(content.tables.countries).toEqual([{ countryid: localCountry.countryid, countryname: "កម្ពុជា ", expectedusage: 5, isdeleted: false }]);
     expect(content.tables.schools.map((r) => r.countryid)).toEqual([localCountry.countryid]);
     expect(JSON.stringify(content.tables)).not.toContain(CAMBODIA);
     expect(summary.countriesRemapped).toBe(1);
   });
 
-  it("re-homes onto a country that is deleted here as a live row (it is brought back, the one rule for a deleted country)", () => {
+  it("the school's country is the one that is kept when the payload carries two countries the database calls equal and the school was given the second", async () => {
+    const SECOND = "0c000000-0000-4000-8000-0000000000e5";
+    const body = sample() as Record<string, Row[]>;
+    body.countries = [{ ...body.countries[0], countryname: "Cambodia" }, { ...body.countries[0], countryid: SECOND, countryname: "CAMBODIA " }];
+    const { content, summary } = rehomeContent(
+      validatePayload(body),
+      identity({ school: { ...identity().school, countryid: SECOND }, countryMatches: await matchesFor(body, []) }),
+    );
+    expect(ids(content.tables.countries, "countryid")).toEqual([CAMBODIA]);
+    expect(content.tables.schools.map((r) => r.countryid)).toEqual([CAMBODIA]);
+    expect(summary.countriesRemapped).toBe(1);
+  });
+
+  it("re-homes onto a country that is deleted here as a live row (it is brought back, the one rule for a deleted country)", async () => {
     const deletedLocal = { countryid: "0c000000-0000-4000-8000-0000000000e3", countryname: "Cambodia", expectedusage: null, isdeleted: true };
     const { content } = rehomeContent(
       validatePayload(sample()),
-      identity({ school: { ...identity().school, countryid: deletedLocal.countryid }, localCountries: [deletedLocal] }),
+      identity({ school: { ...identity().school, countryid: deletedLocal.countryid }, countryMatches: await matchesFor(sample() as Record<string, Row[]>, [deletedLocal]) }),
     );
     expect(content.tables.countries).toEqual([{ countryid: deletedLocal.countryid, countryname: "Cambodia", expectedusage: null, isdeleted: false }]);
   });
 
-  it("leaves a payload country alone when this server has it under the same id, or does not have the name", () => {
-    const sameId = rehomeContent(validatePayload(sample()), identity({ localCountries: [{ countryid: CAMBODIA, countryname: "Cambodia", expectedusage: null, isdeleted: false }] }));
+  it("leaves a payload country alone when this server has it under the same id, or does not have the name", async () => {
+    const payload = sample() as Record<string, Row[]>;
+    const sameId = rehomeContent(
+      validatePayload(sample()),
+      identity({ countryMatches: await matchesFor(payload, [{ countryid: CAMBODIA, countryname: "Cambodia", expectedusage: null, isdeleted: false }]) }),
+    );
     expect(sameId.summary.countriesRemapped).toBe(0);
     expect(ids(sameId.content.tables.countries, "countryid")).toEqual([CAMBODIA]);
-    const other = rehomeContent(validatePayload(sample()), identity({ localCountries: [{ countryid: "0c000000-0000-4000-8000-0000000000e2", countryname: "Elsewhere", expectedusage: null, isdeleted: false }] }));
+    const other = rehomeContent(
+      validatePayload(sample()),
+      identity({ countryMatches: await matchesFor(payload, [{ countryid: "0c000000-0000-4000-8000-0000000000e2", countryname: "Elsewhere", expectedusage: null, isdeleted: false }]) }),
+    );
     expect(other.summary.countriesRemapped).toBe(0);
     expect(ids(other.content.tables.countries, "countryid")).toEqual([CAMBODIA]);
   });

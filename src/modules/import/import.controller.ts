@@ -398,6 +398,7 @@ export class ImportController {
         data: { type: "boolean", example: true },
         organisationid: { type: "string" },
         counts: { type: "object", additionalProperties: { type: "object" } },
+        countriesRehomed: { type: "number", description: "Payload countries replaced by this server's country of the same name (the local id wins; references follow)" },
       },
     },
   })
@@ -469,7 +470,8 @@ export class ImportController {
       }
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
-        const counts = await new OrganisationContentImport(tnx).run(content);
+        const importer = new OrganisationContentImport(tnx);
+        const counts = await importer.run(content);
         await tnx.commit();
         Logger.info(`<${user.schoolusername}> import contents`, {logaccesstype: LOGTYPE.IMPORTCONTENTS, userid: user.schooluserid});
         return {
@@ -477,6 +479,7 @@ export class ImportController {
           data: true,
           organisationid: content.organisationid,
           counts,
+          countriesRehomed: importer.countriesRehomed,
         };
       } catch (e: any) {
         Logger.info(e);

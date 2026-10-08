@@ -11,6 +11,7 @@ import {
   validateOrganisationContent,
 } from "src/modules/import/organisation-content.validator";
 import { OwnershipOrganisation } from "src/modules/import/ownership.request.validator";
+import { AmbiguousCountryName, CountryMatches, NO_COUNTRY_MATCHES, rehomeCountriesByName, rewriteCountryReferences } from "src/business/country-rehoming";
 import { ProvisionError } from "./args";
 
 /**
@@ -35,8 +36,9 @@ import { ProvisionError } from "./args";
  *  - a curriculum baseline's `schoolid` list (the schools it applies to): when it names any school it now names
  *    the local school, so the baseline applies where the payload meant it to;
  *  - `countries`: a country the payload carries that this server already has under another id (the name is
- *    unique, so the two cannot both be written) is replaced by THIS server's row, and every reference to the
- *    payload's id is rewritten to the local id; the school's country is added when the payload does not carry it.
+ *    unique, so the two cannot both be written; "the same name" is the database's, business/country-rehoming.ts) is
+ *    replaced by THIS server's row, and every reference to the payload's id is rewritten to the local id; the
+ *    school's country is added when the payload does not carry it.
  *
  * What it does NOT touch: content ids (so a later join to central can recognise the same curriculum, lesson or
  * question), content text, `countries` otherwise, and every row of the payload that has no owner column.
@@ -57,8 +59,11 @@ export interface LocalIdentity {
   standards: Array<{ standardid: string; standardname: string; isdeleted: boolean; created_at?: Date | null }>;
   /** A `countries` row to add to the payload when it does not carry the school's country. */
   country: Row | null;
-  /** Every country this server has (rows of `countries`): a payload country of the same name is re-homed onto it. */
-  localCountries: Row[];
+  /**
+   * What the database said about the payload's country names (`matchCountriesByName`): a payload country whose
+   * name a country here has under another id is re-homed onto it.
+   */
+  countryMatches?: CountryMatches;
 }
 
 export interface RehomeSummary {
@@ -175,37 +180,22 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
     ...(standard.created_at ? { created_at: standard.created_at } : {}),
   }));
 
-  // A payload country this server already has by name, under another id, becomes the local row; references follow.
-  const norm = (name: string) => name.trim().normalize("NFC").toLowerCase();
-  const localByName = new Map(local.localCountries.map((row) => [norm(String(row.countryname)), row]));
-  const countryIds = new Map<string, string>();
-  const seenCountries = new Set<string>();
-  const countryRows: Row[] = [];
-  for (const row of tables.countries) {
-    const mine = localByName.get(norm(String(row.countryname)));
-    let out = row;
-    if (mine && lower(String(mine.countryid)) !== lower(String(row.countryid))) {
-      countryIds.set(lower(String(row.countryid)), String(mine.countryid));
-      out = { countryid: mine.countryid, countryname: mine.countryname, expectedusage: mine.expectedusage ?? null, isdeleted: false };
+  // A payload country this server already has by name, under another id, becomes the local row; references follow
+  // (the rule the content import applies too: business/country-rehoming.ts).
+  let countryIds: Map<string, string>;
+  try {
+    const rehomedCountries = rehomeCountriesByName(tables.countries, local.countryMatches ?? NO_COUNTRY_MATCHES);
+    tables.countries = rehomedCountries.rows;
+    countryIds = rehomedCountries.idMap;
+  } catch (e) {
+    if (e instanceof AmbiguousCountryName) {
+      throw new ProvisionError("More than one country here has the name of the payload's country. Nothing was changed.");
     }
-    if (!seenCountries.has(lower(String(out.countryid)))) {
-      seenCountries.add(lower(String(out.countryid)));
-      countryRows.push(out);
-    }
+    throw e;
   }
-  tables.countries = countryRows;
-  if (countryIds.size > 0) {
-    for (const key of TABLE_KEYS) {
-      if (key === "schools") continue; // replaced below by the local school, which already has the local id
-      for (const ref of CONTENT_TABLES[key].refs ?? []) {
-        if (ref.to !== "countries") continue;
-        tables[key] = tables[key].map((row) => {
-          const mapped = countryIds.get(lower(String(row[ref.fk] ?? "")));
-          return mapped ? { ...row, [ref.fk]: mapped } : row;
-        });
-      }
-    }
-  }
+  // The school was replaced above by the local school; its country is rewritten like any other reference (it may be
+  // a payload country that was folded into an earlier one of the same name).
+  Object.assign(tables, rewriteCountryReferences(tables, countryIds));
 
   // A baseline that named schools now names the local school.
   let baselineListsRewritten = 0;
@@ -220,7 +210,8 @@ export function rehomeContent(original: OrganisationContent, local: LocalIdentit
 
   // The school's country must be a row of the payload (the import refuses a school that points outside it).
   let countryAdded = false;
-  if (local.school.countryid && !tables.countries.some((row) => lower(String(row.countryid)) === lower(local.school.countryid as string))) {
+  const schoolCountry = countryIds.get(lower(local.school.countryid ?? "")) ?? local.school.countryid; // as rewritten above
+  if (schoolCountry && !tables.countries.some((row) => lower(String(row.countryid)) === lower(schoolCountry))) {
     if (!local.country) {
       throw new ProvisionError("The school's country is neither in the payload nor in this database.");
     }
