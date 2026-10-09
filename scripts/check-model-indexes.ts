@@ -14,12 +14,14 @@
  *             already starts with the same columns (so the declared one would add nothing)
  *   COVERED   declared, no index of that name, but another index on the table starts with
  *             the same whole columns, BTREE, no prefix length (e.g. (studentid, gradeid) covers an index on studentid; a
- *             foreign key's own index covers its column). Reported, not counted as missing.
+ *             foreign key's own index covers its column). sync() matches by name, so it would
+ *             still add the declared one at boot: counted as drift here (central, which never
+ *             syncs, does not count it).
  *   PRESENT   declared, and an index of that name is there (columns compared too)
  *   UNIQUE    any declared unique index (a unique needs a duplicate guard before it is added)
  *   DB-ONLY   count of indexes the database has that no model declares (migrations made them)
  *
- * Exits 1 when anything is MISSING (COVERED does not count) or a PRESENT name has other columns. Read-only.
+ * Exits 1 when anything is MISSING or COVERED, or a PRESENT name has other columns. Read-only.
  */
 import { QueryTypes } from "sequelize";
 import { dbinstance } from "src/services/dbservice";
@@ -119,7 +121,7 @@ async function main(): Promise<void> {
   declared.filter((d) => d.unique).forEach((d) => console.log(`  ${fmt(d)}`));
   console.log(`\nDB-ONLY (indexes no model declares, PRIMARY excluded): ${dbOnly.length}`);
   await sequelize.close();
-  process.exit(missing.length > 0 || mismatched.length > 0 ? 1 : 0);
+  process.exit(missing.length > 0 || covered.length > 0 || mismatched.length > 0 ? 1 : 0);
 }
 
 main().catch((e) => {

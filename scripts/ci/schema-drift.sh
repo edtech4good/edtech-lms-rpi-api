@@ -11,8 +11,8 @@
 #   1. refuse a database that already has tables
 #   2. npm run db:migrate on the empty database
 #   3. dump SHOW CREATE TABLE for every table (sorted, AUTO_INCREMENT removed)
-#   4. npm run db:check-indexes: a declared index no migration created, or one with other
-#      columns than declared (sync() would add the first and ignore the second). Recorded,
+#   4. npm run db:check-indexes: a declared index no migration created (sync() would add
+#      it), or one with other columns than declared (sync() would ignore it). Recorded,
 #      not fatal yet, so the diff below also prints.
 #   5. boot the built server once (node build/server.js, RPI_OFFLINE=true: no network),
 #      wait for GET /, stop it
@@ -88,9 +88,11 @@ node scripts/ci/schema-drift.js dump "$WORK/before.sql"
 
 echo "== npm run db:check-indexes (before the server's sync() can add anything)"
 if ! npm run db:check-indexes >"$WORK/indexes.log" 2>&1; then
-  grep -A12 -E '^(MISSING|PRESENT WITH OTHER COLUMNS)' "$WORK/indexes.log" || tail -n 40 "$WORK/indexes.log"
+  awk '/^(MISSING|COVERED|PRESENT WITH OTHER COLUMNS)/{p=1} /^$/{p=0} p' "$WORK/indexes.log"
   echo "FAIL: db:check-indexes reported drift (continuing so the boot diff prints too)" >&2
   FAILED=1
+else
+  grep -E '^(declared|MISSING|COVERED|PRESENT WITH OTHER COLUMNS)' "$WORK/indexes.log"
 fi
 
 echo "== booting the built server on port $RPI_PORT (RPI_OFFLINE=true)"
@@ -101,7 +103,7 @@ for _ in $(seq 1 "$BOOT_TIMEOUT"); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     tail -n 40 "$WORK/server.log"; echo "FAIL: the server exited during boot" >&2; exit 1
   fi
-  if curl -fsS -o /dev/null "http://127.0.0.1:$RPI_PORT/"; then ready=1; break; fi
+  if curl -fs -o /dev/null "http://127.0.0.1:$RPI_PORT/"; then ready=1; break; fi
   sleep 1
 done
 if [ -z "$ready" ]; then
