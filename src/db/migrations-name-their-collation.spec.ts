@@ -48,7 +48,7 @@ const makeWorld = (pass: string, file: () => string, creates: Create[]) => {
   };
 
   const query = (sql: string, opts?: { replacements?: unknown[]; type?: string }): Promise<unknown> => {
-    const created = /CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?/i.exec(sql);
+    const created = /(?<!\bSHOW\s+)CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?/i.exec(sql);
     if (created) {
       addTable(created[1]);
       creates.push({ pass, file: file(), table: created[1], via: "sql", sql });
@@ -105,6 +105,18 @@ const makeWorld = (pass: string, file: () => string, creates: Create[]) => {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const load = (f: string): any => require(path.join(DIR, f));
+
+/** A migration's source with block comments and whole-line `//` comments removed: what it executes, not what it says. */
+const stripComments = (src: string): string => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+/** The source of one migration, comments stripped. */
+const code = (f: string): string => stripComments(fs.readFileSync(path.join(DIR, f), "utf8"));
+
+/**
+ * Does this (comment-stripped) source create a table: a `createTable(` call or a `CREATE TABLE`
+ * statement. `SHOW CREATE TABLE` reads a table's definition and creates nothing, so it does not count.
+ */
+const createsTable = (src: string): boolean => /\bcreateTable\s*\(|(?<!\bSHOW\s+)\bCREATE\s+TABLE\b/i.test(src);
 
 const creates: Create[] = [];
 const ranPartial: string[] = [];
@@ -179,7 +191,7 @@ describe("migrations name their collation", () => {
 
   it("reached a create in every migration whose source creates a table (or names the fallback)", () => {
     const reached = new Set(creates.map((c) => c.file));
-    const mentions = files.filter((f) => /createTable\s*\(|CREATE TABLE/i.test(fs.readFileSync(path.join(DIR, f), "utf8")));
+    const mentions = files.filter((f) => createsTable(code(f)));
     const unreached = mentions.filter((f) => !reached.has(f));
     // Fallback for a migration whose up() the fake cannot drive to its create: its source must not
     // name a collation other than unicode_ci. The list is empty today; if it grows, say why.
@@ -189,15 +201,26 @@ describe("migrations name their collation", () => {
     }
   });
 
+  it("what counts as creating a table: real DDL does, a comment or SHOW CREATE TABLE does not", () => {
+    const detect = (src: string) => createsTable(stripComments(src));
+    // Mentions only: a block comment, a line comment, and a read of a table's definition.
+    expect(detect("/* SHOW CREATE TABLE `students` */\nawait q.sequelize.query(`SELECT 1`);")).toBe(false);
+    expect(detect("// createTable( is not called here\nawait q.addColumn(t, c, d);")).toBe(false);
+    expect(detect("// CREATE TABLE lives in the baseline\nawait q.addColumn(t, c, d);")).toBe(false);
+    expect(detect("await q.sequelize.query(`SHOW CREATE TABLE students`);")).toBe(false);
+    expect(detect("await q.sequelize.query(`show   create\n table students`);")).toBe(false);
+    // Real DDL.
+    expect(detect("await q.createTable('t', {}, { charset: 'utf8mb4' });")).toBe(true);
+    expect(detect("await q.sequelize.query(`CREATE TABLE t (id INT) CHARSET=utf8mb4`);")).toBe(true);
+    expect(detect("await q.sequelize.query(`CREATE TABLE IF NOT EXISTS t (id INT)`);")).toBe(true);
+    // A real create next to a comment that mentions one still counts.
+    expect(detect("/* SHOW CREATE TABLE x */\nawait q.createTable('t', {});")).toBe(true);
+  });
+
   it("every createTable( call in a migration's source is reached: recorded creates equal source calls, per file", () => {
     // Counted per file, not per file-has-one: a second createTable behind a condition that is false in
     // both passes would otherwise go unchecked. Each pass is counted alone (the same call is reached
     // again in the other pass); the larger of the two is what that pass could reach.
-    const code = (f: string): string =>
-      fs
-        .readFileSync(path.join(DIR, f), "utf8")
-        .replace(/\/\*[\s\S]*?\*\//g, "")
-        .replace(/^\s*\/\/.*$/gm, "");
     const mismatched = files
       .map((f) => {
         const inSource = (code(f).match(/\bcreateTable\s*\(/g) ?? []).length;
@@ -227,7 +250,7 @@ describe("migrations name their collation", () => {
   it("a migration the fake could not run to the end creates no table in its source", () => {
     // Whatever it created before stopping is checked above; this keeps a create from hiding after the stop.
     const stoppedInBoth = seqStopped.filter((f) => ranPartial.includes(f));
-    const hiding = stoppedInBoth.filter((f) => /createTable\s*\(|CREATE TABLE/i.test(fs.readFileSync(path.join(DIR, f), "utf8")));
+    const hiding = stoppedInBoth.filter((f) => createsTable(code(f)));
     expect(hiding).toEqual([]);
   });
 });
