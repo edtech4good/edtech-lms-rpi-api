@@ -323,11 +323,13 @@ export class LessonBusiness {
       },
     });
     if (lessonlearning) {
-      const learningdocuments = await documents.findOne({
-        where: {
-          documentid: lessonlearning.documentid,
-        },
-      });
+      const learningdocuments = lessonlearning.documentid
+        ? await documents.findOne({
+            where: {
+              documentid: lessonlearning.documentid,
+            },
+          })
+        : null;
       lessonlearning.setDataValue(
         "lessonlearningfileobject",
         rawfilenameextractor(learningdocuments?.documentname ?? "")
@@ -1661,11 +1663,13 @@ export class LessonBusiness {
       },
     });
     if (lessonlearning) {
-      const learningdocuments = await documents.findOne({
-        where: {
-          documentid: lessonlearning.documentid,
-        },
-      });
+      const learningdocuments = lessonlearning.documentid
+        ? await documents.findOne({
+            where: {
+              documentid: lessonlearning.documentid,
+            },
+          })
+        : null;
       lessonlearning.setDataValue(
         "lessonlearningfileobject",
         rawfilenameextractor(learningdocuments?.documentname ?? "")
