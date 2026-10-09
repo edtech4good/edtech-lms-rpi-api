@@ -19,6 +19,8 @@ export interface lessonlearningsAttributes {
   /** The type's own JSON body; null for `video`. */
   lessonlearningbody?: object | null;
   lessonlearningfileobject?: FileMeta;
+  /** Not a column: the documents of the item's link rows, set on read (`LessonBusiness.getlearninglesson`). */
+  documents?: object[];
 }
 
 export type lessonlearningsPk = "lessonlearningid";

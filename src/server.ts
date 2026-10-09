@@ -4,6 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { json, urlencoded } from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { corsOptions } from './cors-options';
 import { Config, Logger, gradingMode, isLocalDev, requireGradedAnswers } from './config';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { initModels, setuprelationshipforreport } from './models/data-models/init-models';
@@ -77,24 +78,7 @@ async function bootstrap() {
         : `allowlist [${[...allowedOrigins].join(', ') || '(none)'}]`
     }`
   );
-  app.enableCors({
-    origin: isLocalDev
-      ? true
-      : (origin, callback) => {
-          // No Origin header (native app, RPI_CLOUD proxy, curl): allow.
-          if (!origin) return callback(null, true);
-          return callback(null, allowedOrigins.has(origin));
-        },
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'Accept',
-      'Accept-Language',
-      'Cache-Control',
-      'TIMEOFFSET',
-    ],
-  });
+  app.enableCors(corsOptions(isLocalDev, allowedOrigins));
   app.use(
     helmet({
       contentSecurityPolicy: false,

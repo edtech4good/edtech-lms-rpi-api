@@ -6,6 +6,7 @@ import { curriculums } from "src/models/data-models/curriculums";
 import { documents } from "src/models/data-models/documents";
 import { grades } from "src/models/data-models/grades";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
+import { lessonlearningdocuments } from "src/models/data-models/lessonlearningdocuments";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import { lessonpracticequestions } from "src/models/data-models/lessonpracticequestions";
 import { lessonpractices } from "src/models/data-models/lessonpractices";
@@ -203,7 +204,12 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
       return curriculumOfBaseline(field(row, "curriculumbaselineid"));
     }
     case "document": {
-      const learnings = await lessonlearnings.findAll({ where: { documentid: id }, attributes: ["lessonlearningid", "lessonid"], raw: true });
+      const direct = await lessonlearnings.findAll({ where: { documentid: id }, attributes: ["lessonlearningid", "lessonid"], raw: true });
+      // an item may also use a document through a link row (learning items): its learning counts as using it
+      const linked = await lessonlearningdocuments.findAll({ where: { documentid: id }, attributes: ["lessonlearningid"], raw: true });
+      const linkedIds = [...new Set(linked.map((r) => field(r, "lessonlearningid")).filter((x): x is string => x !== null))];
+      const viaLinks = linkedIds.length > 0 ? await lessonlearnings.findAll({ where: { lessonlearningid: { [Op.in]: linkedIds } }, attributes: ["lessonlearningid", "lessonid"], raw: true }) : [];
+      const learnings = [...direct, ...viaLinks];
       const plans = await lessonplans.findAll({ where: { documentid: id }, attributes: ["lessonplanid", "lessonid"], raw: true });
       const lessonids = [...new Set([...learnings, ...plans].map((r) => field(r, "lessonid")).filter((x): x is string => x !== null))];
       const out = new Set<string>();

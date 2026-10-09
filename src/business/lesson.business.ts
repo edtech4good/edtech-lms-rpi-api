@@ -1,6 +1,7 @@
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
+import { lessonlearningdocuments } from "src/models/data-models/lessonlearningdocuments";
 import { lessonpractices } from "src/models/data-models/lessonpractices";
 import { lessonquizzes } from "src/models/data-models/lessonquizzes";
 import { levels } from "src/models/data-models/levels";
@@ -334,8 +335,49 @@ export class LessonBusiness {
         "lessonlearningfileobject",
         rawfilenameextractor(learningdocuments?.documentname ?? "")
       );
+      lessonlearning.setDataValue(
+        "documents",
+        await this.getlearningitemdocuments(lessonlearning.lessonlearningid, user)
+      );
     }
     return lessonlearning;
+  };
+
+  /**
+   * The documents a learning item uses besides its primary one, in their order, each with the file object
+   * built as for `documentid`. A link row whose document is not the caller's organisation's is left out
+   * (the import only ever writes the organisation's own; this is the read-side check of the same rule).
+   */
+  getlearningitemdocuments = async (lessonlearningid: string, user: Token) => {
+    const links = await lessonlearningdocuments.findAll({
+      where: { lessonlearningid },
+      order: [
+        ["lessonlearningdocumentorder", "ASC"],
+        ["lessonlearningdocumentid", "ASC"],
+      ],
+      raw: true,
+    });
+    if (links.length === 0) {
+      return [];
+    }
+    const found = await documents.scope("withOwnership").findAll({
+      where: { documentid: { [Op.in]: links.map((l) => l.documentid) } },
+      raw: true,
+    });
+    const caller = String(user.organisationid ?? "").toLowerCase();
+    const byId = new Map(
+      found
+        .filter((d) => caller !== "" && String(d.organisationid ?? "").toLowerCase() === caller)
+        .map((d) => [d.documentid, d])
+    );
+    return links
+      .filter((l) => byId.has(l.documentid))
+      .map((l) => ({
+        documentid: l.documentid,
+        lessonlearningdocumentrole: l.lessonlearningdocumentrole,
+        lessonlearningdocumentorder: l.lessonlearningdocumentorder,
+        lessonlearningfileobject: rawfilenameextractor(byId.get(l.documentid)?.documentname ?? ""),
+      }));
   };
 
   getalllearningprogress = async (lessonid: string, user: Token) => {
@@ -731,6 +773,7 @@ export class LessonBusiness {
           "lessonlearningid",
           "lessonlearningname",
           "lessonlearningorder",
+          "lessonlearningtype",
         ],
       },
       {
