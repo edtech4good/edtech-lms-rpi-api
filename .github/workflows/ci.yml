@@ -50,3 +50,48 @@ jobs:
           npm audit --audit-level=critical > audit.txt 2>&1 || true
           cat audit.txt
           { echo "### npm audit (report only)"; echo '```'; tail -n 80 audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # Not a required check yet (it fails red when it finds drift). Builds a database from the migrations
+  # alone on a stock MySQL 8.0 server (default collation, utf8mb4_0900_ai_ci), boots the
+  # built server once (it calls sequelize.sync()), and fails if boot changed the schema,
+  # if a model declares an index or column that no migration creates, or if a migration
+  # fails on that server. See scripts/ci/schema-drift.sh. The password below is a
+  # throwaway for a service container that exists only for this job.
+  schema-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-throwaway-root
+          MYSQL_DATABASE: edtech_lms_rpi_drift
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-throwaway-root"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      RPI_DB_HOST: 127.0.0.1
+      RPI_DB_PORT: 3306
+      RPI_DB_USER: root
+      RPI_DB_PASSWORD: ci-throwaway-root
+      RPI_DB_NAME: edtech_lms_rpi_drift
+      RPI_PORT: 3000
+      NODE_ENV: development
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Migrate an empty database, boot once, diff the schema
+        run: scripts/ci/schema-drift.sh
