@@ -84,7 +84,7 @@
     "swagger-ui-express": "^4.6.0",
     "underscore.string": "3.3.6",
     "unzipper": "0.12.5",
-    "uuid": "8.3.2",
+    "uuid": "14.0.2",
     "voca": "1.4.1",
     "winston": "3.19.0",
     "winston-cloudwatch": "^3.2.0",
