@@ -31,7 +31,7 @@ import { tableNameList, tableOptionsMatchingColumn } from "../migration-helpers"
  *
  * The table is created only if missing; the indexes and foreign keys are each created only if their name
  * is missing, so a re-run is a no-op and one that stopped halfway finishes. Migrate BEFORE booting the new
- * code: on a database whose default collation is utf8mb4_0900_ai_ci, boot-time `sync()` of the new model
+ * code: on a stock MySQL 8 database (its default collation is not the one the older tables use), boot-time `sync()` of the new model
  * fails loudly (the foreign keys cannot join columns of different collations), which is why the rollout
  * is migrate first, then code. If a table `sync()` did create is found here, it gets whatever it lacks, and
  * if its id collation differs from the referenced columns' and it holds rows the migration stops with a message.
