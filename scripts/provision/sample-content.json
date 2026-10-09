@@ -184,6 +184,8 @@
       "documentid": "b0000000-0000-4000-8000-00000000000b",
       "lessonlearningorder": 1,
       "points": 20,
+      "lessonlearningtype": "video",
+      "lessonlearningbody": null,
       "created_at": "2026-10-07T03:09:12.000Z",
       "created_by": null,
       "updated_at": "2026-10-07T03:09:12.000Z",
@@ -200,6 +202,8 @@
       "documentid": "b0000000-0000-4000-8000-00000000000c",
       "lessonlearningorder": 1,
       "points": 20,
+      "lessonlearningtype": "video",
+      "lessonlearningbody": null,
       "created_at": "2026-10-07T03:09:12.000Z",
       "created_by": null,
       "updated_at": "2026-10-07T03:09:12.000Z",
@@ -208,6 +212,7 @@
       "deleted_by": null
     }
   ],
+  "lessonlearningdocuments": [],
   "lessonplans": [],
   "lessonpractices": [
     {

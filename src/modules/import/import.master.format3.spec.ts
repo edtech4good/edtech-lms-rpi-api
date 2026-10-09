@@ -6,6 +6,7 @@ import {
   documents,
   grades,
   lessonlearnings,
+  lessonlearningdocuments,
   lessonpracticequestions,
   lessonpractices,
   lessonquizquestions,
@@ -65,6 +66,7 @@ const TABLES: Array<[string, any, string]> = [ // eslint-disable-line @typescrip
   ["levels", levels, "levelid"],
   ["lessons", lessons, "lessonid"],
   ["lessonlearnings", lessonlearnings, "lessonlearningid"],
+  ["lessonlearningdocuments", lessonlearningdocuments, "lessonlearningdocumentid"],
   ["lessonplans", lessonplans, "lessonplanid"],
   ["lessonpractices", lessonpractices, "lessonpracticeid"],
   ["lessonquizzes", lessonquizzes, "lessonquizid"],
@@ -240,7 +242,8 @@ const content = (tag: string, n: number, owner: string | null): Store => {
     grades: [{ gradeid: k("grade"), curriculumid: k("cur") }],
     levels: [{ levelid: k("level"), gradeid: k("grade") }],
     lessons: [{ lessonid: k("lesson"), levelid: k("level") }],
-    lessonlearnings: [{ lessonlearningid: k("ll"), lessonid: k("lesson"), documentid: k("doc") }],
+    lessonlearnings: [{ lessonlearningid: k("ll"), lessonid: k("lesson"), documentid: k("doc"), lessonlearningtype: "video", lessonlearningbody: null }],
+    lessonlearningdocuments: [],
     lessonplans: [{ lessonplanid: k("lp"), lessonid: k("lesson"), documentid: k("doc") }],
     lessonpractices: [{ lessonpracticeid: k("pr"), lessonid: k("lesson") }],
     lessonquizzes: [{ lessonquizid: k("qz"), lessonid: k("lesson") }],
@@ -1064,6 +1067,222 @@ describe("PUT /import/master with a format-3 payload", () => {
 });
 
 // ---------------------------------------------------------------- who may send it
+
+// ---------------------------------------------------------------- learning items (LI-2)
+
+/** An item's second document and the link row that names it, for organisation `owner`'s content `tag`-`n`. */
+const itemsOf = (tag: string, n: number, owner: string | null): Store => {
+  const k = (kind: string) => `${tag}-${kind}-${n}`;
+  const own = owner === null ? { organisationid: null } : { organisationid: owner };
+  return {
+    documents: [{ documentid: k("docb"), documentname: "វីដេអូទីពីរ", isdeleted: false, ...own }],
+    lessonlearningdocuments: [
+      { lessonlearningdocumentid: k("lld"), lessonlearningid: k("ll"), documentid: k("docb"), lessonlearningdocumentrole: "asset", lessonlearningdocumentorder: 1 },
+    ],
+  };
+};
+const withItems = (tag: string, n: number, owner: string | null): Store => merge(content(tag, n, owner), itemsOf(tag, n, owner));
+const dbWithItems = (): Store => ({
+  ...merge(withItems("x", 1, ORG_X), withItems("x", 3, ORG_X), withItems("y", 1, ORG_Y), withItems("u", 1, null)),
+  countries: dbBefore().countries,
+  organisations: [organisationRow(ORG_Y, "yorg")],
+  students: [],
+  schoolusers: [],
+});
+const calls = (model: unknown): number[] => (jest.mocked((model as { bulkCreate: never }).bulkCreate) as jest.Mock).mock.calls.map((c) => (c[0] as unknown[]).length);
+
+describe("learning items: the type and body of a learning, and its link rows", () => {
+  it("a payload with a link row round-trips: the learning keeps its type and body, the link row is written with its role and order, and the counts say so", async () => {
+    install({});
+    const result: any = await importIt(payloadOf(withItems("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(store.lessonlearnings).toEqual([
+      { lessonlearningid: "x-ll-1", lessonid: "x-lesson-1", documentid: "x-doc-1", lessonlearningtype: "video", lessonlearningbody: null },
+    ]);
+    expect(store.lessonlearningdocuments).toEqual(itemsOf("x", 1, ORG_X).lessonlearningdocuments);
+    expect(result.counts.lessonlearningdocuments).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
+    expect(result.counts.lessonlearnings).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
+    // the upsert lists carry the new columns (an upsert overwrites ONLY the columns listed)
+    const learningUpdate = (lessonlearnings.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate;
+    expect(learningUpdate).toEqual(expect.arrayContaining(["lessonlearningtype", "lessonlearningbody", "documentid"]));
+    expect((lessonlearningdocuments.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate).toEqual([
+      "lessonlearningid", "documentid", "lessonlearningdocumentrole", "lessonlearningdocumentorder",
+    ]);
+  });
+
+  it("a second import replaces the link rows: none stale, none duplicated, and the same payload again changes nothing", async () => {
+    install({});
+    await importIt(payloadOf(withItems("x", 1, ORG_X)));
+    const second = withItems("x", 1, ORG_X);
+    second.lessonlearningdocuments = [
+      { lessonlearningdocumentid: "x-lld-new", lessonlearningid: "x-ll-1", documentid: "x-docb-1", lessonlearningdocumentrole: "rendition", lessonlearningdocumentorder: 2 },
+    ];
+    const result: any = await importIt(payloadOf(second)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(store.lessonlearningdocuments.map((r) => r.lessonlearningdocumentid)).toEqual(["x-lld-new"]);
+    expect(result.counts.lessonlearningdocuments).toEqual({ deleted: 1, written: 1, markedDeleted: 0 });
+    const once = cloneDeep(store);
+    await importIt(payloadOf(second));
+    expect(store).toEqual(once);
+  });
+
+  it("an organisation that now has no link rows loses the ones it had", async () => {
+    install(dbWithItems());
+    await importIt(payloadOf(content("x", 1, ORG_X)));
+    expect(store.lessonlearningdocuments.map((r) => r.lessonlearningdocumentid).sort()).toEqual(["u-lld-1", "x-lld-3", "y-lld-1"]);
+  });
+
+  it("deletes a lesson's link rows BEFORE its learnings (with foreign keys unchecked nothing cascades)", async () => {
+    install(dbWithItems());
+    await importIt(payloadOf(withItems("x", 1, ORG_X)));
+    expect(writes.indexOf("lessonlearningdocuments.destroy")).toBeGreaterThanOrEqual(0);
+    expect(writes.indexOf("lessonlearningdocuments.destroy")).toBeLessThan(writes.indexOf("lessonlearnings.destroy"));
+    // and the link rows are written after the learnings they hang from
+    expect(writes.indexOf("lessonlearnings.bulkCreate")).toBeLessThan(writes.indexOf("lessonlearningdocuments.bulkCreate"));
+  });
+
+  it("is scoped: another organisation's link rows and an unowned one are byte-identical afterwards, and the link rows of a curriculum that left the payload stay", async () => {
+    install(dbWithItems());
+    const snapshot = notX(store);
+    await importIt(payloadOf(withItems("x", 2, ORG_X)));
+    expect(notX(store)).toEqual(snapshot);
+    expect(store.lessonlearningdocuments.map((r) => r.lessonlearningdocumentid).sort()).toEqual(["u-lld-1", "x-lld-1", "x-lld-2", "x-lld-3", "y-lld-1"]);
+  });
+
+  it("a link row whose id is under a curriculum of this organisation that left the payload is replaced, not refused", async () => {
+    install(dbWithItems());
+    const payload = withItems("x", 1, ORG_X);
+    payload.lessonlearningdocuments[0].lessonlearningdocumentid = "x-lld-3"; // exists, under x-ll-3 of an absent curriculum
+    await importIt(payloadOf(payload));
+    expect(store.lessonlearningdocuments.find((r) => r.lessonlearningdocumentid === "x-lld-3")).toMatchObject({ lessonlearningid: "x-ll-1" });
+  });
+
+  it("a link row whose id is already used by another organisation's content refuses the whole file, nothing written", async () => {
+    install(dbWithItems());
+    const snapshot = cloneDeep(store);
+    const payload = withItems("x", 1, ORG_X);
+    payload.lessonlearningdocuments[0].lessonlearningdocumentid = "y-lld-1";
+    await expect(importIt(payloadOf(payload))).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/lessonlearningdocuments: 1 row already exists here outside this organisation's content/),
+    });
+    expect(store).toEqual(snapshot);
+    expect(tnx.commit).not.toHaveBeenCalled();
+    expect(tnx.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unowned link row's id is refused the same way", async () => {
+    install(dbWithItems());
+    const payload = withItems("x", 1, ORG_X);
+    payload.lessonlearningdocuments[0].lessonlearningdocumentid = "u-lld-1";
+    await expect(importIt(payloadOf(payload))).rejects.toMatchObject({
+      message: expect.stringMatching(/lessonlearningdocuments: 1 row already exists here outside this organisation's content/),
+    });
+  });
+
+  it("writes learnings 25 at a time and link rows 1000 at a time", async () => {
+    install({});
+    const big = withItems("x", 1, ORG_X);
+    big.lessonlearnings = Array.from({ length: 60 }, (_, i) => ({
+      lessonlearningid: `x-ll-${i}`, lessonid: "x-lesson-1", documentid: "x-doc-1", lessonlearningorder: i + 1, lessonlearningtype: "video", lessonlearningbody: null,
+    }));
+    big.documents = [...big.documents, ...Array.from({ length: 2500 }, (_, i) => ({ documentid: `x-d-${i}`, documentname: `ឯកសារ ${i}`, isdeleted: false, organisationid: ORG_X }))];
+    big.lessonlearningdocuments = Array.from({ length: 2500 }, (_, i) => ({
+      lessonlearningdocumentid: `x-lld-${i}`, lessonlearningid: "x-ll-0", documentid: `x-d-${i}`, lessonlearningdocumentrole: "asset", lessonlearningdocumentorder: i,
+    }));
+    await importIt(payloadOf(big));
+    expect(calls(lessonlearnings)).toEqual([25, 25, 10]);
+    expect(calls(lessonlearningdocuments)).toEqual([1000, 1000, 500]);
+    expect(store.lessonlearningdocuments).toHaveLength(2500);
+    expect(store.lessonlearnings).toHaveLength(60);
+  });
+
+  describe("refused before anything is written", () => {
+    const invalid = async (payload: Row, message: RegExp) => {
+      install(dbWithItems());
+      const snapshot = cloneDeep(store);
+      await expect(importIt(payload)).rejects.toMatchObject({ status: 400, message: expect.stringMatching(message) });
+      expect(store).toEqual(snapshot);
+      expect(writes).toEqual([]);
+      expect(queries).toEqual([]);
+      expect(tnx.commit).not.toHaveBeenCalled();
+    };
+    const base = () => withItems("x", 1, ORG_X);
+
+    it("a payload WITHOUT lessonlearningdocuments (a pre-learning-items export): the validator's own message", async () => {
+      const p = payloadOf(base());
+      delete p.lessonlearningdocuments;
+      await invalid(p, /^lessonlearningdocuments must be an array \(an empty one if the organisation has none\)\.$/);
+    });
+
+    it("a learning of a type this server does not know", async () => {
+      const p = base();
+      p.lessonlearnings[0].lessonlearningtype = "hologram";
+      await invalid(payloadOf(p), /^lessonlearnings: 1 row has a lessonlearningtype this server does not know \(it knows: video\)\.$/);
+    });
+
+    it("a learning with no type at all", async () => {
+      const p = base();
+      delete p.lessonlearnings[0].lessonlearningtype;
+      await invalid(payloadOf(p), /^lessonlearnings: 1 row has no lessonlearningtype \(a string\)\.$/);
+    });
+
+    it("a video with a body", async () => {
+      const p = base();
+      p.lessonlearnings[0].lessonlearningbody = { v: 1 };
+      await invalid(payloadOf(p), /^lessonlearnings: 1 row of type video has a lessonlearningbody, which must be null for a video\.$/);
+    });
+
+    it("a video with no document", async () => {
+      const p = base();
+      p.lessonlearnings[0].documentid = null;
+      await invalid(payloadOf(p), /^lessonlearnings: 1 row has no documentid, and the type of the item needs one\.$/);
+    });
+
+    it("a link row naming a document that is not in the payload", async () => {
+      const p = base();
+      p.lessonlearningdocuments[0].documentid = "y-doc-1"; // exists here, another organisation's
+      await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row points at a documents row \(documentid\) that is not in the payload\.$/);
+    });
+
+    it("a link row with no learning in the payload", async () => {
+      const p = base();
+      p.lessonlearningdocuments[0].lessonlearningid = "x-ll-gone";
+      await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row hangs from a lessonlearnings row \(lessonlearningid\) that is not in the payload\.$/);
+    });
+
+    it("a link row with a null order (the column is NOT NULL) is refused; a missing order is accepted (the column defaults to 0)", async () => {
+      const p = base();
+      p.lessonlearningdocuments[0].lessonlearningdocumentorder = null;
+      await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row has a lessonlearningdocumentorder that is not a whole number\.$/);
+      const q = base();
+      delete q.lessonlearningdocuments[0].lessonlearningdocumentorder;
+      install({});
+      await expect(importIt(payloadOf(q))).resolves.toMatchObject({ error: false, data: true });
+      expect(store.lessonlearningdocuments).toHaveLength(1);
+    });
+
+    it("a link row with no documentid (null, or missing) is refused by the validator's own message", async () => {
+      const p = base();
+      p.lessonlearningdocuments[0].documentid = null;
+      await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row points at a documents row \(documentid\) that is not in the payload\.$/);
+      const q = base();
+      delete q.lessonlearningdocuments[0].documentid;
+      await invalid(payloadOf(q), /^lessonlearningdocuments: 1 row points at a documents row \(documentid\) that is not in the payload\.$/);
+    });
+
+    it("a link row with an unknown role, a fractional order, or a repeated learning-and-document pair", async () => {
+      const p = base();
+      p.lessonlearningdocuments = [
+        { ...p.lessonlearningdocuments[0], lessonlearningdocumentrole: "poster" },
+        { ...p.lessonlearningdocuments[0], lessonlearningdocumentid: "x-lld-b", lessonlearningdocumentorder: 1.5 },
+        { ...p.lessonlearningdocuments[0], lessonlearningdocumentid: "x-lld-c" },
+      ];
+      await invalid(
+        payloadOf(p),
+        /lessonlearningdocuments: 1 row has a lessonlearningdocumentrole that is not one of rendition, asset\. lessonlearningdocuments: 1 row has a lessonlearningdocumentorder that is not a whole number\. lessonlearningdocuments: 2 rows repeat a lessonlearningid and documentid pair/,
+      );
+    });
+  });
+});
 
 describe("who may import one organisation's content", () => {
   const teacher = (claim: unknown): Token => ({ schooluserid: "t1", schoolusername: "teacher", organisationid: claim } as unknown as Token);

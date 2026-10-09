@@ -72,6 +72,7 @@ describe("the sample content payload", () => {
       levels: 1,
       lessons: 2,
       lessonlearnings: 2,
+      lessonlearningdocuments: 0,
       lessonplans: 0,
       lessonpractices: 2,
       lessonquizzes: 2,
@@ -87,6 +88,29 @@ describe("the sample content payload", () => {
     expect(text).not.toMatch(/@|https?:/);
     expect(content.tables.curriculums.map((r) => r.curriculumname)).toEqual(["Demo Curriculum"]);
     expect(content.tables.schools.map((r) => r.schoolname)).toEqual(["Demo Primary School"]);
+  });
+
+  it("carries the learning-item columns: both learnings are video items with a null body, and no link rows", () => {
+    const body = sample();
+    expect((body.lessonlearnings as Row[]).map((r) => [r.lessonlearningtype, r.lessonlearningbody])).toEqual([["video", null], ["video", null]]);
+    expect(body.lessonlearningdocuments).toEqual([]);
+  });
+
+  it("without lessonlearningdocuments (the sample as it was before learning items) is refused, with the validator's own message", () => {
+    const { lessonlearningdocuments, ...old } = sample();
+    void lessonlearningdocuments;
+    expect(refusal(() => validatePayload(old))).toBe(
+      "The content payload is refused: lessonlearningdocuments must be an array (an empty one if the organisation has none).",
+    );
+  });
+
+  it("a learning without a type is refused", () => {
+    const body = sample();
+    body.lessonlearnings = (body.lessonlearnings as Row[]).map(({ lessonlearningtype, ...rest }) => {
+      void lessonlearningtype;
+      return rest;
+    });
+    expect(refusal(() => validatePayload(body))).toBe("The content payload is refused: lessonlearnings: 2 rows have no lessonlearningtype (a string).");
   });
 });
 

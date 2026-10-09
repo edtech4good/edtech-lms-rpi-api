@@ -40,6 +40,10 @@ holds one school. The rules, in `src/business/`:
   organisation claim is refused on a classroom server as much as online: 401
   over HTTP (the strategy refuses the token before the controller runs); the
   controller's own 403 is defence in depth.
+  A learning is a typed item (`lessonlearningtype`, `video` is the only type this server
+  knows; `src/constants/learning-items.ts`) and the payload must carry `lessonlearningdocuments`
+  (the item's further documents, empty today): a payload without that key, such as one exported
+  before learning items, is refused.
   `PUT /import/ownership` fills empty owners only (since S4 there are none; it
   remains for databases that have not reached S4).
 - Seven columns are required (NOT NULL): `organisationid` on `schools`,
@@ -64,6 +68,9 @@ holds one school. The rules, in `src/business/`:
   undeclared route. All 83 routes are proved or public.
 - Outward payloads keep their shape; a new column is kept out of every query by
   a default scope on its model and read only through a named scope.
+- A request header a browser client sends to this API (the learner app's
+  `X-Learning-Item-Types`) must be listed in `src/cors-options.ts`, or the browser's
+  preflight refuses every request that carries it; `src/cors-options.spec.ts` pins the list.
 
 ## Tests and verification
 

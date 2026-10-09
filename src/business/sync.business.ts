@@ -4,6 +4,7 @@ import {
   curriculumbaseline,
   grades,
   lessonlearnings,
+  lessonlearningdocuments,
   lessonpracticequestions,
   lessonpractices,
   lessonquizquestions,
@@ -107,6 +108,19 @@ export class SyncBusiness {
         "lessonid",
         "lessonlearningorder",
         "documentid",
+        "lessonlearningtype",
+        "lessonlearningbody",
+      ],
+    });
+
+  lessonlearningdocuments = (newlinks: Array<lessonlearningdocuments>) =>
+    lessonlearningdocuments.bulkCreate(newlinks, {
+      transaction: this._transaction,
+      updateOnDuplicate: [
+        "lessonlearningid",
+        "documentid",
+        "lessonlearningdocumentrole",
+        "lessonlearningdocumentorder",
       ],
     });
 

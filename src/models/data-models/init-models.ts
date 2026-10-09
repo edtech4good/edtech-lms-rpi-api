@@ -24,6 +24,11 @@ import type {
 } from "./lessonlearnings";
 import { lessonlearnings } from "./lessonlearnings";
 import type {
+  lessonlearningdocumentsAttributes,
+  lessonlearningdocumentsCreationAttributes,
+} from "./lessonlearningdocuments";
+import { lessonlearningdocuments } from "./lessonlearningdocuments";
+import type {
   lessonpracticequestionsAttributes,
   lessonpracticequestionsCreationAttributes,
 } from "./lessonpracticequestions";
@@ -112,6 +117,7 @@ export {
   documents,
   grades,
   lessonlearnings,
+  lessonlearningdocuments,
   lessonpracticequestions,
   lessonpractices,
   lessonquizquestions,
@@ -144,6 +150,8 @@ export type {
   gradesCreationAttributes,
   lessonlearningsAttributes,
   lessonlearningsCreationAttributes,
+  lessonlearningdocumentsAttributes,
+  lessonlearningdocumentsCreationAttributes,
   lessonpracticequestionsAttributes,
   lessonpracticequestionsCreationAttributes,
   lessonpracticesAttributes,
@@ -180,6 +188,7 @@ export function initModels(sequelize: Sequelize) {
   documents.initModel(sequelize);
   grades.initModel(sequelize);
   lessonlearnings.initModel(sequelize);
+  lessonlearningdocuments.initModel(sequelize);
   lessonpracticequestions.initModel(sequelize);
   lessonpractices.initModel(sequelize);
   lessonquizquestions.initModel(sequelize);
@@ -376,6 +385,7 @@ export function initModels(sequelize: Sequelize) {
     documents: documents,
     grades: grades,
     lessonlearnings: lessonlearnings,
+    lessonlearningdocuments: lessonlearningdocuments,
     lessonpracticequestions: lessonpracticequestions,
     lessonpractices: lessonpractices,
     lessonquizquestions: lessonquizquestions,

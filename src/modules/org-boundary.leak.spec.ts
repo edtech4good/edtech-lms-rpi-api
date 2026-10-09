@@ -15,6 +15,8 @@ import * as reportScope from "src/business/report-scope";
 import { pinStudent, ReportBusiness } from "src/business/report.business";
 import { initModels, setuprelationshipforreport } from "src/models/data-models/init-models";
 import { lessonlearnings } from "src/models/data-models/lessonlearnings";
+import { lessonlearningdocuments } from "src/models/data-models/lessonlearningdocuments";
+import { canAccessContent } from "src/business/content-access";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import { lessonpracticequestions } from "src/models/data-models/lessonpracticequestions";
 import { lessonpractices } from "src/models/data-models/lessonpractices";
@@ -149,6 +151,9 @@ interface Tree {
   levelQuestion: string;
   baselineQuestion: string;
   document: string;
+  /** A second document of the learning item, used only through a link row (learning items). */
+  linkedDocument: string;
+  link: string;
 }
 const treeOf = (ns: string, org: string | null): Tree & { org: string | null } => ({
   org,
@@ -166,6 +171,8 @@ const treeOf = (ns: string, org: string | null): Tree & { org: string | null } =
   levelQuestion: uid(ns, 21),
   baselineQuestion: uid(ns, 22),
   document: uid(ns, 23),
+  linkedDocument: uid(ns, 24),
+  link: uid(ns, 25),
 });
 const T_X1 = treeOf("a1", ORG_X); // in X's school's list, and in X's learners' lists
 const T_X2 = treeOf("a2", ORG_X); // X's, but NOT in X's school's list; only learner X2 is enrolled
@@ -202,7 +209,7 @@ const SU_Z = uid("c3", 41);
 type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 const tables = new Map<unknown, Row[]>();
 const MODELS = [
-  organisations, schools, students, schoolusers, standards, curriculums, grades, levels, lessons, lessonlearnings, lessonplans,
+  organisations, schools, students, schoolusers, standards, curriculums, grades, levels, lessons, lessonlearnings, lessonlearningdocuments, lessonplans,
   lessonpractices, lessonquizzes, curriculumbaseline, lessonpracticequestions, lessonquizquestions, levelquizquestions,
   baselinequestion, documents, studentappusages, studentprogress, studentprogressquestions, studentlessonsprogress,
   studentlevelsprogress, studentgradesprogress, studentlearningprogress, studentpoints, studentactives, studenttrash,
@@ -386,6 +393,8 @@ const treeRows = (t: Tree & { org: string | null }) => {
     [levelquizquestions, { levelquizquestionid: t.levelQuestion, levelid: t.level }],
     [baselinequestion, { baselinequestionid: t.baselineQuestion, curriculumbaselineid: t.baseline }],
     [documents, { documentid: t.document, documentname: "doc.pdf", organisationid: t.org, ...status }],
+    [documents, { documentid: t.linkedDocument, documentname: "second.mp4", organisationid: t.org, ...status }],
+    [lessonlearningdocuments, { lessonlearningdocumentid: t.link, lessonlearningid: t.learning, documentid: t.linkedDocument, lessonlearningdocumentrole: "asset", lessonlearningdocumentorder: 1 }],
   ] as Array<[unknown, Row]>;
 };
 
@@ -439,6 +448,10 @@ const seedData = () => {
     { schoolid: SCH_L2, schoolname: "Second Legacy School", organisationid: null, countryid: "c1", curriculums: [T_L2.curriculum], isdeleted: false, uitheme: "kids", brandingconfig: null },
   ]);
   for (const t of [T_X1, T_X2, T_Y1, T_L, T_L2]) for (const [model, row] of treeRows(t)) put(model, [row]);
+  // an anomaly planted on purpose: X's learning has a link row naming Y's document
+  put(lessonlearningdocuments, [
+    { lessonlearningdocumentid: uid("a1", 26), lessonlearningid: T_X1.learning, documentid: T_Y1.linkedDocument, lessonlearningdocumentrole: "asset", lessonlearningdocumentorder: 2 },
+  ]);
   put(standards, [
     { standardid: CLS_X, standardname: "Class X", schoolid: SCH_X, schoolname: "School X", isdeleted: false },
     { standardid: CLS_Y, standardname: "Class Y", schoolid: SCH_Y, schoolname: "School Y", isdeleted: false },
@@ -783,6 +796,30 @@ describe("content routes: another organisation's content is absent, and a refuse
   });
   it("GET /lesson/:lessonid/learning answers X's own, and 404s Y's, a legacy one's and one that is not there alike", async () => {
     expect(await runContent(C["GET /lesson/:lessonid/learning"])).toEqual([]);
+  });
+  it("GET /lesson/learning/:lessonlearningid (the real read, not the route's marker) lists only X's documents, even when a link row names Y's", async () => {
+    // the route tests above run a marker in place of the business class; this runs the real one over the same fake database
+    const Real = jest.requireActual("src/business/lesson.business").LessonBusiness;
+    const asX = { studentid: ST_X1, schooluserid: SU_X1, schoolid: SCH_X, organisationid: ORG_X } as never;
+    const item = await new Real().getlearninglesson(T_X1.learning, asX);
+    expect(rowsOf(lessonlearningdocuments).filter((r) => r.lessonlearningid === T_X1.learning).map((r) => r.documentid).sort()).toEqual(
+      [T_X1.linkedDocument, T_Y1.linkedDocument].sort(),
+    ); // the planted link row is really there
+    expect(item.getDataValue("documents").map((d: Row) => d.documentid)).toEqual([T_X1.linkedDocument]);
+    expect(JSON.stringify(item.getDataValue("documents"))).not.toContain(T_Y1.linkedDocument);
+  });
+  it("a document that a learning item uses only through a link row is content of that learning's curriculum: X's learner reaches X's, and Y's, a legacy one's, an unenrolled one's and one that is not there answer alike", async () => {
+    const { failures, check } = scenario();
+    const asX = { studentid: ST_X1, schooluserid: SU_X1, schoolid: SCH_X, organisationid: ORG_X } as never;
+    check("X's own linked document", (await canAccessContent(asX, "document", T_X1.linkedDocument)) === true);
+    check("X's primary document (unchanged)", (await canAccessContent(asX, "document", T_X1.document)) === true);
+    for (const [name, id] of [["Y's", T_Y1.linkedDocument], ["a legacy", T_L.linkedDocument], ["X's but not enrolled", T_X2.linkedDocument], ["one that is not there", NOWHERE]]) {
+      check(`${name} linked document is absent`, (await canAccessContent(asX, "document", id)) === false);
+    }
+    // a link row cannot lend a document to a learner of another organisation
+    const asY = { studentid: ST_Y1, schooluserid: SU_Y1, schoolid: SCH_Y, organisationid: ORG_Y } as never;
+    check("X's linked document, asked by Y's learner", (await canAccessContent(asY, "document", T_X1.linkedDocument)) === false);
+    expect(failures).toEqual([]);
   });
   it("GET /lesson/plan/:lessonplanid answers X's own, and 404s Y's, a legacy one's and one that is not there alike", async () => {
     expect(await runContent(C["GET /lesson/plan/:lessonplanid"])).toEqual([]);

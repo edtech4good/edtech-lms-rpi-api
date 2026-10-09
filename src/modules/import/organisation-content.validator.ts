@@ -3,6 +3,7 @@ import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { fieldForJoiDetail, humanizeJoiMessage } from "src/utils/joi-message";
 import { ORGANISATION_CODE, OwnershipOrganisation, organisation as organisationRow } from "./ownership.request.validator";
+import { LEARNING_DOCUMENT_ROLES, LEARNING_ITEM_RULES, LEARNING_ITEM_TYPES, isLearningItemType } from "src/constants/learning-items";
 
 /**
  * The format-3 content payload: what `PUT /import/master` receives when it
@@ -14,7 +15,7 @@ import { ORGANISATION_CODE, OwnershipOrganisation, organisation as organisationR
  *   organisations: [ <exactly one row, the header's organisation> ],
  *   schools, standards, countries,
  *   curriculums, curriculumbaselines, baselinequestion, grades, levels, lessons,
- *   lessonlearnings, lessonplans, lessonpractices, lessonquizzes,
+ *   lessonlearnings, lessonlearningdocuments, lessonplans, lessonpractices, lessonquizzes,
  *   lessonpracticequestions, lessonquizquestions, levelquizquestions,
  *   questions, documents, subjects }
  * ```
@@ -23,6 +24,14 @@ import { ORGANISATION_CODE, OwnershipOrganisation, organisation as organisationR
  * organisation has none", and the import replaces what it had). Any other key
  * is refused. Everything here is checked BEFORE the import writes anything, from
  * the payload alone.
+ *
+ * A `lessonlearnings` row is a typed learning item: its `lessonlearningtype` must
+ * be a type this server knows (phase 0: `video`), its `lessonlearningbody` must
+ * follow the type's rule (null for `video`), and a type that needs a primary
+ * document must name one. `lessonlearningdocuments` holds an item's further
+ * documents; each row hangs from a learning and names a document of the payload.
+ * `lessonlearningdocuments` is required like every other key, so a payload from
+ * before learning items (which lacks it) is refused, by design.
  */
 
 export const CONTENT_FORMAT = 3;
@@ -49,6 +58,7 @@ export type TableKey =
   | "levels"
   | "lessons"
   | "lessonlearnings"
+  | "lessonlearningdocuments"
   | "lessonplans"
   | "lessonpractices"
   | "lessonquizzes"
@@ -118,6 +128,12 @@ export const CONTENT_TABLES: Record<TableKey, TableSpec> = {
     kind: "inherited",
     parent: { fk: "lessonid", to: "lessons" },
     refs: [{ fk: "documentid", to: "documents", optional: true }],
+  },
+  lessonlearningdocuments: {
+    pk: "lessonlearningdocumentid",
+    kind: "inherited",
+    parent: { fk: "lessonlearningid", to: "lessonlearnings" },
+    refs: [{ fk: "documentid", to: "documents" }],
   },
   lessonplans: {
     pk: "lessonplanid",
@@ -362,6 +378,77 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
         );
       }
     }
+  }
+
+  // Learning items: the type, the body and the primary document follow the type's rule; a link row has a known role,
+  // a whole-number order, and is the only one of its (learning, document) pair.
+  const itemRows = tables.lessonlearnings ?? [];
+  let noType = 0;
+  let unknownType = 0;
+  let bodyNotNull = 0;
+  let noDocument = 0;
+  for (const row of itemRows) {
+    if (!isRow(row)) continue;
+    const type = row.lessonlearningtype;
+    if (typeof type !== "string" || type.length === 0) {
+      noType += 1;
+      continue;
+    }
+    if (!isLearningItemType(type)) {
+      unknownType += 1;
+      continue;
+    }
+    const rule = LEARNING_ITEM_RULES[type];
+    if (rule.bodyMustBeNull && row.lessonlearningbody !== undefined && row.lessonlearningbody !== null) bodyNotNull += 1;
+    if (rule.documentRequired && (row.documentid === undefined || row.documentid === null || row.documentid === "")) noDocument += 1;
+  }
+  const knownTypes = LEARNING_ITEM_TYPES.join(", ");
+  if (noType) problems.add("lessonlearnings", `lessonlearnings: ${rows(noType)} ${noType === 1 ? "has" : "have"} no lessonlearningtype (a string).`);
+  if (unknownType) {
+    problems.add(
+      "lessonlearnings",
+      `lessonlearnings: ${rows(unknownType)} ${unknownType === 1 ? "has" : "have"} a lessonlearningtype this server does not know (it knows: ${knownTypes}).`,
+    );
+  }
+  if (bodyNotNull) {
+    problems.add("lessonlearnings", `lessonlearnings: ${rows(bodyNotNull)} of type video ${bodyNotNull === 1 ? "has" : "have"} a lessonlearningbody, which must be null for a video.`);
+  }
+  if (noDocument) {
+    problems.add("lessonlearnings", `lessonlearnings: ${rows(noDocument)} ${noDocument === 1 ? "has" : "have"} no documentid, and the type of ${noDocument === 1 ? "the item" : "each item"} needs one.`);
+  }
+
+  const linkRows = tables.lessonlearningdocuments ?? [];
+  let badRole = 0;
+  let badOrder = 0;
+  let repeatedPairs = 0;
+  const pairs = new Set<string>();
+  for (const row of linkRows) {
+    if (!isRow(row)) continue;
+    if (typeof row.lessonlearningdocumentrole !== "string" || !(LEARNING_DOCUMENT_ROLES as readonly string[]).includes(row.lessonlearningdocumentrole)) badRole += 1;
+    const order = row.lessonlearningdocumentorder;
+    // a missing order defaults to 0 in the database; an explicit null does not (the column is NOT NULL)
+    if (order !== undefined && !(typeof order === "number" && Number.isInteger(order))) badOrder += 1;
+    if (typeof row.lessonlearningid === "string" && typeof row.documentid === "string") {
+      const pair = `${lower(row.lessonlearningid)}/${lower(row.documentid)}`;
+      if (pairs.has(pair)) repeatedPairs += 1;
+      else pairs.add(pair);
+    }
+  }
+  const roles = LEARNING_DOCUMENT_ROLES.join(", ");
+  if (badRole) {
+    problems.add(
+      "lessonlearningdocuments",
+      `lessonlearningdocuments: ${rows(badRole)} ${badRole === 1 ? "has" : "have"} a lessonlearningdocumentrole that is not one of ${roles}.`,
+    );
+  }
+  if (badOrder) {
+    problems.add("lessonlearningdocuments", `lessonlearningdocuments: ${rows(badOrder)} ${badOrder === 1 ? "has" : "have"} a lessonlearningdocumentorder that is not a whole number.`);
+  }
+  if (repeatedPairs) {
+    problems.add(
+      "lessonlearningdocuments",
+      `lessonlearningdocuments: ${rows(repeatedPairs)} repeat${repeatedPairs === 1 ? "s" : ""} a lessonlearningid and documentid pair that is already in this table of the payload.`,
+    );
   }
 
   // Lists of ids (a school's curricula, the schools a baseline is for) must be lists of ids. Which

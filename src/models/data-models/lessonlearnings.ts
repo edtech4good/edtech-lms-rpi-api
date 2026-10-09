@@ -11,14 +11,21 @@ export interface lessonlearningsAttributes {
   lessonlearningstatus: boolean;
   lessonid: string;
   lessonlearningorder: number;
-  documentid: string;
+  /** The item's primary document. Null only for a type that needs none (LI-2 knows only `video`, which does). */
+  documentid: string | null;
   points?: number;
+  /** What kind of item this is. One of `LEARNING_ITEM_TYPES` (src/constants/learning-items.ts). */
+  lessonlearningtype: string;
+  /** The type's own JSON body; null for `video`. */
+  lessonlearningbody?: object | null;
   lessonlearningfileobject?: FileMeta;
+  /** Not a column: the documents of the item's link rows, set on read (`LessonBusiness.getlearninglesson`). */
+  documents?: object[];
 }
 
 export type lessonlearningsPk = "lessonlearningid";
 export type lessonlearningsId = lessonlearnings[lessonlearningsPk];
-export type lessonlearningsOptionalAttributes = "lessonlearningid" | "lessonlearningstatus";
+export type lessonlearningsOptionalAttributes = "lessonlearningid" | "lessonlearningstatus" | "lessonlearningtype" | "lessonlearningbody";
 export type lessonlearningsCreationAttributes = Optional<lessonlearningsAttributes, lessonlearningsOptionalAttributes>;
 
 export class lessonlearnings extends Model<lessonlearningsAttributes, lessonlearningsCreationAttributes> implements lessonlearningsAttributes {
@@ -28,8 +35,10 @@ export class lessonlearnings extends Model<lessonlearningsAttributes, lessonlear
   lessonlearningstatus!: boolean;
   lessonid!: string;
   lessonlearningorder!: number;
-  documentid!: string;
+  documentid!: string | null;
   points!: number;
+  lessonlearningtype!: string;
+  lessonlearningbody!: object | null;
   lessonlearningfileobject!: FileMeta;
 
   // lessonlearnings belongsTo lessons via lessonid
@@ -73,7 +82,7 @@ export class lessonlearnings extends Model<lessonlearningsAttributes, lessonlear
     },
     documentid: {
       type: DataTypes.STRING(36),
-      allowNull: false,
+      allowNull: true,
       references: {
         model: 'documents',
         key: 'documentid'
@@ -87,6 +96,15 @@ export class lessonlearnings extends Model<lessonlearningsAttributes, lessonlear
       type: DataTypes.INTEGER.UNSIGNED,
       allowNull: true,
       defaultValue: 0
+    },
+    lessonlearningtype: {
+      type: DataTypes.STRING(16),
+      allowNull: false,
+      defaultValue: 'video'
+    },
+    lessonlearningbody: {
+      type: DataTypes.JSON,
+      allowNull: true
     },
   }, {
     sequelize,
