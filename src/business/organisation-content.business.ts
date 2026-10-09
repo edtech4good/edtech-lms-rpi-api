@@ -10,6 +10,7 @@ import {
   documents,
   grades,
   lessonlearnings,
+  lessonlearningdocuments,
   lessonpracticequestions,
   lessonpractices,
   lessonquizquestions,
@@ -104,6 +105,7 @@ const MODELS: Record<TableKey, AnyModel> = {
   levels,
   lessons,
   lessonlearnings,
+  lessonlearningdocuments,
   lessonplans,
   lessonpractices,
   lessonquizzes,
@@ -126,6 +128,7 @@ const PKS: Record<TableKey, string> = {
   levels: "levelid",
   lessons: "lessonid",
   lessonlearnings: "lessonlearningid",
+  lessonlearningdocuments: "lessonlearningdocumentid",
   lessonplans: "lessonplanid",
   lessonpractices: "lessonpracticeid",
   lessonquizzes: "lessonquizid",
@@ -257,6 +260,7 @@ export class OrganisationContentImport {
       "levels",
       "lessons",
       "lessonlearnings",
+      "lessonlearningdocuments",
       "lessonplans",
       "lessonpractices",
       "lessonquizzes",
@@ -497,11 +501,13 @@ export class OrganisationContentImport {
     const grades = plus("grades", await this.idsWhere("grades", "curriculumid", curriculumIds));
     const levels = plus("levels", await this.idsWhere("levels", "gradeid", grades));
     const lessons = plus("lessons", await this.idsWhere("lessons", "levelid", levels));
+    const lessonlearnings = plus("lessonlearnings", await this.idsWhere("lessonlearnings", "lessonid", lessons));
     return {
       curriculumbaselines: baselines,
       grades,
       levels,
       lessons,
+      lessonlearnings,
       lessonpractices: plus("lessonpractices", await this.idsWhere("lessonpractices", "lessonid", lessons)),
       lessonquizzes: plus("lessonquizzes", await this.idsWhere("lessonquizzes", "lessonid", lessons)),
     };
@@ -534,6 +540,9 @@ export class OrganisationContentImport {
     await this.deleteWhere("levelquizquestions", "levelid", chain.levels);
     await this.deleteWhere("lessonquizzes", "lessonid", chain.lessons);
     await this.deleteWhere("lessonpractices", "lessonid", chain.lessons);
+    // A learning item's link rows go before the learnings they hang from: with foreign keys unchecked the
+    // database cascades nothing, so a link row left behind would point at a learning that is gone.
+    await this.deleteWhere("lessonlearningdocuments", "lessonlearningid", chain.lessonlearnings);
     await this.deleteWhere("lessonlearnings", "lessonid", chain.lessons);
     await this.deleteWhere("lessonplans", "lessonid", chain.lessons);
     await this.deleteWhere("lessons", "levelid", chain.levels);
@@ -626,6 +635,9 @@ export class OrganisationContentImport {
         return;
       case "lessonlearnings":
         await sync.lessonlearnings(part as never);
+        return;
+      case "lessonlearningdocuments":
+        await sync.lessonlearningdocuments(part as never);
         return;
       case "lessonplans":
         await sync.lessonplans(part as never);

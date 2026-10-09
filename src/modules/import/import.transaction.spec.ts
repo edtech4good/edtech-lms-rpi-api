@@ -73,7 +73,7 @@ const formatThree = {
   ...Object.fromEntries(
     [
       "schools", "standards", "countries", "curriculums", "curriculumbaselines", "baselinequestion", "grades", "levels", "lessons",
-      "lessonlearnings", "lessonplans", "lessonpractices", "lessonquizzes", "lessonpracticequestions", "lessonquizquestions",
+      "lessonlearnings", "lessonlearningdocuments", "lessonplans", "lessonpractices", "lessonquizzes", "lessonpracticequestions", "lessonquizquestions",
       "levelquizquestions", "questions", "documents", "subjects",
     ].map((key) => [key, []])
   ),
