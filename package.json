@@ -24,6 +24,7 @@
     "start:prod": "node build/server.js",
     "db:migrate": "npx sequelize-cli db:migrate",
     "db:check-owners": "ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.json scripts/check-owners.ts",
+    "db:check-indexes": "ts-node --transpile-only -r tsconfig-paths/register -P tsconfig.json scripts/check-model-indexes.ts",
     "provision": "node scripts/provision.js",
     "seed:demo": "node scripts/seed-demo-users.js",
     "seed:content": "node scripts/seed-demo-content.js",

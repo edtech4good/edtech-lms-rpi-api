@@ -92,6 +92,11 @@ holds one school. The rules, in `src/business/`:
   nothing to alter. An index a model declares (`indexes:`) therefore needs a migration that creates it with
   the same name and columns (`20261008130000-indexes-sync-created`). The check: `SHOW CREATE TABLE` for every
   table after `db:migrate`, again after one boot; the two must be identical.
+  The `schema-drift` CI job automates that: `scripts/ci/schema-drift.sh` migrates an empty database,
+  boots the built server once and fails if the schema changed; it also runs
+  `npm run db:check-indexes` and compares model columns with the database (sync never
+  adds columns). A new table, column or index in a model needs a migration in the same
+  PR. Run it against a scratch database: see the header of the script.
 
 ## Khmer text
 
