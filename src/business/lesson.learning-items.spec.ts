@@ -154,6 +154,7 @@ describe("GET /lesson/learning/:id: getlearninglesson", () => {
     install(base());
     const item = (await new LessonBusiness().getlearninglesson("ll-empty", learner)) as unknown as Row;
     expect(item.documentid).toBeNull();
+    expect(reads.filter((r) => r.model === "documents")).toEqual([]); // no lookup of a document by a null id
     expect(item.lessonlearningfileobject).toMatchObject({ filename: "invalid" });
     expect(item.documents).toEqual([]);
   });
