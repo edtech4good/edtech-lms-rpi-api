@@ -10,6 +10,9 @@
  *                                                     a non-virtual attribute whose column does not
  *                                                     exist is MISSING (exit 1)
  *
+ * (MODEL TABLE ABSENT cannot normally fire here: by the time this runs the server's sync() has
+ * created any table a migration did not, and the before/after diff is what reports that.)
+ *
  * sync() creates a missing table and adds a missing declared index, but it never adds a
  * column to a table that exists, so a column a model declares and no migration creates
  * is invisible to the before/after dump; `columns` is what catches it. Tables and

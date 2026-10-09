@@ -25,8 +25,10 @@
 # Exits 1 if any step failed. Needs a built tree (npm ci && npm run build) and a reachable
 # MySQL 8. Run locally with the variables set explicitly. Do NOT point RPI_DB_NAME at a
 # database you care about: step 1 refuses one that has tables, but the migrations and the
-# server would write to it. Create the database as CI does, with the server's default
-# collation (CREATE DATABASE scratch_db;) so no hand-set collation hides a gap.
+# server would write to it. Create the database as CI does, with the default collation
+# of a stock MySQL 8 server (a local server may default to
+# another one, e.g. utf8mb4_unicode_ci, and would hide a gap a stock server shows):
+#   CREATE DATABASE scratch_db COLLATE utf8mb4_0900_ai_ci;
 #
 #   RPI_DB_HOST=127.0.0.1 RPI_DB_PORT=3306 RPI_DB_USER=... RPI_DB_PASSWORD=... \
 #   RPI_DB_NAME=scratch_db RPI_PORT=3013 scripts/ci/schema-drift.sh
@@ -87,7 +89,14 @@ tail -n 3 "$WORK/migrate.log"
 node scripts/ci/schema-drift.js dump "$WORK/before.sql"
 
 echo "== npm run db:check-indexes (before the server's sync() can add anything)"
-if ! npm run db:check-indexes >"$WORK/indexes.log" 2>&1; then
+rc=0
+npm run db:check-indexes >"$WORK/indexes.log" 2>&1 || rc=$?
+if [ "$rc" -gt 1 ]; then
+  # exit 1 is "drift"; anything else is a crash (connection, ts-node, ...): show the trace
+  tail -n 40 "$WORK/indexes.log"
+  echo "FAIL: db:check-indexes crashed (exit $rc)" >&2
+  exit 1
+elif [ "$rc" -eq 1 ]; then
   awk '/^(MISSING|COVERED|PRESENT WITH OTHER COLUMNS)/{p=1} /^$/{p=0} p' "$WORK/indexes.log"
   echo "FAIL: db:check-indexes reported drift (continuing so the boot diff prints too)" >&2
   FAILED=1
@@ -103,7 +112,7 @@ for _ in $(seq 1 "$BOOT_TIMEOUT"); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     tail -n 40 "$WORK/server.log"; echo "FAIL: the server exited during boot" >&2; exit 1
   fi
-  if curl -fs -o /dev/null "http://127.0.0.1:$RPI_PORT/"; then ready=1; break; fi
+  if curl -fs --max-time 2 -o /dev/null "http://127.0.0.1:$RPI_PORT/"; then ready=1; break; fi
   sleep 1
 done
 if [ -z "$ready" ]; then

@@ -51,7 +51,7 @@ jobs:
           cat audit.txt
           { echo "### npm audit (report only)"; echo '```'; tail -n 80 audit.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
-  # Report-only for now (not a required check). Builds a database from the migrations
+  # Not a required check yet (it fails red when it finds drift). Builds a database from the migrations
   # alone on a stock MySQL 8.0 server (default collation, utf8mb4_0900_ai_ci), boots the
   # built server once (it calls sequelize.sync()), and fails if boot changed the schema,
   # if a model declares an index or column that no migration creates, or if a migration
