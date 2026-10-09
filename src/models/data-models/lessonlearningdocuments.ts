@@ -78,7 +78,7 @@ export class lessonlearningdocuments
             fields: [{ name: 'lessonlearningdocumentid' }],
           },
           {
-            name: 'lessonlearningdocuments_item_document',
+            name: 'lessonlearningdocuments_item_document_unique',
             unique: true,
             using: 'BTREE',
             fields: [{ name: 'lessonlearningid' }, { name: 'documentid' }],

@@ -448,6 +448,10 @@ const seedData = () => {
     { schoolid: SCH_L2, schoolname: "Second Legacy School", organisationid: null, countryid: "c1", curriculums: [T_L2.curriculum], isdeleted: false, uitheme: "kids", brandingconfig: null },
   ]);
   for (const t of [T_X1, T_X2, T_Y1, T_L, T_L2]) for (const [model, row] of treeRows(t)) put(model, [row]);
+  // an anomaly planted on purpose: X's learning has a link row naming Y's document
+  put(lessonlearningdocuments, [
+    { lessonlearningdocumentid: uid("a1", 26), lessonlearningid: T_X1.learning, documentid: T_Y1.linkedDocument, lessonlearningdocumentrole: "asset", lessonlearningdocumentorder: 2 },
+  ]);
   put(standards, [
     { standardid: CLS_X, standardname: "Class X", schoolid: SCH_X, schoolname: "School X", isdeleted: false },
     { standardid: CLS_Y, standardname: "Class Y", schoolid: SCH_Y, schoolname: "School Y", isdeleted: false },
@@ -792,6 +796,17 @@ describe("content routes: another organisation's content is absent, and a refuse
   });
   it("GET /lesson/:lessonid/learning answers X's own, and 404s Y's, a legacy one's and one that is not there alike", async () => {
     expect(await runContent(C["GET /lesson/:lessonid/learning"])).toEqual([]);
+  });
+  it("GET /lesson/learning/:lessonlearningid (the real read, not the route's marker) lists only X's documents, even when a link row names Y's", async () => {
+    // the route tests above run a marker in place of the business class; this runs the real one over the same fake database
+    const Real = jest.requireActual("src/business/lesson.business").LessonBusiness;
+    const asX = { studentid: ST_X1, schooluserid: SU_X1, schoolid: SCH_X, organisationid: ORG_X } as never;
+    const item = await new Real().getlearninglesson(T_X1.learning, asX);
+    expect(rowsOf(lessonlearningdocuments).filter((r) => r.lessonlearningid === T_X1.learning).map((r) => r.documentid).sort()).toEqual(
+      [T_X1.linkedDocument, T_Y1.linkedDocument].sort(),
+    ); // the planted link row is really there
+    expect(item.getDataValue("documents").map((d: Row) => d.documentid)).toEqual([T_X1.linkedDocument]);
+    expect(JSON.stringify(item.getDataValue("documents"))).not.toContain(T_Y1.linkedDocument);
   });
   it("a document that a learning item uses only through a link row is content of that learning's curriculum: X's learner reaches X's, and Y's, a legacy one's, an unenrolled one's and one that is not there answer alike", async () => {
     const { failures, check } = scenario();

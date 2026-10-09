@@ -117,7 +117,7 @@ describe("S-LI2 up()", () => {
     await migration.up(db.qi);
     const ddl = db.statements.filter((s) => /^ALTER TABLE/.test(s));
     expect(ddl).toEqual([
-      "ALTER TABLE `lessonlearningdocuments` ADD UNIQUE INDEX `lessonlearningdocuments_item_document` USING BTREE (`lessonlearningid`, `documentid`)",
+      "ALTER TABLE `lessonlearningdocuments` ADD UNIQUE INDEX `lessonlearningdocuments_item_document_unique` USING BTREE (`lessonlearningid`, `documentid`)",
       "ALTER TABLE `lessonlearningdocuments` ADD INDEX `lessonlearningdocuments_documentid` USING BTREE (`documentid`)",
       "ALTER TABLE `lessonlearningdocuments` ADD CONSTRAINT `lessonlearningdocuments_lessonlearningid_fk` FOREIGN KEY (`lessonlearningid`) REFERENCES `lessonlearnings` (`lessonlearningid`) ON DELETE CASCADE ON UPDATE CASCADE",
       "ALTER TABLE `lessonlearningdocuments` ADD CONSTRAINT `lessonlearningdocuments_documentid_fk` FOREIGN KEY (`documentid`) REFERENCES `documents` (`documentid`) ON DELETE RESTRICT ON UPDATE CASCADE",
@@ -135,7 +135,7 @@ describe("S-LI2 up()", () => {
   });
 
   it("finishes a run that stopped halfway (table and unique key there, the rest not)", async () => {
-    const db = makeQI({ tables: ["lessonlearnings", "documents", "lessonlearningdocuments"], indexes: ["PRIMARY", "lessonlearningdocuments_item_document"] });
+    const db = makeQI({ tables: ["lessonlearnings", "documents", "lessonlearningdocuments"], indexes: ["PRIMARY", "lessonlearningdocuments_item_document_unique"] });
     await migration.up(db.qi);
     expect(db.raw.createTable).not.toHaveBeenCalled();
     expect(db.statements.filter((s) => /^ALTER TABLE/.test(s))).toHaveLength(3);

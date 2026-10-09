@@ -30,9 +30,11 @@ import { tableNameList, tableOptionsMatchingColumn } from "../migration-helpers"
  * ## Idempotence
  *
  * The table is created only if missing; the indexes and foreign keys are each created only if their name
- * is missing, so a re-run is a no-op and one that stopped halfway finishes. A table that boot-time
- * `sync()` created first (new code booted before this migration) gets whatever it lacks; if its id
- * collation differs from the referenced columns' and it holds rows the migration stops with a message.
+ * is missing, so a re-run is a no-op and one that stopped halfway finishes. Migrate BEFORE booting the new
+ * code: on a database whose default collation is utf8mb4_0900_ai_ci, boot-time `sync()` of the new model
+ * fails loudly (the foreign keys cannot join columns of different collations), which is why the rollout
+ * is migrate first, then code. If a table `sync()` did create is found here, it gets whatever it lacks, and
+ * if its id collation differs from the referenced columns' and it holds rows the migration stops with a message.
  *
  * ## down() is guarded
  *
@@ -40,7 +42,7 @@ import { tableNameList, tableOptionsMatchingColumn } from "../migration-helpers"
  * otherwise drops it. A missing table is a no-op.
  */
 const TABLE = "lessonlearningdocuments";
-const UNIQUE_KEY = "lessonlearningdocuments_item_document";
+const UNIQUE_KEY = "lessonlearningdocuments_item_document_unique";
 const DOCUMENT_INDEX = "lessonlearningdocuments_documentid";
 const FK_LEARNING = "lessonlearningdocuments_lessonlearningid_fk";
 const FK_DOCUMENT = "lessonlearningdocuments_documentid_fk";

@@ -426,7 +426,8 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
     if (!isRow(row)) continue;
     if (typeof row.lessonlearningdocumentrole !== "string" || !(LEARNING_DOCUMENT_ROLES as readonly string[]).includes(row.lessonlearningdocumentrole)) badRole += 1;
     const order = row.lessonlearningdocumentorder;
-    if (order !== undefined && order !== null && !(typeof order === "number" && Number.isInteger(order))) badOrder += 1;
+    // a missing order defaults to 0 in the database; an explicit null does not (the column is NOT NULL)
+    if (order !== undefined && !(typeof order === "number" && Number.isInteger(order))) badOrder += 1;
     if (typeof row.lessonlearningid === "string" && typeof row.documentid === "string") {
       const pair = `${lower(row.lessonlearningid)}/${lower(row.documentid)}`;
       if (pairs.has(pair)) repeatedPairs += 1;

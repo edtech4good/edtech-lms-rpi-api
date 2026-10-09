@@ -1249,6 +1249,26 @@ describe("learning items: the type and body of a learning, and its link rows", (
       await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row hangs from a lessonlearnings row \(lessonlearningid\) that is not in the payload\.$/);
     });
 
+    it("a link row with a null order (the column is NOT NULL) is refused; a missing order is accepted (the column defaults to 0)", async () => {
+      const p = base();
+      p.lessonlearningdocuments[0].lessonlearningdocumentorder = null;
+      await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row has a lessonlearningdocumentorder that is not a whole number\.$/);
+      const q = base();
+      delete q.lessonlearningdocuments[0].lessonlearningdocumentorder;
+      install({});
+      await expect(importIt(payloadOf(q))).resolves.toMatchObject({ error: false, data: true });
+      expect(store.lessonlearningdocuments).toHaveLength(1);
+    });
+
+    it("a link row with no documentid (null, or missing) is refused by the validator's own message", async () => {
+      const p = base();
+      p.lessonlearningdocuments[0].documentid = null;
+      await invalid(payloadOf(p), /^lessonlearningdocuments: 1 row points at a documents row \(documentid\) that is not in the payload\.$/);
+      const q = base();
+      delete q.lessonlearningdocuments[0].documentid;
+      await invalid(payloadOf(q), /^lessonlearningdocuments: 1 row points at a documents row \(documentid\) that is not in the payload\.$/);
+    });
+
     it("a link row with an unknown role, a fractional order, or a repeated learning-and-document pair", async () => {
       const p = base();
       p.lessonlearningdocuments = [
