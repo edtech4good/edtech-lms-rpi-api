@@ -26,6 +26,7 @@ import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
 import { subjects } from "src/models/data-models/subjects";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
+import { DEFAULT_DOCUMENT_LICENCE, normaliseDocumentAttribution, normaliseDocumentTitle } from "src/constants/media-library";
 import { dbinstance } from "src/services/dbservice";
 import { CONTENT_TABLES, OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
 import { AmbiguousCountryName, matchCountriesByName, mysqlCountryNames, rehomeCountriesByName, rewriteCountryReferences } from "./country-rehoming";
@@ -162,8 +163,36 @@ const OWNED_UPDATE: Partial<Record<TableKey, string[]>> = {
     "lastupdated",
     "organisationid",
   ],
-  documents: ["documenttypeid", "documentname", "documents3meta", "isdeleted", "documenttags", "lastupdated", "organisationid"],
+  documents: [
+    "documenttypeid",
+    "documentname",
+    "documents3meta",
+    "isdeleted",
+    "documenttags",
+    "lastupdated",
+    "organisationid",
+    "documenttitle",
+    "documentlicence",
+    "documentattribution",
+  ],
   subjects: ["subjectname", "subjectdescription", "subjectstatus", "isdeleted", "organisationid"],
+};
+
+/**
+ * A `documents` row as it is stored (the validator has already refused what cannot be stored): the title trimmed and null
+ * when empty, the licence its default when the row has none, the attribution without empty keys and null when nothing is
+ * left. A row from before the media library has none of the three and is stored with no title, no attribution and the
+ * default licence.
+ */
+const withMediaMetadata = (row: Row): Row => {
+  const title = normaliseDocumentTitle(row.documenttitle);
+  const attribution = normaliseDocumentAttribution(row.documentattribution);
+  return {
+    ...row,
+    documenttitle: title.ok ? title.value : null,
+    documentlicence: row.documentlicence ?? DEFAULT_DOCUMENT_LICENCE,
+    documentattribution: attribution.ok ? attribution.value : null,
+  };
 };
 
 const OWNED: TableKey[] = ["schools", "curriculums", "questions", "documents", "subjects"];
@@ -246,7 +275,7 @@ export class OrganisationContentImport {
 
     // ---- write the payload ---------------------------------------------------
     const owned = (key: TableKey): Row[] => tables[key].map((r) => ({ ...r, organisationid }));
-    await this.write("documents", owned("documents"));
+    await this.write("documents", owned("documents").map(withMediaMetadata));
     await this.write("questions", owned("questions"));
     await this.write("subjects", owned("subjects"));
     await this.write("countries", tables.countries);

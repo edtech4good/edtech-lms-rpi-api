@@ -29,6 +29,8 @@ import { Config, Logger } from "src/config";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 import { OrganisationContentImport } from "src/business/organisation-content.business";
+import { DOCUMENT_LICENCES } from "src/constants/media-library";
+import { validateOrganisationContent } from "./organisation-content.validator";
 import { collateCountryName } from "src/test-support/country-names";
 import { ImportController } from "./import.controller";
 
@@ -1343,6 +1345,183 @@ describe("learning items: the type and body of a learning, and its link rows", (
         payloadOf(p),
         /lessonlearningdocuments: 1 row has a lessonlearningdocumentrole that is not one of rendition, asset\. lessonlearningdocuments: 1 row has a lessonlearningdocumentorder that is not a whole number\. lessonlearningdocuments: 2 rows repeat a lessonlearningid and documentid pair/,
       );
+    });
+  });
+});
+
+// ---------------------------------------------------------------- media library (ML-1)
+
+/** Khmer copied from docs/khmer-text.md (a place name) and from the fixtures above (a document name). */
+const KHMER_TITLE = "ភ្នំពេញ";
+const KHMER_TITLE_2 = "ឯកសារ";
+
+describe("documents: a title, a licence and an attribution (media library, ML-1)", () => {
+  const withMetadata = (extra: Row, tag = "x", n = 1, owner: string | null = ORG_X): Store => {
+    const data = content(tag, n, owner);
+    data.documents[0] = { ...data.documents[0], ...extra };
+    return data;
+  };
+  const attribution = { v: 1, author: "Sok Dara", sourceurl: "https://example.org/photo/1", adaptedfrom: "ភ្នំពេញ" };
+  const documentRow = (id = "x-doc-1") => store.documents.find((r) => r.documentid === id)!;
+
+  describe("written, and updated by a second import", () => {
+    it("a Khmer title, a licence and an attribution are stored on the row, and the answer still counts the rows", async () => {
+      install({});
+      const result: any = await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE, documentlicence: "CC-BY-4.0", documentattribution: attribution }))); // eslint-disable-line @typescript-eslint/no-explicit-any
+      expect(documentRow()).toMatchObject({ documentid: "x-doc-1", documentname: KHMER_TITLE_2, documenttitle: KHMER_TITLE, documentlicence: "CC-BY-4.0", documentattribution: attribution });
+      expect(result.counts.documents).toEqual({ deleted: 0, written: 1, markedDeleted: 0 });
+    });
+
+    it("the three columns are in the documents upsert list (an upsert overwrites only the columns listed)", async () => {
+      install({});
+      await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE })));
+      const list = (documents.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate;
+      expect(list).toEqual(expect.arrayContaining(["documenttitle", "documentlicence", "documentattribution"]));
+      // and the columns that were there are still there
+      expect(list).toEqual(expect.arrayContaining(["documenttypeid", "documentname", "documents3meta", "isdeleted", "documenttags", "lastupdated", "organisationid"]));
+    });
+
+    it("a second import with the title changed updates the stored title", async () => {
+      install({});
+      await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE, documentlicence: "CC-BY-4.0", documentattribution: attribution })));
+      await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE_2, documentlicence: "CC0-1.0", documentattribution: { v: 1, author: "Chan" } })));
+      expect(documentRow()).toMatchObject({ documenttitle: KHMER_TITLE_2, documentlicence: "CC0-1.0", documentattribution: { v: 1, author: "Chan" } });
+      expect(store.documents.filter((r) => r.organisationid === ORG_X)).toHaveLength(1);
+    });
+
+    it("the UPSERT carries the change when the row survives the delete (the delete is stubbed to keep the document)", async () => {
+      install({});
+      await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE, documentlicence: "CC-BY-4.0", documentattribution: attribution })));
+      jest.spyOn(documents, "destroy").mockResolvedValue(0 as never);
+      await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE_2, documentlicence: "CC-BY-SA-3.0", documentattribution: null })));
+      expect(documentRow()).toMatchObject({ documenttitle: KHMER_TITLE_2, documentlicence: "CC-BY-SA-3.0", documentattribution: null });
+    });
+
+    it("a title is stored trimmed, a blank one as null, an empty attribution key is dropped and an attribution with no key left is null", async () => {
+      install({});
+      await importIt(payloadOf(withMetadata({ documenttitle: `  ${KHMER_TITLE}  `, documentattribution: { v: 1, author: "Sok Dara", sourceurl: "  ", adaptedfrom: "" } })));
+      expect(documentRow()).toMatchObject({ documenttitle: KHMER_TITLE, documentattribution: { v: 1, author: "Sok Dara" } });
+      await importIt(payloadOf(withMetadata({ documenttitle: "   ", documentattribution: { v: 1, author: " ", sourceurl: "" } })));
+      expect(documentRow()).toMatchObject({ documenttitle: null, documentattribution: null });
+      await importIt(payloadOf(withMetadata({ documenttitle: "", documentattribution: { v: 1 } })));
+      expect(documentRow()).toMatchObject({ documenttitle: null, documentattribution: null });
+    });
+
+    it("a title of exactly 255 characters is stored, and Khmer marks are kept as sent (no normalisation)", async () => {
+      install({});
+      const long = KHMER_TITLE.repeat(37).slice(0, 255);
+      expect(long).toHaveLength(255);
+      await importIt(payloadOf(withMetadata({ documenttitle: long })));
+      expect(documentRow().documenttitle).toBe(long);
+      const marks = "កម្ពុជ៉ា";
+      await importIt(payloadOf(withMetadata({ documenttitle: marks })));
+      expect(documentRow().documenttitle).toBe(marks);
+    });
+
+    it("every licence of the closed list is accepted", () => {
+      for (const licence of DOCUMENT_LICENCES) {
+        expect(() => validateOrganisationContent(payloadOf(withMetadata({ documentlicence: licence })))).not.toThrow();
+      }
+      expect(DOCUMENT_LICENCES).toEqual(expect.arrayContaining(["CC0-1.0", "CC-BY-2.0", "CC-BY-NC-ND-4.0", "LicenseRef-all-rights-reserved", "unspecified"]));
+      expect(DOCUMENT_LICENCES).toHaveLength(21);
+    });
+  });
+
+  describe("an export from before the media library (no columns) still imports", () => {
+    it("is accepted; the row has no title, no attribution and the licence 'unspecified'", async () => {
+      install({});
+      const old = content("x", 1, ORG_X);
+      expect(Object.keys(old.documents[0])).not.toEqual(expect.arrayContaining(["documenttitle"]));
+      await importIt(payloadOf(old));
+      expect(documentRow()).toMatchObject({ documenttitle: null, documentlicence: "unspecified", documentattribution: null });
+    });
+
+    it("importing it over a row that had a title leaves no title (a replace, as for every column)", async () => {
+      install({});
+      await importIt(payloadOf(withMetadata({ documenttitle: KHMER_TITLE, documentlicence: "CC-BY-4.0" })));
+      await importIt(payloadOf(content("x", 1, ORG_X)));
+      expect(documentRow()).toMatchObject({ documenttitle: null, documentlicence: "unspecified" });
+    });
+
+    it("a row that has only some of the columns is checked on those and defaulted on the rest", async () => {
+      install({});
+      await importIt(payloadOf(withMetadata({ documentlicence: "CC0-1.0" })));
+      expect(documentRow()).toMatchObject({ documenttitle: null, documentlicence: "CC0-1.0", documentattribution: null });
+    });
+  });
+
+  describe("refused before anything is written, with the validator's own message and no ids", () => {
+    const invalid = async (payload: Row, message: RegExp) => {
+      install(dbBefore());
+      const snapshot = cloneDeep(store);
+      const error = await importIt(payload).catch((e) => e);
+      expect(error).toMatchObject({ status: 400, message: expect.stringMatching(message) });
+      expect(error.message).not.toMatch(/x-doc-1|x-doc-3/);
+      expect(store).toEqual(snapshot);
+      expect(writes).toEqual([]);
+      expect(queries).toEqual([]);
+      expect(tnx.commit).not.toHaveBeenCalled();
+    };
+    const KNOWN = DOCUMENT_LICENCES.join(", ").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    it("a licence this server does not know", async () => {
+      await invalid(payloadOf(withMetadata({ documentlicence: "GPL-3.0" })), new RegExp(`^documents: 1 row has a documentlicence this server does not know \\(it knows: ${KNOWN}\\)\\.$`));
+    });
+
+    it("a licence that differs only in case, a number and an empty string are unknown too", async () => {
+      for (const licence of ["cc-by-4.0", "CC-BY-5.0", 4, "", " unspecified", true]) {
+        await invalid(payloadOf(withMetadata({ documentlicence: licence })), /documentlicence this server does not know/);
+      }
+    });
+
+    it("a null licence: the column is never empty", async () => {
+      await invalid(payloadOf(withMetadata({ documentlicence: null })), /^documents: 1 row has a null documentlicence, which is never empty \(leave the key out for the default\)\.$/);
+    });
+
+    it("a title over 255 characters, with a control character, or not a string", async () => {
+      const message = /^documents: 1 row has a documenttitle that is not a string of at most 255 characters without control characters\.$/;
+      for (const title of [KHMER_TITLE.repeat(37).slice(0, 256), `a${String.fromCharCode(0)}b`, "a\nb", "a\tb", 5, {}, [], false]) {
+        await invalid(payloadOf(withMetadata({ documenttitle: title })), message);
+      }
+    });
+
+    it("an attribution that is not the versioned object", async () => {
+      const message = /^documents: 1 row has a documentattribution that is not null or an object of version 1 with only author, sourceurl and adaptedfrom/;
+      const bad: unknown[] = [
+        "{}",
+        [],
+        7,
+        {},
+        { author: "x" }, // no v
+        { v: 2, author: "x" },
+        { v: "1", author: "x" },
+        { v: 1, publisher: "x" }, // an unknown key
+        { v: 1, author: 5 },
+        { v: 1, author: "a".repeat(256) },
+        { v: 1, sourceurl: "javascript:alert(1)" },
+        { v: 1, sourceurl: "ftp://example.org/x" },
+        { v: 1, sourceurl: "not a url" },
+        { v: 1, sourceurl: `https://example.org/${"a".repeat(2048)}` },
+        { v: 1, adaptedfrom: "a".repeat(1025) },
+        { v: 1, author: "ក".repeat(255), sourceurl: `https://example.org/${"a".repeat(2028)}`, adaptedfrom: "ក".repeat(1024) }, // each within its bound, over 4 KiB together
+      ];
+      for (const value of bad) await invalid(payloadOf(withMetadata({ documentattribution: value })), message);
+    });
+
+    it("counts the rows (two bad rows), names every kind at once, and reports them with the other problems", async () => {
+      const data = withMetadata({ documentlicence: "nope" });
+      data.documents.push({ documentid: "x-doc-2", documenttypeid: 6, documentname: "ក", isdeleted: false, organisationid: ORG_X, documentlicence: "nope", documenttitle: 3 });
+      await invalid(
+        payloadOf(data),
+        /^documents: 1 row has a documenttitle that[^]*documents: 2 rows have a documentlicence this server does not know/,
+      );
+    });
+
+    it("a bad row on a refused payload writes nothing to the other organisations' rows either", async () => {
+      install(dbBefore());
+      const before = cloneDeep(notX(store));
+      await expect(importIt(payloadOf(withMetadata({ documentlicence: "nope" })))).rejects.toMatchObject({ status: 400 });
+      expect(notX(store)).toEqual(before);
     });
   });
 });
