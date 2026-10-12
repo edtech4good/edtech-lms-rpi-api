@@ -100,7 +100,7 @@ A school can run this code on a classroom server without ever touching the onlin
 - `npm run provision -- …` provisions a classroom server (see above and `scripts/provision/README.md`).
 - `npm run format` runs Prettier.
 
-`npm test` prints "no test specified". There are no unit tests here. The Playwright suites in [edtech-lms-ui](https://github.com/edtech4good/edtech-lms-ui) cover this API, including a SQL injection suite that targets it directly.
+`npm test` runs the Jest suite. The Playwright suites in [edtech-lms-ui](https://github.com/edtech4good/edtech-lms-ui) cover this API, including a SQL injection suite that targets it directly.
 
 ## Layout
 
