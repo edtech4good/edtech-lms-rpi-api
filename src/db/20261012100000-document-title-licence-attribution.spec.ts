@@ -11,7 +11,8 @@ export {};
 const migration = require("./migrations/20261012100000-document-title-licence-attribution");
 
 type Doc = { id: string; typeid: number; name: string; title?: string | null; licence?: string; attribution?: unknown };
-type State = { docs?: Doc[]; columns?: string[] };
+type Learning = { id: string; documentid: string };
+type State = { docs?: Doc[]; columns?: string[]; learnings?: Learning[] };
 
 const BASE_COLUMNS = ["documentid", "documenttypeid", "documentname"];
 // The old upload rule: letters, digits and underscores, 1 to 25 of them, then one extension. (The statement's pattern is
@@ -21,6 +22,7 @@ const fitsOldRule = (name: string) => /^[a-zA-Z0-9_]{1,25}\.[^.]*$/.test(name);
 const makeDb = (state: State = {}) => {
   const columns = new Set(state.columns ?? BASE_COLUMNS);
   const docs: Doc[] = (state.docs ?? []).map((d) => ({ ...d }));
+  const learnings: Learning[] = state.learnings ?? [];
   const statements: string[] = [];
   const added: Array<{ column: string; definition: Record<string, unknown> }> = [];
   const removed: string[] = [];
@@ -61,6 +63,10 @@ const makeDb = (state: State = {}) => {
           const per = new Map<number, number>();
           for (const d of docs) per.set(d.typeid, (per.get(d.typeid) ?? 0) + 1);
           return [...per.entries()].sort((a, b) => a[0] - b[0]).map(([type, n]) => ({ type, n: String(n) }));
+        }
+        if (/^SELECT COUNT\(\*\) AS n FROM lessonlearnings l JOIN documents d ON d\.documentid = l\.documentid WHERE d\.documenttypeid <> 2$/.test(sql)) {
+          const typeOf = new Map(docs.map((d) => [d.id, d.typeid]));
+          return [{ n: learnings.filter((l) => typeOf.has(l.documentid) && typeOf.get(l.documentid) !== 2).length }];
         }
         if (/REGEXP_LIKE\(documentname, '\^\[a-zA-Z0-9_\]\{1,25\}\[\.\]\[\^\.\]\*\$', 'c'\)/.test(sql)) {
           return [{ n: docs.filter((d) => !fitsOldRule(d.name)).length }];
@@ -169,11 +175,18 @@ describe("S-ML1 up()", () => {
         { id: "f", typeid: 1, name: "ភ្នំពេញ.mp3" },
         { id: "g", typeid: 1, name: "two.dots.mp3" },
       ],
+      // two learnings sit on a document that is not a video (b is a video, d a PDF, c an image), one on a video, one on a document that is gone
+      learnings: [
+        { id: "l1", documentid: "a" },
+        { id: "l2", documentid: "d" },
+        { id: "l3", documentid: "c" },
+        { id: "l4", documentid: "missing" },
+      ],
     });
     await migration.up(db.qi);
     expect(log).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(
-      "S-ML1 documents: documents_by_documenttypeid=1:2,2:2,5:2,6:1 names_failing_the_old_upload_rule=5 (reported, nothing changed)",
+      "S-ML1 documents: documents_by_documenttypeid=1:2,2:2,5:2,6:1 learnings_on_a_non_video_document=2 names_failing_the_old_upload_rule=5 (reported, nothing changed)",
     );
     expect(String(log.mock.calls[0][0])).not.toMatch(/intro|dcrs|demo|ភ្នំពេញ/);
     expect(writes(db)).toEqual([]);
@@ -182,7 +195,7 @@ describe("S-ML1 up()", () => {
   it("an empty table prints 'none' and 0", async () => {
     const db = makeDb();
     await migration.up(db.qi);
-    expect(log).toHaveBeenCalledWith("S-ML1 documents: documents_by_documenttypeid=none names_failing_the_old_upload_rule=0 (reported, nothing changed)");
+    expect(log).toHaveBeenCalledWith("S-ML1 documents: documents_by_documenttypeid=none learnings_on_a_non_video_document=0 names_failing_the_old_upload_rule=0 (reported, nothing changed)");
   });
 });
 

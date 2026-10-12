@@ -17,9 +17,10 @@ import { addColumnIfMissing, removeColumnIfPresent } from "../migration-helpers"
  *
  * ## Reports, changes nothing
  *
- * `up()` prints, as counts only: the documents per `documenttypeid`, and the documents whose `documentname` does not
+ * `up()` prints, as counts only: the documents per `documenttypeid`; the learnings whose document is not a VIDEO
+ * document (design note section 12; the video rule of section 7 refuses such a payload from now on); and the documents whose `documentname` does not
  * fit the old upload rule (letters, digits and underscores, at most 25, then one extension) that a key made from the
- * original name had to follow. Both are for the operator; no row is touched because of them.
+ * original name had to follow. All are for the operator; no row is touched because of them.
  *
  * ## Idempotence
  *
@@ -36,6 +37,8 @@ const TITLE = "documenttitle";
 const LICENCE = "documentlicence";
 const ATTRIBUTION = "documentattribution";
 const UNSPECIFIED = "unspecified";
+/** `documents.documenttypeid` of a VIDEO document. */
+const VIDEO_DOCUMENT_TYPE_ID = 2;
 
 /** How many offending ids a refusal lists. The count is always exact. */
 const LISTED_IDS = 50;
@@ -60,12 +63,18 @@ async function report(queryInterface: QueryInterface, transaction: Transaction):
     { type: QueryTypes.SELECT, transaction },
   )) as Array<{ type: number | string; n: number | string }>;
   const byType = perType.length === 0 ? "none" : perType.map((r) => `${r.type}:${Number(r.n)}`).join(",");
+  // the same query S-LI1 prints: a learning whose document is not a VIDEO document (the video rule, design note section 7)
+  const notVideo = await count(
+    queryInterface,
+    `SELECT COUNT(*) AS n FROM lessonlearnings l JOIN documents d ON d.documentid = l.documentid WHERE d.documenttypeid <> ${VIDEO_DOCUMENT_TYPE_ID}`,
+    transaction,
+  );
   const failing = await count(
     queryInterface,
     `SELECT COUNT(*) AS n FROM \`${TABLE}\` WHERE NOT REGEXP_LIKE(documentname, '^[a-zA-Z0-9_]{1,25}[.][^.]*$', 'c')`,
     transaction,
   );
-  console.log(`S-ML1 ${TABLE}: documents_by_documenttypeid=${byType} names_failing_the_old_upload_rule=${failing} (reported, nothing changed)`);
+  console.log(`S-ML1 ${TABLE}: documents_by_documenttypeid=${byType} learnings_on_a_non_video_document=${notVideo} names_failing_the_old_upload_rule=${failing} (reported, nothing changed)`);
 }
 
 /** The ids that make `down()` refuse, per rule. Reads only. */

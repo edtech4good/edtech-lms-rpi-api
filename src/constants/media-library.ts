@@ -54,10 +54,15 @@ export const normaliseDocumentTitle = (value: unknown): { ok: true; value: strin
   return { ok: true, value: trimmed };
 };
 
+/**
+ * An absolute http(s) address: written with the scheme and `//` (the URL parser also accepts "http:foo" and
+ * "https:example.org" and fills the rest in), parsing, with a host.
+ */
 const isHttpUrl = (value: string): boolean => {
+  if (!/^https?:\/\//i.test(value)) return false;
   try {
     const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
+    return (url.protocol === "http:" || url.protocol === "https:") && url.hostname.length > 0;
   } catch {
     return false;
   }

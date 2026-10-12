@@ -1501,6 +1501,11 @@ describe("documents: a title, a licence and an attribution (media library, ML-1)
         { v: 1, sourceurl: "javascript:alert(1)" },
         { v: 1, sourceurl: "ftp://example.org/x" },
         { v: 1, sourceurl: "not a url" },
+        { v: 1, sourceurl: "http:foo" }, // the parser fills in a host; an address is written with the scheme and //
+        { v: 1, sourceurl: "https:example.org" },
+        { v: 1, sourceurl: "http:/example.org" },
+        { v: 1, sourceurl: "http://" },
+        { v: 1, sourceurl: "https:///" },
         { v: 1, sourceurl: `https://example.org/${"a".repeat(2048)}` },
         { v: 1, adaptedfrom: "a".repeat(1025) },
         { v: 1, author: "ក".repeat(255), sourceurl: `https://example.org/${"a".repeat(2028)}`, adaptedfrom: "ក".repeat(1024) }, // each within its bound, over 4 KiB together
