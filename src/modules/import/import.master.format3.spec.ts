@@ -234,7 +234,7 @@ const content = (tag: string, n: number, owner: string | null): Store => {
       { questionid: k("q1"), questiontext: "សំណួរ ១", isdeleted: false, ...own },
       { questionid: k("q2"), questiontext: "សំណួរ ២", isdeleted: false, ...own },
     ],
-    documents: [{ documentid: k("doc"), documentname: "ឯកសារ", isdeleted: false, ...own }],
+    documents: [{ documentid: k("doc"), documenttypeid: 2, documentname: "ឯកសារ", isdeleted: false, ...own }],
     schools: [{ schoolid: k("school"), schoolname: `សាលា ${tag}${n}`, countryid: "c-kh", isdeleted: false, ...own }],
     standards: [{ standardid: k("std"), standardname: "ថ្នាក់ទី១", schoolid: k("school") }],
     curriculumbaselines: [{ curriculumbaselineid: k("bl"), curriculumid: k("cur") }],
@@ -1075,7 +1075,7 @@ const itemsOf = (tag: string, n: number, owner: string | null): Store => {
   const k = (kind: string) => `${tag}-${kind}-${n}`;
   const own = owner === null ? { organisationid: null } : { organisationid: owner };
   return {
-    documents: [{ documentid: k("docb"), documentname: "វីដេអូទីពីរ", isdeleted: false, ...own }],
+    documents: [{ documentid: k("docb"), documenttypeid: 2, documentname: "វីដេអូទីពីរ", isdeleted: false, ...own }],
     lessonlearningdocuments: [
       { lessonlearningdocumentid: k("lld"), lessonlearningid: k("ll"), documentid: k("docb"), lessonlearningdocumentrole: "asset", lessonlearningdocumentorder: 1 },
     ],
@@ -1235,6 +1235,69 @@ describe("learning items: the type and body of a learning, and its link rows", (
       const p = base();
       p.lessonlearnings[0].documentid = null;
       await invalid(payloadOf(p), /^lessonlearnings: 1 row has no documentid, and the type of the item needs one\.$/);
+    });
+
+    describe("a video item's file must be a VIDEO document (design note section 7)", () => {
+      const message = /^lessonlearnings: 1 row of type video points at a document that is not a video \(its documenttypeid must be 2\)\.$/;
+      const imageType = 6;
+
+      it("a video item on an IMAGE document: the validator's own message, no id in it, nothing written", async () => {
+        const p = base();
+        p.documents[0].documenttypeid = imageType;
+        await invalid(payloadOf(p), message);
+        mockZipContaining(payloadOf(p));
+        const error = await new ImportController().completesync(file, server).catch((e) => e);
+        expect(error.message).not.toContain("x-doc-1");
+        expect(error.message).not.toContain("x-ll-1");
+      });
+
+      it("a PDF (5), an unknown type, a numeric string, a missing documenttypeid and a null are each refused", async () => {
+        for (const type of [5, 0, 7, 99, "2", null, undefined]) {
+          const p = base();
+          if (type === undefined) delete p.documents[0].documenttypeid;
+          else p.documents[0].documenttypeid = type;
+          await invalid(payloadOf(p), message);
+        }
+      });
+
+      it("counts the rows: two video items on non-video documents are '2 rows ... point'", async () => {
+        const p = base();
+        p.documents[0].documenttypeid = imageType;
+        p.lessonlearnings.push({ ...p.lessonlearnings[0], lessonlearningid: "x-ll-2" });
+        await invalid(payloadOf(p), /^lessonlearnings: 2 rows of type video point at a document that is not a video \(its documenttypeid must be 2\)\.$/);
+      });
+
+      it("is reported together with the other problems of the payload", async () => {
+        const p = base();
+        p.documents[0].documenttypeid = imageType;
+        p.lessonlearningdocuments[0].lessonlearningdocumentrole = "poster";
+        await invalid(payloadOf(p), /not a video[^]*lessonlearningdocumentrole that is not one of rendition, asset/);
+      });
+
+      it("a video item on a VIDEO document is accepted, and so are a non-video asset link row and a non-video lesson plan document", async () => {
+        install({});
+        const p = base();
+        p.documents[1].documenttypeid = 5; // the item's second document, linked as an asset
+        p.documents.push({ documentid: "x-pdf-1", documenttypeid: 5, documentname: "ឯកសារ", isdeleted: false, organisationid: ORG_X });
+        p.lessonplans[0].documentid = "x-pdf-1"; // a teacher plan may be a PDF
+        await importIt(payloadOf(p));
+        expect(store.lessonlearnings.map((r) => r.documentid)).toEqual(["x-doc-1"]);
+        expect(store.documents.map((r) => r.documentid).sort()).toEqual(["x-doc-1", "x-docb-1", "x-pdf-1"]);
+      });
+
+      it("a video item whose document is not in the payload gets the missing-reference message, not this one", async () => {
+        const p = base();
+        p.lessonlearnings[0].documentid = "y-doc-1";
+        await invalid(payloadOf(p), /^lessonlearnings: 1 row points at a documents row \(documentid\) that is not in the payload\.$/);
+      });
+
+      it("the ids are compared without regard to case, as every other reference is", async () => {
+        const p = base();
+        p.documents[0].documentid = "X-DOC-1";
+        p.documents[0].documenttypeid = imageType;
+        p.lessonplans[0].documentid = "X-DOC-1";
+        await invalid(payloadOf(p), message);
+      });
     });
 
     it("a link row naming a document that is not in the payload", async () => {
