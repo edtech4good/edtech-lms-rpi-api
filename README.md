@@ -98,7 +98,7 @@ A school can run this code on a classroom server without ever touching the onlin
 - `npm run db:check-owners [-- --ids]` is the pre-flight for S4: it prints, per column, how many rows have no owner or school (with `--ids`, which), and exits 1 when any do. Run it before `db:migrate`.
 - `scripts/ci/schema-drift.sh` is the schema-drift check (the `schema-drift` CI job). This server calls `sequelize.sync()` at boot, so a model that declares a table or index no migration creates would be created silently, on every server, at its first start. The script migrates an empty database, dumps `SHOW CREATE TABLE` for every table, boots the built server once (`RPI_OFFLINE=true`), dumps again and fails on any difference; it also runs `npm run db:check-indexes` and compares the models' columns with the database (sync never adds columns). Run it locally against a scratch database: `RPI_DB_NAME=scratch RPI_DB_USER=... RPI_DB_PASSWORD=... RPI_PORT=3013 scripts/ci/schema-drift.sh` (needs `npm run build` first and an empty database; create it with `CREATE DATABASE scratch_db COLLATE utf8mb4_0900_ai_ci`, the default of a stock MySQL 8 server and what CI gets; a local server may default to another collation, which would hide a gap).
 - `npm run provision -- …` provisions a classroom server (see above and `scripts/provision/README.md`).
-- `npm run lint` and `npm run format` run ESLint and Prettier.
+- `npm run format` runs Prettier.
 
 `npm test` prints "no test specified". There are no unit tests here. The Playwright suites in [edtech-lms-ui](https://github.com/edtech4good/edtech-lms-ui) cover this API, including a SQL injection suite that targets it directly.
 
