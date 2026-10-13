@@ -12,10 +12,9 @@ Branch from main with a descriptive name. Make your changes in that branch. When
 
 What to verify before opening a PR
 
-Run the linter and formatter:
+Run the formatter:
 
 ```bash
-npm run lint
 npm run format
 ```
 
