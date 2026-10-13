@@ -104,6 +104,27 @@ describe("the sample content payload", () => {
     );
   });
 
+  it("is the sample as it was before the media library: no document carries a title, a licence or an attribution, and it validates", () => {
+    const body = sample();
+    const documents = body.documents as Row[];
+    expect(documents.length).toBeGreaterThan(0);
+    for (const row of documents) {
+      expect(Object.keys(row)).not.toEqual(expect.arrayContaining(["documenttitle"]));
+      expect(Object.keys(row)).not.toEqual(expect.arrayContaining(["documentlicence"]));
+      expect(Object.keys(row)).not.toEqual(expect.arrayContaining(["documentattribution"]));
+    }
+    // every learning's document is a VIDEO document (the video rule), so the sample is accepted as it is
+    const types = new Map(documents.map((d) => [d.documentid, d.documenttypeid]));
+    expect((body.lessonlearnings as Row[]).map((l) => types.get(l.documentid))).toEqual([2, 2]);
+    expect(() => validatePayload(body)).not.toThrow();
+  });
+
+  it("a video learning on a document that is not a video is refused, with the validator's own message and no ids", () => {
+    const body = sample();
+    (body.documents as Row[])[0].documenttypeid = 6;
+    expect(refusal(() => validatePayload(body))).toMatch(/^The content payload is refused: lessonlearnings: \d+ rows? of type video points? at a document that is not a video \(its documenttypeid must be 2\)\.$/);
+  });
+
   it("a learning without a type is refused", () => {
     const body = sample();
     body.lessonlearnings = (body.lessonlearnings as Row[]).map(({ lessonlearningtype, ...rest }) => {

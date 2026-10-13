@@ -44,6 +44,10 @@ holds one school. The rules, in `src/business/`:
   knows; `src/constants/learning-items.ts`) and the payload must carry `lessonlearningdocuments`
   (the item's further documents, empty today): a payload without that key, such as one exported
   before learning items, is refused.
+  A `video` item must name a VIDEO document (`documenttypeid` 2) of the payload. A `documents` row may carry
+  `documenttitle`, `documentlicence` (a closed list in `src/constants/media-library.ts`; never null; the
+  default is `unspecified`) and `documentattribution` (a versioned object): each is checked when the row has
+  the key, and an older export without them is still accepted. `documentname` stays the storage key.
   `PUT /import/ownership` fills empty owners only (since S4 there are none; it
   remains for databases that have not reached S4).
 - Seven columns are required (NOT NULL): `organisationid` on `schools`,

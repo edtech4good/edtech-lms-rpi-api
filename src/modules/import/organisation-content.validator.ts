@@ -4,6 +4,14 @@ import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { fieldForJoiDetail, humanizeJoiMessage } from "src/utils/joi-message";
 import { ORGANISATION_CODE, OwnershipOrganisation, organisation as organisationRow } from "./ownership.request.validator";
 import { LEARNING_DOCUMENT_ROLES, LEARNING_ITEM_RULES, LEARNING_ITEM_TYPES, isLearningItemType } from "src/constants/learning-items";
+import {
+  DOCUMENT_LICENCES,
+  DOCUMENT_TITLE_MAX,
+  VIDEO_DOCUMENT_TYPE_ID,
+  isDocumentLicence,
+  normaliseDocumentAttribution,
+  normaliseDocumentTitle,
+} from "src/constants/media-library";
 
 /**
  * The format-3 content payload: what `PUT /import/master` receives when it
@@ -32,6 +40,12 @@ import { LEARNING_DOCUMENT_ROLES, LEARNING_ITEM_RULES, LEARNING_ITEM_TYPES, isLe
  * documents; each row hangs from a learning and names a document of the payload.
  * `lessonlearningdocuments` is required like every other key, so a payload from
  * before learning items (which lacks it) is refused, by design.
+ *
+ * A `documents` row may carry `documenttitle`, `documentlicence` and `documentattribution` (media library): each is
+ * checked when the row has the key, and a row without it is accepted (the licence then takes its default).
+ *
+ * A `video` item's `documentid` must name a payload `documents` row whose `documenttypeid` is VIDEO (2):
+ * a PDF or a picture on a video item would reach the player and be marked done (media library, phase 0).
  */
 
 export const CONTENT_FORMAT = 3;
@@ -387,6 +401,12 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
   let unknownType = 0;
   let bodyNotNull = 0;
   let noDocument = 0;
+  let videoNotVideo = 0;
+  // the documents of the payload by id: a video item's file must be a VIDEO document (design note, section 7)
+  const documentTypes = new Map<string, unknown>();
+  for (const doc of tables.documents ?? []) {
+    if (isRow(doc) && isId(doc.documentid)) documentTypes.set(lower(doc.documentid), doc.documenttypeid);
+  }
   for (const row of itemRows) {
     if (!isRow(row)) continue;
     const type = row.lessonlearningtype;
@@ -401,6 +421,11 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
     const rule = LEARNING_ITEM_RULES[type];
     if (rule.bodyMustBeNull && row.lessonlearningbody !== undefined && row.lessonlearningbody !== null) bodyNotNull += 1;
     if (rule.documentRequired && (row.documentid === undefined || row.documentid === null || row.documentid === "")) noDocument += 1;
+    // a document that is not in the payload is reported as a missing reference above, not here
+    if (type === "video" && typeof row.documentid === "string" && documentTypes.has(lower(row.documentid))) {
+      const documenttypeid = documentTypes.get(lower(row.documentid));
+      if (typeof documenttypeid !== "number" || documenttypeid !== VIDEO_DOCUMENT_TYPE_ID) videoNotVideo += 1;
+    }
   }
   const knownTypes = LEARNING_ITEM_TYPES.join(", ");
   if (noType) problems.add("lessonlearnings", `lessonlearnings: ${rows(noType)} ${noType === 1 ? "has" : "have"} no lessonlearningtype (a string).`);
@@ -415,6 +440,50 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
   }
   if (noDocument) {
     problems.add("lessonlearnings", `lessonlearnings: ${rows(noDocument)} ${noDocument === 1 ? "has" : "have"} no documentid, and the type of ${noDocument === 1 ? "the item" : "each item"} needs one.`);
+  }
+
+  if (videoNotVideo) {
+    problems.add(
+      "lessonlearnings",
+      `lessonlearnings: ${rows(videoNotVideo)} of type video ${videoNotVideo === 1 ? "points" : "point"} at a document that is not a video (its documenttypeid must be ${VIDEO_DOCUMENT_TYPE_ID}).`,
+    );
+  }
+
+  // Documents: the media-library columns, checked only on a row that carries the column (an export from before the
+  // media library has none of them, and still imports; the licence then takes its default).
+  let badTitle = 0;
+  let nullLicence = 0;
+  let unknownLicence = 0;
+  let badAttribution = 0;
+  for (const doc of tables.documents ?? []) {
+    if (!isRow(doc)) continue;
+    if (doc.documenttitle !== undefined && !normaliseDocumentTitle(doc.documenttitle).ok) badTitle += 1;
+    if (doc.documentlicence !== undefined) {
+      if (doc.documentlicence === null) nullLicence += 1;
+      else if (!isDocumentLicence(doc.documentlicence)) unknownLicence += 1;
+    }
+    if (doc.documentattribution !== undefined && !normaliseDocumentAttribution(doc.documentattribution).ok) badAttribution += 1;
+  }
+  if (badTitle) {
+    problems.add(
+      "documents",
+      `documents: ${rows(badTitle)} ${badTitle === 1 ? "has" : "have"} a documenttitle that is not a string of at most ${DOCUMENT_TITLE_MAX} characters without control characters.`,
+    );
+  }
+  if (nullLicence) {
+    problems.add("documents", `documents: ${rows(nullLicence)} ${nullLicence === 1 ? "has" : "have"} a null documentlicence, which is never empty (leave the key out for the default).`);
+  }
+  if (unknownLicence) {
+    problems.add(
+      "documents",
+      `documents: ${rows(unknownLicence)} ${unknownLicence === 1 ? "has" : "have"} a documentlicence this server does not know (it knows: ${DOCUMENT_LICENCES.join(", ")}).`,
+    );
+  }
+  if (badAttribution) {
+    problems.add(
+      "documents",
+      `documents: ${rows(badAttribution)} ${badAttribution === 1 ? "has" : "have"} a documentattribution that is not null or an object of version 1 with only author, sourceurl and adaptedfrom, each within its length (the sourceurl an http or https address, the whole at most 4096 bytes).`,
+    );
   }
 
   const linkRows = tables.lessonlearningdocuments ?? [];
