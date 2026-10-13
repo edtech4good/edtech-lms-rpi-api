@@ -10,7 +10,7 @@ import { studentprogress } from "src/models/data-models/studentprogress";
 import { students } from "src/models/data-models/students";
 import { Token } from "src/models/token.model";
 import { levelIdsInScope } from "./content-access";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { col, fn, Op, Transaction, WhereOptions } from "sequelize";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { lessons, lessonsAttributes } from "src/models/data-models/lessons";
@@ -228,7 +228,7 @@ export class LessonBusiness {
     try {
       if (!learningprogress) {
         learningprogress = await studentlearningprogress.create({
-          studentlearningprogressid: uuidv4(),
+          studentlearningprogressid: randomUUID(),
           studentid: student.studentid,
           lessonlearningid,
           content_length: progress.content_length,
@@ -531,7 +531,7 @@ export class LessonBusiness {
         if (!lessonprogress) {
           const lsp = points >= 0 ? (Number((points*100/lesson.total_points).toFixed(2)) ?? 0) : 0;
           lessonprogress = await studentlessonsprogress.create({
-            studentlessonprogressid: uuidv4(),
+            studentlessonprogressid: randomUUID(),
             studentid: user.studentid,
             lessonid,
             levelid: lesson.level.levelid,
@@ -564,7 +564,7 @@ export class LessonBusiness {
         });
         if (!levelprogress) {
           levelprogress = await studentlevelsprogress.create({
-            studentlevelprogressid: uuidv4(),
+            studentlevelprogressid: randomUUID(),
             studentid: user.studentid,
             levelid: lesson.level.levelid,
             gradeid: grade.gradeid,
@@ -587,7 +587,7 @@ export class LessonBusiness {
         });
         if (!gradeprogress) {
           await studentgradesprogress.create({
-            studentgradeprogressid: uuidv4(),
+            studentgradeprogressid: randomUUID(),
             studentid: user.studentid,
             gradeid: grade.gradeid,
             curriculumid: grade.curriculumid,
@@ -622,7 +622,7 @@ export class LessonBusiness {
     if(level && grade && user.studentid) {
       if (!levelprogress) {
         await studentlevelsprogress.create({
-          studentlevelprogressid: uuidv4(),
+          studentlevelprogressid: randomUUID(),
           studentid: user.studentid,
           levelid: level.levelid,
           gradeid: grade.gradeid,
@@ -644,7 +644,7 @@ export class LessonBusiness {
       });
       if (!gradeprogress) {
         await studentgradesprogress.create({
-          studentgradeprogressid: uuidv4(),
+          studentgradeprogressid: randomUUID(),
           studentid: user.studentid,
           gradeid: grade.gradeid,
           curriculumid: grade.curriculumid,
@@ -1264,7 +1264,7 @@ export class LessonBusiness {
     });
     if(!active && user.studentid) {
       await studentactives.create({
-        studentactiveid: uuidv4(),
+        studentactiveid: randomUUID(),
         studentid: user.studentid,
         referenceid,
         referencetype,
@@ -1358,7 +1358,7 @@ export class LessonBusiness {
           })
           if(!stpoints) {
             await studentpoints.create({
-              studentpointid: uuidv4(),
+              studentpointid: randomUUID(),
               studentid: user.studentid,
               levelid: level.levelid,
               lessonid,
@@ -1518,7 +1518,7 @@ export class LessonBusiness {
               })
               if(!stpoints) {
                 await studentpoints.create({
-                  studentpointid: uuidv4(),
+                  studentpointid: randomUUID(),
                   studentid: user.studentid,
                   levelid: level.levelid,
                   lessonid,

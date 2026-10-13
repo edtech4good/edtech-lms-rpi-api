@@ -8,7 +8,7 @@ import { students } from "src/models/data-models/students";
 import { studenttrash } from "src/models/data-models/studenttrash";
 import { COMPLETED_PERCENTAGE } from "src/models/enums/constant.enum";
 import { Token } from "src/models/token.model";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { curriculumIdsInScope } from "./content-access";
 import { schoolRefIsOwn, schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 
@@ -229,7 +229,7 @@ export class GradeBusiness {
     });
     if(!trash && user.studentid && progress.gradeprogress == 100) {
       await studenttrash.create({
-        studenttrashid: uuidv4(),
+        studenttrashid: randomUUID(),
         studentid: user.studentid,
         gradeid,
         trashtype,
