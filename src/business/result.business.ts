@@ -3,7 +3,7 @@ import { forkJoin, from } from "rxjs";
 import { curriculumbaseline, lessonpractices, lessonquizzes, levels, studentprogress, studentprogressAttributes, studentprogressquestions, } from "src/models/data-models/init-models";
 import { Progress } from "src/models/enums/progress.enum";
 import { Token } from "src/models/token.model";
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { LessonBusiness } from "./lesson.business";
 import { Transaction, UniqueConstraintError } from "sequelize";
 import { dbinstance } from "src/services/dbservice";
@@ -45,7 +45,7 @@ const answerrow = (x: any, studentprogressid: string, referencequestionkey: stri
     return {
         ...known,
         studentprogressid,
-        studentprogressquestionid: uuidv4(),
+        studentprogressquestionid: randomUUID(),
         referencequestionid: x[referencequestionkey],
     };
 };
@@ -92,7 +92,7 @@ export class ResultBusiness {
         const tempprogress = { ...progress };
         // tempprogress.endtime = new Date();
         tempprogress.progresstype = Progress.LEVELQUIZ;
-        tempprogress.studentprogressid = uuidv4();
+        tempprogress.studentprogressid = randomUUID();
         tempprogress.marks = progress.marks;
         tempprogress.points = progress.points;
         tempprogress.fullpoints = progress.fullpoints;
@@ -134,7 +134,7 @@ export class ResultBusiness {
         const tempprogress = { ...progress };
         // tempprogress.endtime = new Date();
         tempprogress.progresstype = Progress.BASELINEQUESTION;
-        tempprogress.studentprogressid = uuidv4();
+        tempprogress.studentprogressid = randomUUID();
         tempprogress.marks = progress.marks;
         tempprogress.points = progress.points;
         tempprogress.fullpoints = progress.fullpoints;
@@ -170,7 +170,7 @@ export class ResultBusiness {
         const tempprogress: studentprogressAttributes = { ...progress };
         // tempprogress.endtime = new Date();
         tempprogress.progresstype = Progress.LESSONPRACTICE;
-        tempprogress.studentprogressid = uuidv4();
+        tempprogress.studentprogressid = randomUUID();
         tempprogress.marks = progress.marks;
         tempprogress.points = progress.points;
         tempprogress.fullpoints = progress.fullpoints;
@@ -261,7 +261,7 @@ export class ResultBusiness {
         const tempprogress = { ...progress };
         // tempprogress.endtime = new Date();
         tempprogress.progresstype = Progress.LESSONQUIZ;
-        tempprogress.studentprogressid = uuidv4();
+        tempprogress.studentprogressid = randomUUID();
         tempprogress.marks = progress.marks;
         tempprogress.points = progress.points;
         tempprogress.fullpoints = progress.fullpoints;

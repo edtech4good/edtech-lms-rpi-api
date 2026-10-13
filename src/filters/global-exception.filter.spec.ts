@@ -353,6 +353,16 @@ describe('GlobalExceptionFilter', () => {
       expect(typeof body.stack).toBe('string');
       expect(typeof body.logid).toBe('string');
     });
+
+    it('the logid is an RFC 4122 v4 uuid (36 chars, lower case) and a fresh one per exception', () => {
+      Config.fortyk.api.rpi.debug = true;
+      const first = catchAndGetBody(new Error('boom')).body.logid;
+      const second = catchAndGetBody(new Error('boom')).body.logid;
+      const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+      expect(first).toMatch(V4);
+      expect(second).toMatch(V4);
+      expect(second).not.toBe(first);
+    });
   });
 
   describe('logging', () => {

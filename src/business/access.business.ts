@@ -8,7 +8,7 @@ import { callerKindOf } from "./content-access";
 import { schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 import { Token } from "src/models/token.model";
 import { AccessBody } from "src/modules/access/models/AccessRequest";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 
 export class AccessBusiness {
     updatestudentusage = async (body: AccessBody, user: Token) => {
@@ -32,7 +32,7 @@ export class AccessBusiness {
         if(!user.schooluserid) throw new ApiError(ErrorCode.NOT_FOUND)
         if(!studentusage) {
             await studentappusages.create({
-                studentappusageid: uuidv4(),
+                studentappusageid: randomUUID(),
                 schooluserid: user.schooluserid,
                 time_spent: seconds ?? 0,
                 last_updated: body.endtime,

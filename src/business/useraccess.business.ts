@@ -1,5 +1,5 @@
 import { rpiuseraccess } from "src/models/data-models/rpiuseraccess";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 
 export class UserAccessBusiness {
   createuseraccesslog = async (userid: string, ipaddress: string, logintime: number) => {
@@ -13,7 +13,7 @@ export class UserAccessBusiness {
       status: 1,
       timespent: 0,
       ipaddress,
-      rpiuseraccessid: uuidv4(),
+      rpiuseraccessid: randomUUID(),
     });
   };
 }

@@ -18,7 +18,7 @@ import {
   UniqueConstraintError,
   ValidationError as SequelizeValidationError,
 } from 'sequelize';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { ValidationException } from '../models/ValidationException';
 import { ApiError } from '../models/ApiError';
 import { ErrorCode } from '../models/enums/errorcode.enum';
@@ -354,7 +354,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const response = ctx.getResponse();
     const request = ctx.getRequest();
     const errordetails = exception as any;
-    const logid = uuidv4();
+    const logid = randomUUID();
     const reference = generateErrorReference();
 
     const { code, status, message, hint: rawHint, fields } = mapException(exception);

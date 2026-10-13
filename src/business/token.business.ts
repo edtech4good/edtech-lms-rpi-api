@@ -3,7 +3,7 @@ import { addMinutes } from "date-fns";
 import { sign, verify } from "jsonwebtoken";
 import { Token } from "src/models/token.model";
 import { LoginTokens } from "src/modules/auth";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { Config } from "../config";
 import {
   students,
@@ -154,7 +154,7 @@ export class TokenBusiness {
       schoolid: schoolTheme?.schoolid ?? null,
       organisationid: schoolTheme?.organisationid ?? null,
     };
-    const accessid = uuidv4();
+    const accessid = randomUUID();
     const accessToken = this.generateToken(
       user.schooluserid,
       Config.fortyk.api.rpi.accessexpirationminutes,
@@ -176,7 +176,7 @@ export class TokenBusiness {
     tokentype: TokenType,
     claim: string
   ) => {
-    const misctokenid = uuidv4();
+    const misctokenid = randomUUID();
     const miscToken = this.generateToken(
       user.schooluserid,
       expiry,

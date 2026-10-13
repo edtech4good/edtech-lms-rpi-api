@@ -1,9 +1,8 @@
-import { randomInt } from "crypto";
+import { randomInt, randomUUID } from "crypto";
 import { closeSync, existsSync, openSync, unlinkSync, writeSync } from "fs";
 import { dirname } from "path";
 import { chunk } from "lodash";
 import { Op, Transaction } from "sequelize";
-import { v4 as uuidv4 } from "uuid";
 import { OrganisationContentImport } from "src/business/organisation-content.business";
 import { isSameSchoolName } from "src/business/school-identity";
 import { LocalCountry, matchCountriesByName, mysqlCountryNames, rehomeCountriesByName } from "src/business/country-rehoming";
@@ -212,7 +211,7 @@ export class Provisioner {
     if (sameNameSchools.length > 1) {
       throw new ProvisionError("More than one school here has that name. Nothing was changed.");
     }
-    let schoolid = uuidv4();
+    let schoolid: string = randomUUID();
     let schoolAction: "create" | "reuse" | "restore" = "create";
     // A school that is reused is never renamed: its stored name is used everywhere (the logins' schoolname too).
     let schoolname = options.school;
@@ -311,7 +310,7 @@ export class Provisioner {
       if (live) {
         standard = { action: "reuse", standardid: live.standardid, standardname: live.standardname };
       } else {
-        standard = { action: "create", standardid: uuidv4(), standardname: options.className };
+        standard = { action: "create", standardid: randomUUID(), standardname: options.className };
         // with a date: rows of one bulk insert share their columns, so one with none would get NULL where the others have one
         classRows.push({ standardid: standard.standardid, standardname: standard.standardname, isdeleted: false, created_at: new Date() });
       }
@@ -323,7 +322,7 @@ export class Provisioner {
       if (!username) continue;
       const existing = await schoolusers.scope("withOwnership").findOne({ where: { schoolusername: username }, transaction });
       if (!existing) {
-        logins.push({ kind, username, action: "create", schooluserid: uuidv4() });
+        logins.push({ kind, username, action: "create", schooluserid: randomUUID() });
         continue;
       }
       if (existing.isdeleted || existing.isdisabled) {
@@ -577,7 +576,7 @@ export class Provisioner {
     return {
       action: "create",
       organisation: {
-        organisationid: uuidv4(),
+        organisationid: randomUUID(),
         organisationname: options.organisation,
         organisationcode: options.code,
         organisationstatus: true,
@@ -633,7 +632,7 @@ export class Provisioner {
       if (Array.from(given).length > MAX_COUNTRY_NAME) {
         throw new ProvisionError(`--country is too long for a country name: at most ${MAX_COUNTRY_NAME} characters.`);
       }
-      return { countryid: uuidv4(), countryname: given, dbRow: null, create: true, revive: false };
+      return { countryid: randomUUID(), countryname: given, dbRow: null, create: true, revive: false };
     }
     throw new ProvisionError(
       original
