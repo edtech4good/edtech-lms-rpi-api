@@ -76,6 +76,12 @@ holds one school. The rules, in `src/business/`:
   `X-Learning-Item-Types`) must be listed in `src/cors-options.ts`, or the browser's
   preflight refuses every request that carries it; `src/cors-options.spec.ts` pins the list.
 
+## Client address
+
+The address a login stores (`rpiuseraccess.ipaddress`) is `req.ip` (`@Ip()`), the value the login throttler keys on. It is
+the socket address unless the deployment sets `TRUST_PROXY` (`server.ts`); nothing else supplies it.
+`login-ip.e2e.spec.ts` pins this with and without a trusted proxy.
+
 ## Tests and verification
 
 - `npx jest --maxWorkers=2` (never the default). `npx tsc --noEmit -p

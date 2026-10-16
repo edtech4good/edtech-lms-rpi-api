@@ -4,6 +4,7 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  Ip,
   Post,
   Request,
   UseGuards,
@@ -18,7 +19,6 @@ import {
   getSchemaPath,
 } from "@nestjs/swagger";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
-import { RealIP } from "nestjs-real-ip";
 import { UserAccessBusiness } from "src/business/useraccess.business";
 import { Logger } from "src/config";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
@@ -62,9 +62,11 @@ export class AuthController {
   // tracker key (client IP; see server.ts trust proxy note), then 429.
   @UseGuards(ThrottlerGuard)
   @Throttle(10, 60)
+  // The IP stored in rpiuseraccess is req.ip, the same value the throttler keys on:
+  // the socket address unless TRUST_PROXY is set (see server.ts).
   async login(
     @Body() body: LoginRequestBody,
-    @RealIP() ip: string
+    @Ip() ip: string
   ): Promise<LoginResponseModel> {
     const userloggedinfo = await new AuthBusiness().login(
       body.studentusername,

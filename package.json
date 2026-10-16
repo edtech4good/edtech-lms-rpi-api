@@ -67,7 +67,6 @@
     "multer": "^2.4.0",
     "mysql2": "2.2.5",
     "nest-morgan": "2.0.0",
-    "nestjs-real-ip": "2.0.0",
     "nodemailer": "6.6.2",
     "passport": "^0.6.0",
     "passport-jwt": "^4.0.1",
