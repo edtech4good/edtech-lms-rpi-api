@@ -33,7 +33,7 @@
     "model-gen": "sequelize-auto -h localhost -d test -u root -x password --dialect mysql -o ./path/to/models -l ts"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudwatch-logs": "^3.1149.0",
+    "@aws-sdk/client-cloudwatch-logs": "^3.1151.0",
     "@nestjs/common": "8.4.7",
     "@nestjs/core": "8.4.7",
     "@nestjs/jwt": "^10.0.1",
