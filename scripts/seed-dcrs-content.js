@@ -151,7 +151,7 @@ const opt = (i, text, correct, extra = {}) => ({
 // Identical to edtech-lms-api/scripts/seed-dcrs-content.js — keep in lockstep.
 const Q1_FEEDBACK = JSON.stringify({
   correctmessage: "ល្អណាស់! អ្នកយល់ច្បាស់ហើយ។",
-  incorrectmessage: "សាកល្បងម្តងទៀត ហើយពិនិត្យមេរៀនឡើងវិញ។",
+  incorrectmessage: "សាកល្បងម្តងទៀត សូមពិនិត្យមេរៀនឡើងវិញ។",
 });
 
 const QUESTIONS = [
