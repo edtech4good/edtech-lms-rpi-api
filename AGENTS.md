@@ -114,6 +114,15 @@ the socket address unless the deployment sets `TRUST_PROXY` (`server.ts`); nothi
   `npm run db:check-indexes` and compares model columns with the database (sync never
   adds columns). A new table, column or index in a model needs a migration in the same
   PR. Run it against a scratch database: see the header of the script.
+- Fifteen columns are foreign keys in the database (`20261026120000-foreign-keys-and-not-nulls`, list in
+  `src/db/foreign-keys.ts`; ON DELETE RESTRICT, ON UPDATE CASCADE) and the six `studentpoints` totals are NOT NULL.
+  The models do not declare these references; the list is the database's. A writer of one of those columns
+  refuses first, with a message, before it writes (`PUT /import/students` checks the class of every learner and the
+  content and learner of every progress row, `assertRosterClassesKnown` / `assertRosterProgressKnown` in
+  `src/business/roster-refs.ts`; the first usage row checks its login), so the database's own refusal is never the
+  answer. Content-path result routes already answer content that is not here with a 404 (`ContentAccessGuard`) before
+  they write. While the keys exist, undoing `20261008130000-indexes-sync-created` on its own is refused by MySQL
+  (ERROR 1553: its single-column indexes are the ones the keys use); undo in order.
 
 ## Khmer text
 
