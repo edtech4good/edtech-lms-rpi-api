@@ -18,6 +18,7 @@ import { CurriculumBusiness } from "./curriculum.business";
 import { GradeBusiness } from "./grade.business";
 import { ReportBusiness } from "./report.business";
 import { SchoolBusiness } from "./school.business";
+import { resolveTierLabels } from "./tier-labels";
 import { StandardBusiness } from "./standard.business";
 import { StudentBusiness } from "./student.business";
 import { TeacherBusiness } from "./teacher.business";
@@ -457,12 +458,12 @@ describe("branding: a name or an id, one school, and never an error", () => {
     const byName = await branding(NAME_A.toUpperCase());
     const byId = await branding(undefined, A);
     expect(byName).toEqual(byId);
-    expect(byId).toEqual({ error: false, data: { uitheme: "corporate", brandingconfig: { colour: "corporate" } } });
+    expect(byId).toEqual({ error: false, data: { uitheme: "corporate", brandingconfig: { colour: "corporate" }, ...resolveTierLabels(null) } });
     expect(schoolFindOne.mock.calls.every((c) => Object.keys(c[0].where).join() === "schoolid")).toBe(true);
   });
 
   it("unknown, absent, odd and ambiguous names all fall back to the default theme", async () => {
-    const fallback = { error: false, data: { uitheme: "kids", brandingconfig: null } };
+    const fallback = { error: false, data: { uitheme: "kids", brandingconfig: null, ...resolveTierLabels(null) } };
     await expect(branding("Nobody")).resolves.toEqual(fallback);
     await expect(branding()).resolves.toEqual(fallback);
     await expect(branding({ gt: "a" })).resolves.toEqual(fallback);
