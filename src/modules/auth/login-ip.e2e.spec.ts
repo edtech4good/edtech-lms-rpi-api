@@ -99,6 +99,8 @@ const CASES: Array<{ name: string; headers: Record<string, string>; proxied?: st
 const MORE_CASES: Array<{ name: string; headers: Record<string, string>; proxied?: string }> = [
   { name: "(j) X-Forwarded-For: an IPv6 address", headers: { "X-Forwarded-For": "2001:db8::1" }, proxied: "2001:db8::1" },
   { name: "(k) X-Forwarded-For: an IP address followed by text", headers: { "X-Forwarded-For": "203.0.113.9; DROP TABLE" } },
+  // net.isIP accepts an IPv6 address with a zone id of any length: 58 characters here, wider than the column (45).
+  { name: "(l) X-Forwarded-For: an IPv6 address with a long zone id (58 characters, isIP says 6)", headers: { "X-Forwarded-For": `fe80::1%${"a".repeat(50)}` } },
 ];
 
 describe("POST /auth/login stores req.ip", () => {
