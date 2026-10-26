@@ -4,6 +4,7 @@ import { differenceInSeconds, startOfDay, startOfTomorrow } from "date-fns";
 import { Op } from "sequelize";
 import { studentappusages } from "src/models/data-models/studentappusage";
 import { students } from "src/models/data-models/students";
+import { schoolusers } from "src/models/data-models/schoolusers";
 import { callerKindOf } from "./content-access";
 import { schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 import { Token } from "src/models/token.model";
@@ -31,6 +32,9 @@ export class AccessBusiness {
         });
         if(!user.schooluserid) throw new ApiError(ErrorCode.NOT_FOUND)
         if(!studentusage) {
+            // The usage row names the login (a foreign key in the database): a login this server does not hold
+            // is answered here, as a login that is not found, never by the database's own refusal.
+            if ((await schoolusers.count({ where: { schooluserid: user.schooluserid } })) === 0) throw new ApiError(ErrorCode.NOT_FOUND);
             await studentappusages.create({
                 studentappusageid: randomUUID(),
                 schooluserid: user.schooluserid,

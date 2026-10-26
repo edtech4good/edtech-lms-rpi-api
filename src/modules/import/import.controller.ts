@@ -30,6 +30,7 @@ import { exportpayload, StudentProgressBusiness } from "src/business/studentprog
 import { OrganisationContent } from "./organisation-content.validator";
 import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
 import { assertRosterBelongsToSchool, RosterSchoolError, withRequiredSchoolIds } from "src/business/school-identity";
+import { assertRosterClassesKnown, assertRosterProgressKnown, RosterRowsError } from "src/business/roster-refs";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
@@ -212,6 +213,12 @@ export class ImportController {
           // Every learner row must name a school this server has, and is refused here, before the logins
           // are written (the login writer and the learner writer each refuse their own rows again).
           await withRequiredSchoolIds(newstudents.map((x) => x.student ?? {}), tnx);
+          // The class of every learner and the content and learner of every progress row must be here: each is a
+          // foreign key in the database, and a roster that names one that is not is refused, by row, before a write.
+          await assertRosterClassesKnown(newstudents, tnx);
+          if (studentprogresses) {
+            await assertRosterProgressKnown(newstudents, studentprogresses, tnx);
+          }
           const suresult = await su.importschoolusers(newstudents, tnx);
           await st.importstudents(
             suresult.map((x: any) => {
@@ -236,7 +243,7 @@ export class ImportController {
           await tnx.commit();
         } catch(e) {
           await rollbackQuietly(tnx);
-          if (e instanceof RosterSchoolError) {
+          if (e instanceof RosterSchoolError || e instanceof RosterRowsError) {
             throw e;
           }
           throw new BadRequestException({
@@ -250,7 +257,7 @@ export class ImportController {
           data: true,
         };
       } catch (e) {
-        if (e instanceof RosterSchoolError) {
+        if (e instanceof RosterSchoolError || e instanceof RosterRowsError) {
           throw e;
         }
         throw new BadRequestException({
