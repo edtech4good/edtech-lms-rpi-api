@@ -29,11 +29,14 @@ const mockZipContaining = (payload: unknown) =>
 let held: { standards: string[]; curriculums: string[]; grades: string[]; levels: string[]; lessons: string[]; students: string[] };
 const tnx = { commit: jest.fn(), rollback: jest.fn() };
 
-/** A findAll over a list of ids, as the database answers an `IN` (the column compares without regard to letter case). */
+/** What the database compares: the columns' collation ignores letter case and pads with spaces. */
+const compared = (id: string) => id.replace(/ +$/, "").toLowerCase();
+
+/** A findAll over a list of ids, as the database answers an `IN` (the column compares without regard to letter case or trailing spaces). */
 const holding = (key: string, getIds: () => string[]) =>
   (async (options: { where: Record<string, { [k: symbol]: string[] }> }) => {
-    const asked = Object.getOwnPropertySymbols(options.where[key]).map((s) => options.where[key][s]).flat().map((id) => id.toLowerCase());
-    return getIds().filter((id) => asked.includes(id.toLowerCase())).map((id) => ({ [key]: id }));
+    const asked = new Set(Object.getOwnPropertySymbols(options.where[key]).map((s) => options.where[key][s]).flat().map(compared));
+    return getIds().filter((id) => asked.has(compared(id))).map((id) => ({ [key]: id }));
   }) as never;
 
 beforeEach(() => {
@@ -115,6 +118,32 @@ describe("PUT /import/students: the class of a learner", () => {
     expect(error.message).not.toContain(`students row ${LISTED_ROWS + 1}:`);
     expect(JSON.stringify(error.response ?? error.message)).not.toMatch(/secret-class|learner1|su1|s1\b/);
     nothingWritten();
+  });
+
+  it("a class id with trailing spaces is accepted when the class exists (the key's collation pads, so the database accepts it too)", async () => {
+    await expect(send({ studentusers: [learner(1, { standard: "class-a  " }), learner(2, { standard: "CLASS-B " })] })).resolves.toEqual({ error: false, data: true });
+    expect(tnx.commit).toHaveBeenCalledTimes(1);
+    expect(students.bulkCreate).toHaveBeenCalledTimes(2);
+    await expect(send({ studentusers: [learner(1, { standard: "  " })] })).rejects.toMatchObject(refused("students row 1: class"));
+  });
+
+  it("a roster of more than 500 distinct classes checks every one of them, the last of each chunk of 500 included", async () => {
+    const ids = Array.from({ length: 501 }, (_, i) => `class-${String(i).padStart(3, "0")}`);
+    held.standards = [...ids];
+    const roster = () => ids.map((standard, i) => learner(i + 1, { standard }));
+    await expect(send({ studentusers: roster() })).resolves.toEqual({ error: false, data: true });
+    expect(standards.findAll).toHaveBeenCalledTimes(2);
+    expect(students.bulkCreate).toHaveBeenCalledTimes(501);
+
+    // the 500th (the last of the first chunk) and the 501st (the only one of the second) each missing are refused, by position
+    for (const gone of [499, 500]) {
+      jest.clearAllMocks();
+      tnx.commit.mockResolvedValue(undefined);
+      tnx.rollback.mockResolvedValue(undefined);
+      held.standards = ids.filter((_, i) => i !== gone);
+      await expect(send({ studentusers: roster() })).rejects.toMatchObject(refused(`That roster has learners in a class this server doesn't have (students row ${gone + 1}: class). Nothing was written.`));
+      nothingWritten();
+    }
   });
 
   it("is refused the same way when the roster names its school (format 3)", async () => {

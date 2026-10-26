@@ -20,8 +20,15 @@ const LOOKUP_CHUNK = 500;
 type Row = Record<string, unknown>;
 type Holder = { findAll: (options: object) => Promise<object[]> };
 
-/** An id as the database compares it: the columns' collation ignores letter case. A missing or non-text value names nothing. */
-const idOf = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value.toLowerCase() : null);
+/**
+ * An id as the database compares it: the columns' collation ignores letter case and pads with spaces, so trailing spaces
+ * do not tell two ids apart. A missing or non-text value names nothing (so does one that is only spaces).
+ */
+const idOf = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const id = value.replace(/ +$/, "").toLowerCase();
+  return id.length > 0 ? id : null;
+};
 
 const rowsOf = (list: unknown): Row[] => (Array.isArray(list) ? (list as Row[]).filter((r) => r !== null && typeof r === "object") : []);
 

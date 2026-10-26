@@ -8,10 +8,13 @@ import { QueryInterface, QueryTypes, Transaction } from "sequelize";
  * `permissionstitle` and `roles_permissions` do not exist here, which leaves 15 of its 19 keys and the six
  * `studentpoints` totals of its 14 NOT NULLs.
  *
- * Unlike central's models, this API's models do not declare these references (no `belongsTo` on the progress
- * tables, none on `students.standard`, `rpiuseraccess.userid` or `studentappusages.schooluserid`): the list is
- * the database's, and the models are left as they are. Every one of these columns is written by a route that
- * refuses first (see `src/business/roster-refs.ts`), so the database's own refusal is never the answer.
+ * The models declare some of these references and not others, and the list is the database's, not the models':
+ * `initModels` declares 25 references (24 of them constrained; `baselinequestion.questionid` is the one without
+ * a key), and `setuprelationshipforreport`, which `src/server.ts` calls at every boot, adds 8 more `belongsTo`,
+ * among them six of this migration's columns and the polymorphic `studentprogress.studentprogressreferenceid`.
+ * Only the `initModels` ones exist when `sync()` runs, and `sync()` never alters an existing table, so the models
+ * add or change no key. Every one of these columns is written by a route that refuses first (see
+ * `src/business/roster-refs.ts`), so the database's own refusal is never the answer.
  *
  * `studentprogress.studentprogressreferenceid` is polymorphic (it names a lesson quiz or a lesson practice, by
  * `progresstype`) and is NOT here: it can have no foreign key.

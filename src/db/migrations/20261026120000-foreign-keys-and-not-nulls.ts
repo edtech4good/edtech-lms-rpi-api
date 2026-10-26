@@ -51,10 +51,11 @@ import { tableNameList } from "../migration-helpers";
  *
  * Six of the indexes that migration made (`gradeid`, `curid`, `lessonid`, `levelid`, `curriculumid`, `schooluserid`
  * on the progress tables and `studentappusages`) are the only index leading their column, so each foreign key here
- * uses it. While these keys exist, undoing that migration alone (`db:migrate:undo --name 20261008130000-...`) is
- * refused by MySQL with ERROR 1553. Undoing in order is not affected: this migration comes later, so it is undone
- * first and its down() takes the keys off before that one drops its indexes. (`undo:all` stops at
- * 20230407050046, rpi#120; nothing here changes where.)
+ * uses it. While these keys exist, undoing that migration alone (`db:migrate:undo --name 20261008130000-...`)
+ * fails partway through with ERROR 1553: its down() runs table by table, so the tables before the failing one are
+ * already undone and the schema is left half-undone. Undoing in order is not affected: this migration comes
+ * later, so it is undone first and its down() takes the keys off before that one drops its indexes. (`undo:all`
+ * stops at 20230407050046, rpi#120; nothing here changes where.)
  */
 
 interface ColumnRow {

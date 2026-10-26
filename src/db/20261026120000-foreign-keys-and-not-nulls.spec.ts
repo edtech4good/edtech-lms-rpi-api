@@ -7,7 +7,7 @@
  * same schema, was run on real MySQL 8 (see the change description).
  */
 import { Sequelize } from "sequelize";
-import { initModels } from "src/models/data-models/init-models";
+import { initModels, setuprelationshipforreport } from "src/models/data-models/init-models";
 import { FOREIGN_KEYS, NOT_NULL_COLUMNS } from "./foreign-keys";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -52,7 +52,22 @@ describe("the lists match the models", () => {
     expect(NOT_NULLS).toHaveLength(6);
   });
 
-  it("the child and parent columns of all 15 keys are columns of the compiled models (the models themselves declare none of these references)", () => {
+  /** Every reference the models declare: `table.column` -> `parentTable.parentColumn`. */
+  const declaredReferences = (sequelize: Sequelize): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const m of Object.values(sequelize.models)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const [column, attribute] of Object.entries(m.rawAttributes as Record<string, any>)) {
+        const ref = attribute.references;
+        if (!ref) continue;
+        const parent = typeof ref.model === "string" ? ref.model : (ref.model.tableName ?? ref.model.table ?? String(ref.model));
+        out.set(`${String(m.getTableName())}.${column}`, `${parent}.${ref.key}`);
+      }
+    }
+    return out;
+  };
+
+  it("the child and parent columns of all 15 keys are columns of the compiled models; the models declare some of these references (initModels) and the boot path adds more, never a different one", () => {
     const sequelize = new Sequelize("none", "none", "none", { dialect: "mysql" });
     initModels(sequelize);
     const byTable = new Map(Object.values(sequelize.models).map((m) => [String(m.getTableName()), m]));
@@ -61,15 +76,30 @@ describe("the lists match the models", () => {
     for (const s of FOREIGN_KEYS) {
       expect(attributes(s.table)[s.column]).toBeDefined();
       expect(attributes(s.parentTable)[s.parentColumn]).toBeDefined();
-      // a model that did declare a reference must declare the same one
-      const ref = attributes(s.table)[s.column].references;
-      if (ref) {
-        const model = typeof ref.model === "string" ? ref.model : (ref.model.tableName ?? ref.model.table ?? String(ref.model));
-        expect(`${model}.${ref.key}`).toBe(`${s.parentTable}.${s.parentColumn}`);
-      }
     }
-    // the polymorphic column is no key: it names a quiz, a practice or a baseline
-    expect(attributes("studentprogress").studentprogressreferenceid.references).toBeUndefined();
+    const parentOf = new Map(FOREIGN_KEYS.map((s) => [`${s.table}.${s.column}`, `${s.parentTable}.${s.parentColumn}`]));
+    // initModels alone (what exists when sync() runs): 25 references. A reference on one of our 15 columns must be the key's own.
+    const initial = declaredReferences(sequelize);
+    expect(initial.size).toBe(25);
+    for (const [column, parent] of initial) {
+      if (parentOf.has(column)) expect(parent).toBe(parentOf.get(column));
+    }
+    // the polymorphic column is no key: it names a quiz, a practice or a baseline, and initModels declares nothing on it
+    expect(initial.has("studentprogress.studentprogressreferenceid")).toBe(false);
+
+    // the boot path (src/server.ts calls this after initModels): 8 more belongsTo, six of them on columns of this migration
+    setuprelationshipforreport(sequelize);
+    const boot = declaredReferences(sequelize);
+    expect(boot.size).toBe(33);
+    const added = [...boot.keys()].filter((c) => !initial.has(c)).sort();
+    expect(added.filter((c) => parentOf.has(c))).toHaveLength(6);
+    expect(added).toContain("studentprogress.studentprogressreferenceid");
+    for (const [column, parent] of boot) {
+      // the polymorphic column is the one declared reference without a key behind it, and it must stay so: the migration adds none
+      if (column === "studentprogress.studentprogressreferenceid") continue;
+      if (parentOf.has(column)) expect(parent).toBe(parentOf.get(column));
+    }
+    expect(parentOf.has("studentprogress.studentprogressreferenceid")).toBe(false);
   });
 
   it("each of the 6 columns is declared allowNull: false by its model", () => {
@@ -356,6 +386,18 @@ describe("up() on a migrated database", () => {
     expect(f.cols.get("studentpoints.scores")!.def).toBeNull();
   });
 
+  it("a column that has a DEFAULT keeps it in the NOT NULL MODIFY (only its nullability changes)", async () => {
+    const cols = columns();
+    cols.get("studentpoints.scores")!.def = "0";
+    const f = makeQI({ cols });
+    await migration.up(f.qi);
+    const modifies = alters(f.log).filter((s) => /MODIFY/.test(s));
+    expect(modifies).toContain("ALTER TABLE `studentpoints` MODIFY COLUMN `scores` int unsigned NOT NULL DEFAULT '0'");
+    expect(modifies.filter((s) => /DEFAULT/.test(s))).toHaveLength(1);
+    expect(f.cols.get("studentpoints.scores")!.nullable).toBe(false);
+    expect(f.cols.get("studentpoints.scores")!.def).toBe("'0'");
+  });
+
   it("writes no data and runs every read and statement in the transaction", async () => {
     const f = makeQI();
     await migration.up(f.qi);
@@ -412,6 +454,19 @@ describe("up() is idempotent", () => {
     const f = makeQI({ indexes });
     await migration.up(f.qi);
     expect(alters(f.log).filter((s) => /ADD INDEX/.test(s))).toEqual([]);
+    expect(f.keys).toHaveLength(15);
+  });
+
+  it("a composite index with the column in SECOND position does not lead with it: the single-column index is still created", async () => {
+    const indexes = migratedIndexes();
+    indexes.get("rpiuseraccess")!.push({ name: "rpiuseraccess_logintime_userid", columns: ["logintime", "userid"] });
+    indexes.get("students")!.push({ name: "students_schoolid_standard", columns: ["schoolid", "standard"] });
+    const f = makeQI({ indexes });
+    await migration.up(f.qi);
+    expect(alters(f.log).filter((s) => /ADD INDEX/.test(s))).toEqual([
+      "ALTER TABLE `rpiuseraccess` ADD INDEX `userid` USING BTREE (`userid`)",
+      "ALTER TABLE `students` ADD INDEX `standard` USING BTREE (`standard`)",
+    ]);
     expect(f.keys).toHaveLength(15);
   });
 
