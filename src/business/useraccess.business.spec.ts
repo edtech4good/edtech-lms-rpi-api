@@ -1,3 +1,4 @@
+import { Op } from "sequelize";
 import { rpiuseraccess } from "src/models/data-models/rpiuseraccess";
 import { UserAccessBusiness } from "./useraccess.business";
 
@@ -28,5 +29,23 @@ describe("UserAccessBusiness.createuseraccesslog", () => {
       expect(row.rpiuseraccessid).toMatch(V4);
     }
     expect(rows[1].rpiuseraccessid).not.toBe(rows[0].rpiuseraccessid);
+  });
+
+  it("writes the new access row before it closes the previous session, and the close leaves the new row alone", async () => {
+    const calls: string[] = [];
+    (rpiuseraccess.create as jest.Mock).mockImplementation(async () => { calls.push("create"); return {}; });
+    (rpiuseraccess.update as jest.Mock).mockImplementation(async () => { calls.push("update"); return [1]; });
+    await new UserAccessBusiness().createuseraccesslog("user-1", "127.0.0.1", Date.now());
+    expect(calls).toEqual(["create", "update"]);
+    const id = (rpiuseraccess.create as jest.Mock).mock.calls[0][0].rpiuseraccessid;
+    const where = (rpiuseraccess.update as jest.Mock).mock.calls[0][1].where;
+    expect(where).toMatchObject({ userid: "user-1", status: 1 });
+    expect(where.rpiuseraccessid[Op.ne]).toBe(id);
+  });
+
+  it("a refused access row closes nothing: the previous session stays open", async () => {
+    (rpiuseraccess.create as jest.Mock).mockRejectedValue(new Error("Data too long for column 'ipaddress'"));
+    await expect(new UserAccessBusiness().createuseraccesslog("user-1", "x".repeat(60), Date.now())).rejects.toThrow("Data too long");
+    expect(rpiuseraccess.update).not.toHaveBeenCalled();
   });
 });

@@ -10,6 +10,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
+import { isIP } from "node:net";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   ApiBearerAuth,
@@ -31,6 +32,10 @@ import { login } from "./auth.request.validator";
 import { LoginRequestBody, LogoutRequestBody } from "./models/LoginRequestBody";
 import { LoginResponseModel, LoginTokens } from "./models/LoginResponse";
 import { LogoutResponse } from "./models/LogoutResponse";
+
+/** The width of rpiuseraccess.ipaddress. */
+const ACCESS_IP_MAX = 45;
+
 @ApiExtraModels(LoginTokens)
 @ApiExtraModels(LoginResponseModel)
 @ApiTags("Authentication")
@@ -63,10 +68,13 @@ export class AuthController {
   @UseGuards(ThrottlerGuard)
   @Throttle(10, 60)
   // The IP stored in rpiuseraccess is req.ip, the same value the throttler keys on:
-  // the socket address unless TRUST_PROXY is set (see server.ts).
+  // the socket address unless TRUST_PROXY is set (see server.ts). With TRUST_PROXY set, req.ip is
+  // whatever the last X-Forwarded-For entry says, which a client that bypasses the proxy can
+  // choose: only a value that is an IP address (and fits the column) is stored, else the socket's.
   async login(
     @Body() body: LoginRequestBody,
-    @Ip() ip: string
+    @Ip() ip: string,
+    @Request() req: IRequest
   ): Promise<LoginResponseModel> {
     const userloggedinfo = await new AuthBusiness().login(
       body.studentusername,
@@ -75,7 +83,7 @@ export class AuthController {
 
     await new UserAccessBusiness().createuseraccesslog(
       userloggedinfo.schooluserid,
-      ip,
+      isIP(ip) && ip.length <= ACCESS_IP_MAX ? ip : req.socket?.remoteAddress ?? "unknown",
       body.logintime ? parseInt(body.logintime) : (new Date(new Date().toUTCString())).getTime()
     );
     Logger.info(`<${userloggedinfo.studentfirstname}> logged-in successfully`, {logaccesstype: LOGTYPE.LOGIN, userid: userloggedinfo.schooluserid});
