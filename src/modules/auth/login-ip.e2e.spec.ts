@@ -93,6 +93,10 @@ const CASES: Array<{ name: string; headers: Record<string, string>; proxied?: st
   // A client that reaches the API directly, with TRUST_PROXY set, chooses X-Forwarded-For: only an IP address is stored.
   { name: "(h) X-Forwarded-For: not-an-ip", headers: { "X-Forwarded-For": "not-an-ip" } },
   { name: "(i) X-Forwarded-For: a 60-character value", headers: { "X-Forwarded-For": "a".repeat(60) } },
+];
+
+// The login route allows ten attempts a minute per address, and each describe below opens its own application.
+const MORE_CASES: Array<{ name: string; headers: Record<string, string>; proxied?: string }> = [
   { name: "(j) X-Forwarded-For: an IPv6 address", headers: { "X-Forwarded-For": "2001:db8::1" }, proxied: "2001:db8::1" },
   { name: "(k) X-Forwarded-For: an IP address followed by text", headers: { "X-Forwarded-For": "203.0.113.9; DROP TABLE" } },
 ];
@@ -138,6 +142,26 @@ describe("POST /auth/login stores req.ip", () => {
     it.each(CASES)("$name", async ({ headers, proxied }) => {
       expect(await storedIp(app, headers)).toBe(proxied ?? socket);
     });
+  });
+});
+
+describe("POST /auth/login stores req.ip: more forwarded values, trust proxy 1", () => {
+  let infoSpy: jest.SpyInstance;
+  let app: INestApplication;
+  let socket: string;
+  beforeAll(async () => {
+    (UserAccessBusiness as unknown as jest.Mock).mockImplementation(() => ({ createuseraccesslog }));
+    infoSpy = jest.spyOn(Logger, "info").mockImplementation(() => Logger as any);
+    app = await makeApp(true);
+    socket = await storedIp(app, {});
+  });
+  afterAll(async () => {
+    infoSpy.mockRestore();
+    await app.close();
+  });
+
+  it.each(MORE_CASES)("$name", async ({ headers, proxied }) => {
+    expect(await storedIp(app, headers)).toBe(proxied ?? socket);
   });
 });
 
