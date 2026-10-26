@@ -437,7 +437,7 @@ const seedData = () => {
   tables.clear();
   const put = (model: unknown, rows: Row[]) => tables.set(model, [...rowsOf(model), ...rows]);
   put(organisations, [
-    { organisationid: ORG_X, organisationname: "Org X", organisationcode: "x", organisationstatus: true, isdeleted: false, uitheme: "corporate", brandingconfig: { org: "x" } },
+    { organisationid: ORG_X, organisationname: "Org X", organisationcode: "x", organisationstatus: true, isdeleted: false, uitheme: "corporate", brandingconfig: { logourl: "https://example.org/x.png" } },
     { organisationid: ORG_Y, organisationname: "Org Y", organisationcode: "y", organisationstatus: true, isdeleted: false, uitheme: "kids", brandingconfig: { org: "y" } },
     { organisationid: ORG_Z, organisationname: "Org Z", organisationcode: "z", organisationstatus: false, isdeleted: false, uitheme: "kids", brandingconfig: null },
   ]);
@@ -1693,9 +1693,9 @@ describe("GET /school/branding (public)", () => {
   });
 
   it("falls to the school's organisation for what the school does not set", async () => {
-    expect(await branding(`?schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { org: "x" }, ...DEFAULT_LABELS });
+    expect(await branding(`?schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { logourl: "https://example.org/x.png" }, ...DEFAULT_LABELS });
     // each setting is resolved on its own: the school's theme, and the organisation's branding
-    expect(await branding(`?schoolid=${SCH_OWN_CONFIG}`)).toEqual({ uitheme: "kids", brandingconfig: { org: "x" }, ...DEFAULT_LABELS });
+    expect(await branding(`?schoolid=${SCH_OWN_CONFIG}`)).toEqual({ uitheme: "kids", brandingconfig: { logourl: "https://example.org/x.png" }, ...DEFAULT_LABELS });
   });
 
   it("falls to the default theme for a school with no organisation, a suspended organisation, an unknown school and no school", async () => {
@@ -1708,7 +1708,7 @@ describe("GET /school/branding (public)", () => {
 
   it("resolves a school named by its name to its id first, and an id wins over a name", async () => {
     expect(await branding("?schoolname=Org%20Only")).toBeDefined();
-    expect(await branding(`?schoolname=School%20Y&schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { org: "x" }, ...DEFAULT_LABELS });
+    expect(await branding(`?schoolname=School%20Y&schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { logourl: "https://example.org/x.png" }, ...DEFAULT_LABELS });
   });
 });
 

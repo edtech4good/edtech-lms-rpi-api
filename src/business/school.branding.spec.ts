@@ -76,6 +76,29 @@ describe("branding falls back per key, not per object", () => {
     expect((await branding()).brandingconfig).toEqual(ORG_BRANDING);
   });
 
+  it("a school with no config gets only the organisation's three branding keys, never its labels, preset or hide switch", async () => {
+    school(null);
+    orgRow = { ...orgRow, brandingconfig: { logourl: ORG_BRANDING.logourl, labelPreset: "company", labels: OWN_LABELS.labels, hideSingleItemTiers: true } };
+    const data = await branding();
+    expect(data.brandingconfig).toEqual({ logourl: ORG_BRANDING.logourl });
+    expect(data.labelsresolved).toEqual(resolveTierLabels(null).labelsresolved);
+    expect(data.hideSingleItemTiers).toBe(false);
+  });
+
+  it("a school with no config and an organisation config with no branding text gives null", async () => {
+    school(null);
+    orgRow = { ...orgRow, brandingconfig: { labelPreset: "company" } };
+    expect((await branding()).brandingconfig).toBeNull();
+  });
+
+  it("a non-text or blank organisation value is never copied over: a blank school value stays as stored", async () => {
+    school({ tilecolour: "" });
+    orgRow = { ...orgRow, brandingconfig: { tilecolour: 7, displayname: "" } };
+    const config = (await branding()).brandingconfig as Record<string, unknown>;
+    expect(config.tilecolour).toBe("");
+    expect(config).not.toHaveProperty("displayname");
+  });
+
   it("neither a school config nor an organisation config gives null; a school config alone is returned as it is", async () => {
     school(null);
     orgRow = { ...orgRow, brandingconfig: null };

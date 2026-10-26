@@ -17,12 +17,22 @@ const hasText = (value: unknown): boolean => typeof value === "string" && value.
 
 /**
  * The `brandingconfig` a client is given: the school's own object, with each of `logourl`, `displayname` and
- * `tilecolour` that it does not carry taken from the organisation's. A school with no object of its own gets the
- * organisation's whole (or null). Any other key is the school's, as stored: the labels are never inherited.
+ * `tilecolour` that it does not carry taken from the organisation's. A school with no object of its own gets those
+ * three keys from the organisation (each only when it has text), or null when none has. Any other key is the school's,
+ * as stored: the labels are never inherited.
  */
 export const mergeBrandingConfig = (school: unknown, organisation: unknown): object | null => {
   if (!isBrandingObject(school)) {
-    return isBrandingObject(organisation) ? organisation : null;
+    if (!isBrandingObject(organisation)) {
+      return null;
+    }
+    const inherited: Record<string, unknown> = {};
+    for (const key of ORGANISATION_BRANDING_KEYS) {
+      if (hasText(organisation[key])) {
+        inherited[key] = organisation[key];
+      }
+    }
+    return Object.keys(inherited).length > 0 ? inherited : null;
   }
   if (!isBrandingObject(organisation)) {
     return school;
