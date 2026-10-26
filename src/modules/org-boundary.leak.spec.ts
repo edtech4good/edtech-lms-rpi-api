@@ -59,6 +59,7 @@ import { TeacherController } from "src/modules/teachers/teacher.controller";
 import { JwtAccessStrategy } from "src/services/auth.strategy";
 import { dbinstance } from "src/services/dbservice";
 import { stubCalls, stubLog } from "src/test-support/stub-business";
+import { resolveTierLabels } from "src/business/tier-labels";
 
 /**
  * The organisation boundary of the student API, over real HTTP through the real JWT strategy and the real guards
@@ -436,7 +437,7 @@ const seedData = () => {
   tables.clear();
   const put = (model: unknown, rows: Row[]) => tables.set(model, [...rowsOf(model), ...rows]);
   put(organisations, [
-    { organisationid: ORG_X, organisationname: "Org X", organisationcode: "x", organisationstatus: true, isdeleted: false, uitheme: "corporate", brandingconfig: { org: "x" } },
+    { organisationid: ORG_X, organisationname: "Org X", organisationcode: "x", organisationstatus: true, isdeleted: false, uitheme: "corporate", brandingconfig: { logourl: "https://example.org/x.png" } },
     { organisationid: ORG_Y, organisationname: "Org Y", organisationcode: "y", organisationstatus: true, isdeleted: false, uitheme: "kids", brandingconfig: { org: "y" } },
     { organisationid: ORG_Z, organisationname: "Org Z", organisationcode: "z", organisationstatus: false, isdeleted: false, uitheme: "kids", brandingconfig: null },
   ]);
@@ -1672,6 +1673,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
 // branding: the school's own setting, else its organisation's, else the default
 // ---------------------------------------------------------------------------------------------------------
 describe("GET /school/branding (public)", () => {
+  const DEFAULT_LABELS = resolveTierLabels(null);
   const branding = async (query: string) => (await request(app.getHttpServer()).get(`/school/branding${query}`)).body?.data;
   const SCH_ORG_ONLY = uid("a1", 90); // a school of X with no theme and no branding of its own
   const SCH_OWN_CONFIG = uid("a1", 91); // a theme of its own, no branding config
@@ -1687,17 +1689,17 @@ describe("GET /school/branding (public)", () => {
   });
 
   it("answers the school's own theme and branding when it has them", async () => {
-    expect(await branding(`?schoolid=${SCH_Y}`)).toEqual({ uitheme: "kids", brandingconfig: { logo: "y" } });
+    expect(await branding(`?schoolid=${SCH_Y}`)).toEqual({ uitheme: "kids", brandingconfig: { logo: "y" }, ...DEFAULT_LABELS });
   });
 
   it("falls to the school's organisation for what the school does not set", async () => {
-    expect(await branding(`?schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { org: "x" } });
+    expect(await branding(`?schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { logourl: "https://example.org/x.png" }, ...DEFAULT_LABELS });
     // each setting is resolved on its own: the school's theme, and the organisation's branding
-    expect(await branding(`?schoolid=${SCH_OWN_CONFIG}`)).toEqual({ uitheme: "kids", brandingconfig: { org: "x" } });
+    expect(await branding(`?schoolid=${SCH_OWN_CONFIG}`)).toEqual({ uitheme: "kids", brandingconfig: { logourl: "https://example.org/x.png" }, ...DEFAULT_LABELS });
   });
 
   it("falls to the default theme for a school with no organisation, a suspended organisation, an unknown school and no school", async () => {
-    const fallback = { uitheme: "kids", brandingconfig: null };
+    const fallback = { uitheme: "kids", brandingconfig: null, ...DEFAULT_LABELS };
     expect(await branding(`?schoolid=${SCH_NO_ORG}`)).toEqual(fallback);
     expect(await branding(`?schoolid=${SCH_Z}`)).toEqual(fallback);
     expect(await branding(`?schoolid=${NOWHERE}`)).toEqual(fallback);
@@ -1706,7 +1708,7 @@ describe("GET /school/branding (public)", () => {
 
   it("resolves a school named by its name to its id first, and an id wins over a name", async () => {
     expect(await branding("?schoolname=Org%20Only")).toBeDefined();
-    expect(await branding(`?schoolname=School%20Y&schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { org: "x" } });
+    expect(await branding(`?schoolname=School%20Y&schoolid=${SCH_ORG_ONLY}`)).toEqual({ uitheme: "corporate", brandingconfig: { logourl: "https://example.org/x.png" }, ...DEFAULT_LABELS });
   });
 });
 
