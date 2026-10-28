@@ -102,6 +102,8 @@ holds one school. The rules, in `src/business/`:
 - A request header a browser client sends to this API (the learner app's
   `X-Learning-Item-Types` and `X-Content-Translations`) must be listed in `src/cors-options.ts`, or the browser's
   preflight refuses every request that carries it; `src/cors-options.spec.ts` pins the list.
+- `src/constants/content-translations.ts` is a byte-for-byte twin of central's file of the same name, pinned by a
+  sha256 in a spec on both sides (`content-translations.spec.ts` here); change both together and re-pin both specs.
 
 ## Client address
 
