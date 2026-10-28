@@ -38,7 +38,7 @@
  *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  *
- * Content mode: `npm run seed:dcrs -- --content <dir> [--lang km|en|both] [--dry-run]`
+ * Content mode: `npm run seed:dcrs -- --content <dir> [--dry-run]`
  * replaces the placeholder text with the real programme content from
  * `<dir>/content.json` (schema and rules in scripts/lib/dcrs-content-plan.js; the central
  * repo's scripts/dcrs-content-from-xlsx.js writes it). Everything above still runs first,
@@ -46,8 +46,11 @@
  * name is hidden, reversibly. A file that cannot be written as it stands is refused,
  * exit 1, before anything is written. The folder is only read. Re-running changes
  * nothing. Without `--content` this script behaves exactly as described above.
- *  - `--lang` is the language of the learner-facing text: km (default), en, or both
- *    (Khmer, a line break, English). The other language stays in content.json.
+ *  - The English text goes into the base columns and the Khmer text into `contenttranslations`
+ *    rows (language km, keyed by the row, the field and, for options, the option id, each with
+ *    the hash of the English it translates). The organisation's `contentlanguage` is set to
+ *    `en` when it has none; any other language stops the run before anything is written.
+ *    `--lang` is retired and refused. The database must have the translations migration.
  *  - `--dry-run` validates and prints the plan, with no database connection.
  * The lesson video is not uploaded: its document row names `dcrs-m1-l1.mp4` and the
  * script prints the copy to make into the media folder.
@@ -59,8 +62,8 @@ const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
 const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
 const { planContent } = require("./lib/dcrs-content-plan");
-const { applyPlan, formatReport } = require("./lib/dcrs-content-apply");
-const { prepare, printDryRun } = require("./lib/dcrs-content-cli");
+const { applyPlan, preflight, formatReport } = require("./lib/dcrs-content-apply");
+const { prepare, refuse, printDryRun } = require("./lib/dcrs-content-cli");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -242,7 +245,7 @@ async function main() {
   // Content mode (`--content <dir>`): arguments and content.json are checked first; a refusal exits 1 with nothing written.
   const { args, content } = prepare(process.argv.slice(2), ID);
   if (args.dryRun) {
-    printDryRun(content, ID, args.lang);
+    printDryRun(content, ID);
     return;
   }
   if (process.env.ALLOW_DEMO_SEED !== "true") {
@@ -271,6 +274,11 @@ async function main() {
   try {
     // The organisation everything below belongs to (created if it is not here yet).
     const organisationid = await ensureOrganisation(conn, "miv");
+
+    // Content mode: the plan is a pure function of the file, and the database must be fit for it (the translations migration, the
+    // organisation's base language, the rows' owner) before the placeholder pass or the content writes anything.
+    const contentPlan = content ? planContent(content, ID, { organisationid, now: new Date() }) : null;
+    if (contentPlan) await preflight(conn, contentPlan).catch(refuse);
 
     await q(`INSERT IGNORE INTO countries (countryid, countryname, isdeleted) VALUES (?,?,0)`,
       [ID.country, "Cambodia"]);
@@ -397,7 +405,6 @@ async function main() {
       [ID.student, ID.facilitator]);
 
     // Content mode: the real text over the placeholder rows, in one transaction, then counted.
-    const contentPlan = content ? planContent(content, ID, { lang: args.lang, organisationid }) : null;
     const contentReport = contentPlan ? await applyPlan(conn, contentPlan) : null;
 
     // INSERT IGNORE turns a refused row into a silent skip, and leaves rows seeded before owners existed as they
@@ -423,7 +430,7 @@ async function main() {
     console.log(`  lessons ${c.lessons} | questions ${c.questions} | students ${c.students}`);
     console.log(`  logins (password ${DEMO_PASSWORD}): miv.demo, miv.facilitator`);
     if (contentReport) {
-      console.log(`DCRS content applied from ${path.basename(path.resolve(args.content))}/content.json (language ${contentPlan.lang}):`);
+      console.log(`DCRS content applied from ${path.basename(path.resolve(args.content))}/content.json (base ${contentPlan.baseLanguage}, translations ${contentPlan.translationLanguage}):`);
       console.log(formatReport(contentReport));
       for (const m of contentPlan.media) console.log(`  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`);
     } else {

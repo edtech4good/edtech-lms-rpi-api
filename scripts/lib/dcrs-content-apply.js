@@ -12,10 +12,50 @@
  * so that `affectedRows` of an INSERT ... ON DUPLICATE KEY UPDATE is 1 for a new row, 2 for
  * a row whose values changed and 0 for one that already had them, and of an UPDATE is the
  * number of rows it actually changed. That is what makes a second run report all zeros.
+ *
+ * Before it writes anything `preflight` checks, read-only, that the database has the translations table and the
+ * organisation's `contentlanguage` column, that the organisation's content language is `en` or still unset, and that
+ * the seed rows the translations hang from belong to that organisation (or to nobody yet). Inside the transaction
+ * `applyPlan` then sets `contentlanguage` to `en` when it is unset (a different language stops the run), writes the
+ * plan, and checks every translation row by its key, text and hash.
  */
-const { statementOf } = require("./dcrs-content-plan");
+const { statementOf, ContentRefused } = require("./dcrs-content-plan");
 
 const blank = () => ({ inserted: 0, updated: 0, unchanged: 0, hidden: 0 });
+
+const base = (plan) => plan.baseLanguage;
+
+/** The organisation's content language, locked for the rest of the transaction when `lock` is set; throws ContentRefused when it is another language than the plan's base. */
+async function organisationLanguage(conn, plan, lock) {
+  const [rows] = await conn.execute(`SELECT contentlanguage FROM organisations WHERE organisationid = ?${lock ? " FOR UPDATE" : ""}`, [plan.organisationid]);
+  if (rows.length === 0) throw new ContentRefused(["the organisation these rows belong to is not in the database"]);
+  const language = rows[0].contentlanguage;
+  if (language !== null && language !== undefined && String(language).toLowerCase() !== base(plan)) {
+    throw new ContentRefused([
+      `the organisation's content language is "${language}", and this import writes ${base(plan)} as the base text with the ${plan.translationLanguage} text as translations; ` +
+        "change the organisation's content language by hand first if that is what you want, or use a different organisation",
+    ]);
+  }
+  return language ?? null;
+}
+
+/** Read-only checks before anything of the content is written; throws ContentRefused with the reason. */
+async function preflight(conn, plan) {
+  const [[tables]] = await conn.execute(
+    "SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'contenttranslations' AND column_name = 'sourcehash') OR (table_name = 'organisations' AND column_name = 'contentlanguage'))",
+  );
+  if (Number(tables.n) !== 2) {
+    throw new ContentRefused(["this database has no contenttranslations table or no organisations.contentlanguage column; run the migrations first"]);
+  }
+  await organisationLanguage(conn, plan, false);
+  for (const { table, pk, ids } of plan.owned) {
+    const [[row]] = await conn.execute(
+      `SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")}) AND \`organisationid\` IS NOT NULL AND \`organisationid\` <> ?`,
+      [...ids, plan.organisationid],
+    );
+    if (Number(row.n) !== 0) throw new ContentRefused([`${row.n} ${table} row(s) of this seed belong to another organisation, so their translations cannot be this organisation's`]);
+  }
+}
 
 /** Runs `plan`. Returns `{ tables: { table: {inserted, updated, unchanged, hidden} } }`; rolls back and throws on any failure. */
 async function applyPlan(conn, plan) {
@@ -23,11 +63,21 @@ async function applyPlan(conn, plan) {
   const count = (table) => (tables[table] ??= blank());
   await conn.beginTransaction();
   try {
+    // The base language comes first: nothing below means anything under another one.
+    const was = await organisationLanguage(conn, plan, true);
+    let setNow = 0;
+    if (was === null) {
+      const [result] = await conn.execute("UPDATE organisations SET contentlanguage = ? WHERE organisationid = ? AND contentlanguage IS NULL", [base(plan), plan.organisationid]);
+      setNow = result.affectedRows;
+    }
+    const org = count("organisations");
+    if (setNow === 1) org.updated += 1;
+    else org.unchanged += 1;
     for (const step of plan.steps) {
       const { sql, params } = statementOf(step);
       const [result] = await conn.execute(sql, params);
       const c = count(step.table);
-      if (step.kind === "upsert") {
+      if (step.kind === "upsert" || step.kind === "translate") {
         if (result.affectedRows === 1) c.inserted += 1;
         else if (result.affectedRows === 2) c.updated += 1;
         else c.unchanged += 1;
@@ -49,8 +99,20 @@ async function applyPlan(conn, plan) {
  * counted, not assumed. (A join-row slot the plan hides may never have been created; that is not a failure.)
  */
 async function verifyPlan(conn, plan) {
+  const [[org]] = await conn.execute("SELECT COUNT(*) AS n FROM organisations WHERE organisationid = ? AND contentlanguage = ?", [plan.organisationid, base(plan)]);
+  if (Number(org.n) !== 1) throw new Error("content check failed: the organisation does not have the base content language after the run");
   const byTable = new Map();
   for (const step of plan.steps) {
+    if (step.kind === "translate") {
+      // A translation is found by its key (an older row keeps its own id), and must be this organisation's, with this text and this hash.
+      const v = step.values;
+      const [[row]] = await conn.execute(
+        "SELECT COUNT(*) AS n FROM `contenttranslations` WHERE `tablename` = ? AND `rowid` = ? AND `field` = ? AND `subkey` = ? AND `language` = ? AND `organisationid` = ? AND `sourcehash` = ? AND BINARY `text` = BINARY ?",
+        [v.tablename, v.rowid, v.field, v.subkey, v.language, v.organisationid, v.sourcehash, v.text],
+      );
+      if (Number(row.n) !== 1) throw new Error(`content check failed: the ${v.language} translation of ${v.tablename}.${v.field} is not there as the plan wrote it`);
+      continue;
+    }
     const key = `${step.kind}:${step.table}:${step.pk}`;
     const entry = byTable.get(key) ?? { step, ids: [] };
     entry.ids.push(...(step.kind === "upsert" ? [step.id] : step.ids));
@@ -91,4 +153,4 @@ function formatReport(report) {
   ].join("\n");
 }
 
-module.exports = { applyPlan, verifyPlan, formatReport };
+module.exports = { applyPlan, verifyPlan, preflight, formatReport };
