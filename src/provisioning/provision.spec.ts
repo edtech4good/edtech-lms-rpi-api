@@ -232,6 +232,7 @@ describe("Provisioner.plan: --country names the SECOND of two payload countries 
 
       // a fresh server: no organisation, school, login or country; the only queries that matter are the two the country lookup asks MySQL
       jest.spyOn(organisations, "findAll").mockResolvedValue([] as never);
+      jest.spyOn(organisations, "scope").mockReturnValue({ findAll: async () => [] } as never); // withContentLanguage: the reused organisation keeps its language
       jest.spyOn(countries, "findAll").mockResolvedValue([] as never);
       jest.spyOn(schools, "scope").mockReturnValue({ findAll: async () => [] } as never);
       jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: async () => null } as never);
@@ -252,5 +253,124 @@ describe("Provisioner.plan: --country names the SECOND of two payload countries 
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Provisioner.plan: the payload's content language reaches the local organisation (bilingual content)", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  const LESSON = "b0000000-0000-4000-8000-000000000009";
+  const KHMER_RUN = String.fromCodePoint(0x1780, 0x1781, 0x1782, 0x1783);
+
+  /** The sample payload with one translation row, written to a file; `mutate` adjusts the body first. */
+  const withFile = async (mutate: (payload: Record<string, any>) => void, run: (file: string) => Promise<void>) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const dir = mkdtempSync(join(tmpdir(), "provision-lang-"));
+    try {
+      const payload = JSON.parse(readFileSync("scripts/provision/sample-content.json", "utf8"));
+      payload.contenttranslations = [
+        {
+          translationid: "c0000000-0000-4000-8000-000000000001",
+          organisationid: payload.organisations[0].organisationid,
+          tablename: "lessons",
+          rowid: LESSON,
+          field: "lessonname",
+          subkey: "",
+          language: "km",
+          text: KHMER_RUN,
+          sourcehash: "0".repeat(64),
+          lastupdated: "2026-10-28T03:00:00.000Z",
+        },
+      ];
+      mutate(payload);
+      const file = join(dir, "content.json");
+      writeFileSync(file, JSON.stringify(payload));
+      await run(file);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  /** A server with the stored organisation rows given (none = a fresh server) and nothing else. */
+  const mockServer = (stored: Array<Record<string, unknown>>) => {
+    jest.spyOn(organisations, "findAll").mockResolvedValue([] as never);
+    // `withContentLanguage`: the only way the stored language is read
+    jest.spyOn(organisations, "scope").mockReturnValue({ findAll: async () => stored } as never);
+    jest.spyOn(countries, "findAll").mockResolvedValue([] as never);
+    jest.spyOn(schools, "scope").mockReturnValue({ findAll: async () => [] } as never);
+    jest.spyOn(schoolusers, "scope").mockReturnValue({ findOne: async () => null } as never);
+    jest.spyOn(dbinstance.getdbinstance(), "query").mockImplementation((async (sql: string, opts?: { replacements?: { a: string; b: string } }) => {
+      if (/INFORMATION_SCHEMA/i.test(sql)) return [{ cs: "utf8mb4", coll: "utf8mb4_unicode_ci" }];
+      if (/AS same$/i.test(sql.trim()) && opts?.replacements) return [{ same: collateCountryName(opts.replacements.a) === collateCountryName(opts.replacements.b) ? 1 : 0 }];
+      return [[]];
+    }) as never);
+  };
+  const stored = (extra: Record<string, unknown> = {}) => ({
+    organisationid: "11111111-1111-4111-8111-111111111111",
+    organisationname: "Riverside Learning Network",
+    organisationcode: "riverside",
+    organisationstatus: true,
+    uitheme: "kids",
+    brandingconfig: null,
+    settingsconfig: null,
+    isdeleted: false,
+    ...extra,
+  });
+  const provisioner = () => new Provisioner({ offline: true, configuredDatabase: "edtech_lms_rpi" });
+
+  it("a NEW organisation takes the payload's contentlanguage, so the payload's translations have a base language to differ from", async () => {
+    mockServer([]);
+    await withFile(() => undefined, async (file) => {
+      const plan = await provisioner().plan(options({ content: file }));
+      expect(plan.organisation.action).toBe("create");
+      expect(plan.organisation.row.contentlanguage).toBe("en");
+      expect(plan.content?.rehomed.content.organisation.contentlanguage).toBe("en");
+      expect(plan.content?.rehomed.content.tables.contenttranslations.map((r) => r.organisationid)).toEqual([plan.organisation.row.organisationid]);
+    });
+  });
+
+  it("a REUSED organisation is read through the withContentLanguage scope; the payload's language replaces the stored one", async () => {
+    mockServer([stored({ contentlanguage: "km" })]);
+    await withFile(() => undefined, async (file) => {
+      const plan = await provisioner().plan(options({ content: file }));
+      expect(plan.organisation.action).toBe("reuse");
+      expect(organisations.scope).toHaveBeenCalledWith("withContentLanguage");
+      expect(plan.organisation.row.contentlanguage).toBe("en");
+      expect(plan.content?.rehomed.content.organisation.contentlanguage).toBe("en");
+    });
+  });
+
+  it("a REUSED organisation keeps the stored language when the payload's organisation row has none (an empty list of translations then needs none)", async () => {
+    mockServer([stored({ contentlanguage: "km" })]);
+    await withFile(
+      (payload) => {
+        delete payload.organisations[0].contentlanguage;
+        payload.contenttranslations = [];
+      },
+      async (file) => {
+        const plan = await provisioner().plan(options({ content: file }));
+        expect(plan.organisation.row.contentlanguage).toBe("km");
+        expect(plan.content?.rehomed.content.organisation.contentlanguage).toBe("km");
+      },
+    );
+  });
+
+  it("a payload with translations and no contentlanguage is refused at the plan, saying why", async () => {
+    mockServer([]);
+    await withFile(
+      (payload) => {
+        delete payload.organisations[0].contentlanguage;
+      },
+      async (file) => {
+        await expect(provisioner().plan(options({ content: file }))).rejects.toMatchObject({
+          message: expect.stringContaining("the organisation has no contentlanguage; set it before sending translations."),
+        });
+      },
+    );
+  });
+
+  it("with no content file, the organisation row carries no language", async () => {
+    mockServer([]);
+    const plan = await provisioner().plan(options({ country: "Cambodia" }));
+    expect("contentlanguage" in plan.organisation.row).toBe(false);
   });
 });

@@ -88,6 +88,7 @@ const ORGANISATION_COLUMNS: Array<keyof OwnershipOrganisation> = [
   "uitheme",
   "brandingconfig",
   "settingsconfig",
+  "contentlanguage",
   "isdeleted",
 ];
 
@@ -203,7 +204,8 @@ export class OwnershipBusiness {
   private upsertOrganisations = async (rows: OwnershipOrganisation[], transaction: Transaction): Promise<number> => {
     let written = 0;
     for (const part of chunk(rows, CHUNK)) {
-      const existing = await organisations.findAll({
+      // `withContentLanguage`: the column is left out of ordinary queries, and the comparison below reads it.
+      const existing = await organisations.scope("withContentLanguage").findAll({
         where: { organisationid: { [Op.in]: part.map((o) => o.organisationid) } },
         transaction,
         lock: transaction.LOCK.UPDATE,
@@ -218,6 +220,8 @@ export class OwnershipBusiness {
         }
         const changed: Partial<OwnershipOrganisation> = {};
         for (const column of ORGANISATION_COLUMNS) {
+          // a sender that does not know `contentlanguage` leaves the stored value alone
+          if (column === "contentlanguage" && !(column in row)) continue;
           if (!isEqual(current.get(column), row[column])) {
             Object.assign(changed, { [column]: row[column] });
           }

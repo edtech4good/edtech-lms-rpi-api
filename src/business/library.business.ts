@@ -8,6 +8,7 @@ import { studentlessonsprogress } from "src/models/data-models/studentlessonspro
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { Token } from "src/models/token.model";
 import { enrolledCurriculumIds } from "./content-access";
+import type { ContentTranslations } from "./content-translations";
 
 interface LibraryLevel {
   levelid: string;
@@ -49,7 +50,7 @@ interface Library {
  * JS afterwards. No per-row queries.
  */
 export class LibraryBusiness {
-  getLibrary = async (user: Token): Promise<Library> => {
+  getLibrary = async (user: Token, translations?: ContentTranslations): Promise<Library> => {
     const generated_at = new Date().toISOString();
     const empty: Library = { generated_at, curricula: [] };
 
@@ -292,6 +293,11 @@ export class LibraryBusiness {
         grades: gradesOut,
       };
     });
+
+    // One query per table for the whole library, whatever the number of rows.
+    await translations?.decorate("curriculums", curricula);
+    await translations?.decorate("grades", curricula.flatMap((c) => c.grades));
+    await translations?.decorate("levels", curricula.flatMap((c) => c.grades.flatMap((g) => g.levels)));
 
     return { generated_at, curricula };
   };

@@ -1,10 +1,11 @@
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
+import { CONTENT_TRANSLATIONS_HEADER } from './constants/content-translations';
 
 /**
  * The request headers a browser may send to this API. A browser's preflight is answered with exactly this
  * list, and a header that is not on it makes the browser refuse the real request, so a client that adds a
- * header (the learner app's `X-Learning-Item-Types`, which names the learning-item types its build renders)
- * must be listed here first. The header is sent only to this API, never to the central one.
+ * header (the learner app's `X-Learning-Item-Types`, which names the learning-item types its build renders, and
+ * `X-Content-Translations`, which asks for the translations of content text) must be listed here first. The header is sent only to this API, never to the central one.
  */
 export const CORS_ALLOWED_HEADERS = [
   'Content-Type',
@@ -14,6 +15,7 @@ export const CORS_ALLOWED_HEADERS = [
   'Cache-Control',
   'TIMEOFFSET',
   'X-Learning-Item-Types',
+  CONTENT_TRANSLATIONS_HEADER,
 ];
 
 export const CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];

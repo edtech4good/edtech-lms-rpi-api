@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -9,6 +10,8 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
+import { CONTENT_TRANSLATIONS_HEADER } from "src/constants/content-translations";
+import { ContentTranslations, withContentLanguage } from "src/business/content-translations";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { LevelBusiness } from "src/business/level.business";
 import { LibraryBusiness } from "src/business/library.business";
@@ -52,15 +55,19 @@ export class LevelController {
   })
   @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
-  async getlibrary(@User() user: Token): Promise<any> {
+  async getlibrary(
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
+  ): Promise<any> {
     Logger.info(`<${user.studentfirstname}> get library`, {
       logaccesstype: LOGTYPE.GETLEVELS,
       userid: user.schooluserid,
     });
-    return {
-      data: await new LibraryBusiness().getLibrary(user),
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: await new LibraryBusiness().getLibrary(user, translations),
       error: false,
-    };
+    });
   }
 
   @Get('all')
@@ -117,13 +124,15 @@ export class LevelController {
   @HttpCode(HttpStatus.OK)
   async getlevelsbygradeid(
     @Param("gradeid") gradeid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
     ): Promise<any> {
     Logger.info(`<${user.studentfirstname}> get all levels <${gradeid}>`, {logaccesstype: LOGTYPE.GETLEVELS, userid: user.schooluserid});
-    return {
-      data: await new LevelBusiness().getlevelsbygradeid(gradeid, user),
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: await new LevelBusiness().getlevelsbygradeid(gradeid, user, translations),
       error: false,
-    };
+    });
   }
 
   @Get("progress/grade/:gradeid")

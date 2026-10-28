@@ -21,6 +21,7 @@ import {
   organisations,
   questions,
 } from "src/models/data-models/init-models";
+import { contenttranslations } from "src/models/data-models/contenttranslations";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
@@ -116,6 +117,7 @@ const MODELS: Record<TableKey, AnyModel> = {
   questions,
   documents,
   subjects,
+  contenttranslations,
 } as unknown as Record<TableKey, AnyModel>;
 
 const PKS: Record<TableKey, string> = {
@@ -139,9 +141,10 @@ const PKS: Record<TableKey, string> = {
   questions: "questionid",
   documents: "documentid",
   subjects: "subjectid",
+  contenttranslations: "translationid",
 };
 
-const ORGANISATION_UPDATE = ["organisationname", "organisationcode", "organisationstatus", "uitheme", "brandingconfig", "settingsconfig", "isdeleted"];
+const ORGANISATION_UPDATE = ["organisationname", "organisationcode", "organisationstatus", "uitheme", "brandingconfig", "settingsconfig", "contentlanguage", "isdeleted"];
 
 /** The columns an upsert of an owned table overwrites: what the old import overwrote, and the owner. */
 const OWNED_UPDATE: Partial<Record<TableKey, string[]>> = {
@@ -176,6 +179,7 @@ const OWNED_UPDATE: Partial<Record<TableKey, string[]>> = {
     "documentattribution",
   ],
   subjects: ["subjectname", "subjectdescription", "subjectstatus", "isdeleted", "organisationid"],
+  contenttranslations: ["organisationid", "tablename", "rowid", "field", "subkey", "language", "text", "sourcehash", "lastupdated"],
 };
 
 /**
@@ -195,7 +199,7 @@ const withMediaMetadata = (row: Row): Row => {
   };
 };
 
-const OWNED: TableKey[] = ["schools", "curriculums", "questions", "documents", "subjects"];
+const OWNED: TableKey[] = ["schools", "curriculums", "questions", "documents", "subjects", "contenttranslations"];
 
 const emptyCounts = (): TableCounts => ({ deleted: 0, written: 0, markedDeleted: 0 });
 const lower = (value: string) => value.toLowerCase();
@@ -251,7 +255,10 @@ export class OrganisationContentImport {
     await this.refuseRowsOfOtherOrganisations(content);
     const tables = await this.rehomeCountries(await this.trimLists(content));
 
-    await organisations.bulkCreate([{ ...content.organisation }] as never, { transaction: t, updateOnDuplicate: ORGANISATION_UPDATE as never });
+    // A sender that does not know `contentlanguage` (an older central, through PUT /import/ownership's shape) leaves the
+    // stored value as it is; one that carries it, null included, sets it.
+    const organisationUpdate = ORGANISATION_UPDATE.filter((column) => column !== "contentlanguage" || "contentlanguage" in content.organisation);
+    await organisations.bulkCreate([{ ...content.organisation }] as never, { transaction: t, updateOnDuplicate: organisationUpdate as never });
     this.counts.organisations.written = 1;
 
     // ---- delete this organisation's content --------------------------------
@@ -266,7 +273,9 @@ export class OrganisationContentImport {
     );
     await this.deleteCurriculumChildren(payloadCurricula, tables);
     await this.deleteWhere("standards", "schoolid", payloadSchools);
-    for (const key of ["questions", "documents", "subjects"] as const) {
+    // Translations are replaced like questions: all of this organisation's go, the payload's come back. A curriculum
+    // left out of the payload keeps its rows but loses its translations.
+    for (const key of ["questions", "documents", "subjects", "contenttranslations"] as const) {
       this.counts[key].deleted = await MODELS[key].destroy({ where: { organisationid }, transaction: t });
     }
 
@@ -299,6 +308,8 @@ export class OrganisationContentImport {
     ] as const) {
       await this.write(key, tables[key]);
     }
+    // Last: a translation names a row of the tables above.
+    await this.write("contenttranslations", owned("contenttranslations"));
 
     // ---- what the payload no longer has ---------------------------------------
     await this.markMissing("schools", organisationid, ownedSchoolsBefore, tables.schools);
@@ -494,12 +505,50 @@ export class OrganisationContentImport {
         refused.push(`${key}: ${rows(foreign)} already belong${foreign === 1 ? "s" : ""} to another organisation here`);
       }
     }
+    // A translation is unique over (table, row, field, subkey, language) whoever owns it: a payload row that repeats one
+    // of another organisation's would take that row over (the unique key, then the update on duplicate), so it is refused.
+    const colliding = await this.translationsOfOthers(content, header);
+    if (colliding > 0) {
+      refused.push(
+        `contenttranslations: ${rows(colliding)} repeat${colliding === 1 ? "s" : ""} a table, row, field, subkey and language that another organisation here already translates`,
+      );
+    }
     if (refused.length > 0) {
       throw new ApiError(ErrorCode.INVALID_INPUT, {
         message: `The payload names content that belongs to another organisation here. Nothing was written. ${refused.join("; ")}.`,
         fields: refused.map((message) => ({ field: message.split(":")[0], message })),
       });
     }
+  };
+
+  /**
+   * How many rows of the payload's `contenttranslations` have the same (table, row, field, subkey, language) as a
+   * translation of ANOTHER organisation held here. One query per chunk of the payload's row ids.
+   */
+  private translationsOfOthers = async (content: OrganisationContent, header: string): Promise<number> => {
+    const wanted = content.tables.contenttranslations;
+    if (wanted.length === 0) return 0;
+    const keyOf = (r: Row): string => [r.tablename, r.rowid, r.field, r.subkey, r.language].map((v) => lower(String(v ?? ""))).join("\u0000");
+    const keys = new Set(wanted.map(keyOf));
+    let colliding = 0;
+    for (const part of chunk([...new Set(wanted.map((r) => String(r.rowid)))], CHUNK)) {
+      const found = (await contenttranslations.findAll({
+        attributes: ["tablename", "rowid", "field", "subkey", "language", "organisationid"],
+        where: { rowid: { [Op.in]: part }, organisationid: { [Op.ne]: header } },
+        raw: true,
+        transaction: this.transaction,
+      })) as unknown as Row[];
+      // the key counts once, however many other organisations hold it
+      const seen = new Set<string>();
+      for (const row of found) {
+        const key = keyOf(row);
+        if (keys.has(key) && !seen.has(key)) {
+          seen.add(key);
+          colliding += 1;
+        }
+      }
+    }
+    return colliding;
   };
 
   /** The ids of the rows of `key` whose `column` is one of `parents`. */
@@ -639,6 +688,7 @@ export class OrganisationContentImport {
       case "questions":
       case "documents":
       case "subjects":
+      case "contenttranslations":
         await model.bulkCreate(part as never, { transaction: this.transaction, updateOnDuplicate: update as never });
         return;
       case "countries":

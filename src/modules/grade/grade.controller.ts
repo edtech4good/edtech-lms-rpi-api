@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -9,6 +10,8 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
+import { CONTENT_TRANSLATIONS_HEADER } from "src/constants/content-translations";
+import { ContentTranslations, withContentLanguage } from "src/business/content-translations";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { GradeBusiness } from "src/business/grade.business";
 import { Logger } from "src/config";
@@ -94,13 +97,15 @@ export class GradeController {
   @HttpCode(HttpStatus.OK)
   async getgradesbycurriculumid(
     @Param("curriculumid") curriculumid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
     ): Promise<any> {
     Logger.info(`<${user.studentfirstname}> get all grades <${curriculumid}>`, {logaccesstype: LOGTYPE.GETGRADES, userid: user.schooluserid});
-    return {
-      data: await new GradeBusiness().getgradesbycurriculumid(curriculumid, user),
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: await new GradeBusiness().getgradesbycurriculumid(curriculumid, user, translations),
       error: false,
-    };
+    });
   }
 
   @Get("progress/curriculum/:curriculumid")

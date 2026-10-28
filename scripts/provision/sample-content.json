@@ -12,6 +12,7 @@
       "uitheme": "kids",
       "brandingconfig": null,
       "settingsconfig": null,
+      "contentlanguage": "en",
       "isdeleted": false
     }
   ],
@@ -1032,5 +1033,6 @@
       "deleted_at": null,
       "deleted_by": null
     }
-  ]
+  ],
+  "contenttranslations": []
 }

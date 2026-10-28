@@ -108,9 +108,11 @@ import { baselinequestion } from "./baselinequestion";
 import { lessonplans } from "./lessonplan";
 import { subjects } from "./subjects";
 import { organisations } from "./organisations";
+import { contenttranslations } from "./contenttranslations";
 
 export {
   organisations,
+  contenttranslations,
   baselinequestion,
   curriculumbaseline,
   curriculums,
@@ -218,6 +220,7 @@ export function initModels(sequelize: Sequelize) {
   lessonplans.initModel(sequelize);
   subjects.initModel(sequelize);
   organisations.initModel(sequelize);
+  contenttranslations.initModel(sequelize);
 
   // Ownership links (organisations package, step 5a): the same join as the default
   // `school` association in setuprelationshipforreport (which, since step 5b, also
@@ -235,6 +238,13 @@ export function initModels(sequelize: Sequelize) {
     constraints: false,
   });
   schools.belongsTo(organisations, {
+    as: "organisation",
+    foreignKey: "organisationid",
+    targetKey: "organisationid",
+    constraints: false,
+  });
+
+  contenttranslations.belongsTo(organisations, {
     as: "organisation",
     foreignKey: "organisationid",
     targetKey: "organisationid",

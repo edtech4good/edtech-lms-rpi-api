@@ -66,6 +66,33 @@ holds one school. The rules, in `src/business/`:
   reuses a code under another name, and never reads or writes anything online.
   The seeds (`scripts/seed-*.js`) put every school, content row, login and
   learner under an organisation (`scripts/lib/seed-organisations.js`).
+- Translations of content text (bilingual content). `contenttranslations` holds one row per translated text of a content
+  row: `(tablename, rowid)` names the row (polymorphic, no foreign key), `field` the text, `subkey` (up to 64 characters) the option, matching
+  partner or distractor id or the feedback message key (`''`, never NULL, for a field with none: MySQL treats NULLs in a
+  unique key as distinct), `language` (kept as its primary subtag in lower case: `KM` is stored `km`), `text`, `sourcehash` (the sha-256 hex of the UTF-8 base text it translated) and
+  `lastupdated`; unique over table, row, field, subkey and language; hard-deleted. `organisations.contentlanguage` is the
+  organisation's base language (null = no translations yet); the content columns keep that language's text. Allow-lists
+  (`src/constants/content-translations.ts`): curriculums, grades, levels, lessons, lessonlearnings, lessonpractices,
+  lessonquizzes, lessonplans (name and description), and questions (`questiontext`, `headingtext`, `questionoptiontext`,
+  `questionassociatetext`, `questiondistractortext`, `feedback`; the last four need a subkey). The payload key
+  `contenttranslations` is the LAST key, owned, with a polymorphic parent: the validator REFUSES a row whose parent is not
+  a row of the payload, whose table or field is not on the list, whose language is the organisation's own, a row of any
+  kind when the payload's organisation row has no `contentlanguage`, a row with a `lastupdated` that is not a date (it is
+  required here; the other owned tables default it in the database, so central must send it), a row that repeats the
+  table, row, field, subkey and language of another organisation's translation here (it would take that row over), and a
+  field an answer is graded by (template 21's `questiontext` and `questionoptiontext`, and the `questiontext` of
+  fill-in-the-blank (8) and of template 23); central DROPS a dangling row where this side refuses. Like `lessonlearningdocuments` the key is required, so a payload from
+  before translations is refused: this API ships first and central straight after, with no Sync Content between.
+  `organisations[0].contentlanguage` is optional (it is on the `organisation` row shared with `PUT /import/ownership`), but
+  translations need it. Provisioning (`src/provisioning/`) carries the payload's `contentlanguage` to the local organisation
+  (new or reused; a reused one keeps its own when the payload has none).
+  Reads: only when the request carries `X-Content-Translations: 1` (`CONTENT_TRANSLATIONS_HEADER`, in `CORS_ALLOWED_HEADERS`),
+  every content row of the routes the app reads gains `translations` and the response root `contentlanguage`
+  (`src/business/content-translations.ts`, one query per table, the token's organisation only); a translation whose
+  `sourcehash` is not the hash of the row's base text now is left out, and so is one in the organisation's own
+  `contentlanguage` (it may have been changed after the row was stored). A token with no organisation gets an undecorated
+  response (no `translations`, no `contentlanguage`), not `{}`. Without the header the answers are byte-identical
+  (`content-routes.snapshot.spec.ts`, snapshots taken from `main`).
 - Every route declares an `@OrgPolicy` (`public | learner | teacher | server |
   pi-import`). `npm run routes:policy -- --write` regenerates
   `docs/route-policy-inventory.md`; `route-inventory.spec.ts` fails on an
@@ -73,8 +100,10 @@ holds one school. The rules, in `src/business/`:
 - Outward payloads keep their shape; a new column is kept out of every query by
   a default scope on its model and read only through a named scope.
 - A request header a browser client sends to this API (the learner app's
-  `X-Learning-Item-Types`) must be listed in `src/cors-options.ts`, or the browser's
+  `X-Learning-Item-Types` and `X-Content-Translations`) must be listed in `src/cors-options.ts`, or the browser's
   preflight refuses every request that carries it; `src/cors-options.spec.ts` pins the list.
+- `src/constants/content-translations.ts` is a byte-for-byte twin of central's file of the same name, pinned by a
+  sha256 in a spec on both sides (`content-translations.spec.ts` here); change both together and re-pin both specs.
 
 ## Client address
 

@@ -1,12 +1,14 @@
 import {
   Controller,
-  Get, HttpCode,
+  Get, Headers, HttpCode,
   HttpStatus,
   Param,
   UseGuards,
   UseInterceptors
 } from "@nestjs/common";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
+import { CONTENT_TRANSLATIONS_HEADER } from "src/constants/content-translations";
+import { ContentTranslations, withContentLanguage } from "src/business/content-translations";
 import {
   ApiBearerAuth,
   ApiParam,
@@ -119,17 +121,19 @@ export class QuestionController {
   @HttpCode(HttpStatus.OK)
   async getpracticequestion(
     @Param('lessonpracticeid') lessonpracticeid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
-    const question = await new QuestionBusiness().getpracticequestions(lessonpracticeid);
+    const translations = ContentTranslations.from(translationsheader, user);
+    const question = await new QuestionBusiness().getpracticequestions(lessonpracticeid, translations);
     if (!question) {
       throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get lesson practice <${lessonpracticeid}>`, {logaccesstype: LOGTYPE.GETLESSONPRACTICE, userid: user.schooluserid});
-    return {
+    return withContentLanguage(translations, {
       data: question,
       error: false,
-    };
+    });
   }
 
   @Get('quiz/:lessonquizid')
@@ -153,17 +157,19 @@ export class QuestionController {
   @HttpCode(HttpStatus.OK)
   async getquizquestion(
     @Param('lessonquizid') lessonquizid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
-    const question = await new QuestionBusiness().getquizquestions(lessonquizid);
+    const translations = ContentTranslations.from(translationsheader, user);
+    const question = await new QuestionBusiness().getquizquestions(lessonquizid, translations);
     if (!question) {
       throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.schoolusername}> get lesson quiz <${lessonquizid}>`, {logaccesstype: LOGTYPE.GETLESSONQUIZ, userid: user.schooluserid});
-    return {
+    return withContentLanguage(translations, {
       data: question,
       error: false,
-    };
+    });
   }
 
   @Get('baseline/:curriculumbaselineid')

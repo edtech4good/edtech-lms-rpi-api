@@ -29,6 +29,7 @@ import { LevelBusiness } from "./level.business";
 import { dbinstance } from "src/services/dbservice";
 import { Logger } from "src/config";
 import { lessonplans } from "src/models/data-models/lessonplan";
+import type { ContentTranslations } from "./content-translations";
 
 interface PracticeCorrectAnswer {
   iscorrect: boolean;
@@ -302,7 +303,7 @@ export class LessonBusiness {
     return learningprogress;
   };
 
-  getlearninglesson = async (lessonlearningid: string, user: Token) => {
+  getlearninglesson = async (lessonlearningid: string, user: Token, translations?: ContentTranslations) => {
     lessonlearnings.hasOne(studentlearningprogress, {
       foreignKey: "lessonlearningid",
       sourceKey: "lessonlearningid",
@@ -339,6 +340,7 @@ export class LessonBusiness {
         "documents",
         await this.getlearningitemdocuments(lessonlearning.lessonlearningid, user)
       );
+      await translations?.decorate("lessonlearnings", lessonlearning);
     }
     return lessonlearning;
   };
@@ -663,7 +665,7 @@ export class LessonBusiness {
     }
   };
 
-  getlessonsbylevelid = async (levelid: string, user: Token) => {
+  getlessonsbylevelid = async (levelid: string, user: Token, translations?: ContentTranslations) => {
     lessons.hasMany(studentlessonsprogress, { foreignKey: "lessonid" });
     studentlessonsprogress.belongsTo(lessons, { foreignKey: "lessonid" });
     levels.hasMany(studentprogress, { foreignKey: "studentprogressreferenceid" });
@@ -716,6 +718,8 @@ export class LessonBusiness {
       lesson.setDataValue("completed", Boolean(studentlessonsprogress?.[0]?.completed));
       return lesson;
     });
+    await translations?.decorate("lessons", ls);
+    await translations?.decorate("levels", levelprogress);
     return {
       lesson: ls,
       level_has_quiz: levelquizques > 0 ? true : false,
@@ -723,7 +727,7 @@ export class LessonBusiness {
     };
   };
 
-  getlessonbricks = async (lessonid: string, user: Token) => {
+  getlessonbricks = async (lessonid: string, user: Token, translations?: ContentTranslations) => {
     // lesson learning
     lessons.hasMany(lessonlearnings, {
       foreignKey: "lessonid",
@@ -825,6 +829,13 @@ export class LessonBusiness {
       },
       include: includeoption,
     });
+    if (translations && lslnptq) {
+      await translations.decorate("lessons", lslnptq);
+      await translations.decorate("lessonlearnings", lslnptq.get("lessonlearnings"));
+      await translations.decorate("lessonpractices", lslnptq.get("lessonpractices"));
+      await translations.decorate("lessonquizzes", lslnptq.get("lessonquizzes"));
+      await translations.decorate("lessonplans", lslnptq.get("lessonplans"));
+    }
     return lslnptq;
   };
 
