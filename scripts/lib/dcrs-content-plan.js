@@ -10,7 +10,8 @@
  *
  * content.json
  * ```
- * { "curriculum": { "name": { "en": "...", "km": "..." } },
+ * { "programme":  { "en": "...", "km": "..." },                      // optional: the programme's name, one line each
+ *   "curriculum": { "name": { "en": "...", "km": "..." } },
  *   "level":      { "name": { "en": "...", "km": "..." } },          // optional
  *   "lessons": [ {
  *     "id": "<one of the four fixed DCRS lesson ids>", "order": 1,
@@ -52,8 +53,10 @@
  *
  * Placeholders. The seed's own pass leaves descriptions like "DCRS lesson" and a grade called "Cohort II" that a learner
  * would see. Content mode blanks every description the file does not provide (curriculum, level, lesson, learning item,
- * practice, quiz: the empty string) and gives the grade, whose name the navigation shows, the module title the file gives
- * (the curriculum's name, with its km translation). A description is only blanked in the rows this mode writes.
+ * practice, quiz: the empty string) and names the grade, whose name the navigation shows, after the programme the file
+ * gives (`programme`, English in the base column, Khmer as its km translation); a file without a `programme` names it after
+ * the module title instead (the curriculum's name, with its km translation). A description is only blanked in the rows this
+ * mode writes.
  */
 
 const { createHash } = require("crypto");
@@ -176,6 +179,15 @@ function validateContent(content, ID) {
     else if (Buffer.byteLength(v.km, "utf8") > TRANSLATION_TEXT_MAX_BYTES) problems.push(`${where}.km is too long to store as a translation`);
   };
   if (!isObject(content)) throw new ContentRefused(["content.json is not an object"]);
+  if (content.programme !== undefined) {
+    bilingual(content.programme, "programme");
+    // a programme's name is one line: the header that shows it has no room for a break
+    for (const lang of ["en", "km"]) {
+      if (isObject(content.programme) && typeof content.programme[lang] === "string" && /[\r\n\u2028\u2029]/.test(content.programme[lang])) {
+        problems.push(`programme.${lang} must be one line (it has a line break)`);
+      }
+    }
+  }
   if (!isObject(content.curriculum)) problems.push("curriculum is missing");
   else bilingual(content.curriculum.name, "curriculum.name");
   if (content.level !== undefined) {
@@ -330,7 +342,9 @@ function planContent(content, ID, { organisationid, now } = {}) {
     ["curriculumname", "curriculumdescription", "curriculumstatus", "isdeleted"],
   );
   translate("curriculums", ID.curriculum, "curriculumname", "", content.curriculum.name);
-  // The grade's name is shown in the learner's navigation and cannot be empty: it takes the module title the file gives (the curriculum's name).
+  // The grade's name is shown in the learner's navigation and cannot be empty: it is the programme the file gives, or, when the file
+  // has none, the module title (the curriculum's name).
+  const gradeName = content.programme ?? content.curriculum.name;
   upsert(
     "grades",
     "gradeid",
@@ -338,7 +352,7 @@ function planContent(content, ID, { organisationid, now } = {}) {
       gradeid: ID.grade,
       curriculumid: ID.curriculum,
       gradestatus: 1,
-      gradename: t(content.curriculum.name),
+      gradename: t(gradeName),
       gradedescription: "",
       gradeorder: 1,
       isdeleted: 0,
@@ -347,7 +361,7 @@ function planContent(content, ID, { organisationid, now } = {}) {
     },
     ["gradename", "gradedescription", "gradestatus", "isdeleted"],
   );
-  translate("grades", ID.grade, "gradename", "", content.curriculum.name);
+  translate("grades", ID.grade, "gradename", "", gradeName);
   if (content.level) {
     upsert(
       "levels",
