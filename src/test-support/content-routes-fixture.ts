@@ -34,8 +34,8 @@ import { dbinstance } from "src/services/dbservice";
 /**
  * The content routes the learner app reads, driven through their REAL controllers and business classes over an
  * in-memory fake of the models (rows are built as real Sequelize instances, so `get`, `getDataValue`,
- * `setDataValue` and `toJSON` are Sequelize's own). One small tree of content for organisation X, and a copy of its ids' content for
- * nothing else: a translation of another organisation's is a row of `contenttranslations`, not of this tree.
+ * `setDataValue` and `toJSON` are Sequelize's own). One small tree of content for organisation X; another organisation's
+ * translations of the same rows are rows of `contenttranslations` (see `content-routes.translations.spec.ts`), not another tree.
  *
  * What is faked: the database (equality and `Op.in` on the columns the code reads; includes are not evaluated, the
  * rows an include would bring are attached by hand where a route needs them), and `enrolledCurriculumIds`.
