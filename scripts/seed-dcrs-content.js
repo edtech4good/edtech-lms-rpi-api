@@ -392,6 +392,10 @@ async function main() {
              VALUES (?,?,?,1,?,?,?,?,?,1,?,?,?,?,?,?,?,1,?)`,
       [ID.facilitator, "MIV", "Facilitator", "Battambang", "Cambodia", "Battambang", ID.curriculum, CURRICULUM_IDS, ID.facilitatorUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Mekong Inclusive Ventures", ID.school]);
 
+    // INSERT IGNORE leaves a row seeded before curriculumids was set as it was: repair only the NULLs, of this seed's own learners.
+    await q(`UPDATE students SET curriculumids = JSON_ARRAY(curriculumid) WHERE studentid IN (?,?) AND curriculumids IS NULL`,
+      [ID.student, ID.facilitator]);
+
     // Content mode: the real text over the placeholder rows, in one transaction, then counted.
     const contentPlan = content ? planContent(content, ID, { lang: args.lang, organisationid }) : null;
     const contentReport = contentPlan ? await applyPlan(conn, contentPlan) : null;
