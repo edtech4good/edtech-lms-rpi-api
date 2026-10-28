@@ -74,7 +74,7 @@ const formatThree = {
     [
       "schools", "standards", "countries", "curriculums", "curriculumbaselines", "baselinequestion", "grades", "levels", "lessons",
       "lessonlearnings", "lessonlearningdocuments", "lessonplans", "lessonpractices", "lessonquizzes", "lessonpracticequestions", "lessonquizquestions",
-      "levelquizquestions", "questions", "documents", "subjects",
+      "levelquizquestions", "questions", "documents", "subjects", "contenttranslations",
     ].map((key) => [key, []])
   ),
 };

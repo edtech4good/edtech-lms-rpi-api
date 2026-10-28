@@ -20,6 +20,7 @@ import {
   students,
 } from "src/models/data-models/init-models";
 import { baselinequestion } from "src/models/data-models/baselinequestion";
+import { contenttranslations } from "src/models/data-models/contenttranslations";
 import { countries } from "src/models/data-models/countries";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import { schools } from "src/models/data-models/school";
@@ -78,10 +79,13 @@ const TABLES: Array<[string, any, string]> = [ // eslint-disable-line @typescrip
   ["questions", questions, "questionid"],
   ["documents", documents, "documentid"],
   ["subjects", subjects, "subjectid"],
+  ["contenttranslations", contenttranslations, "translationid"],
   ["students", students, "studentid"],
   ["schoolusers", schoolusers, "schooluserid"],
 ];
 const OWNED_TABLES = ["schools", "curriculums", "questions", "documents", "subjects"];
+/** What the fake stores an owner for: the five above, and translations (owned too, but a payload need not carry any). */
+const FAKE_OWNED_TABLES = [...OWNED_TABLES, "contenttranslations"];
 
 let store: Store;
 let began: Store;
@@ -183,7 +187,7 @@ const install = (initial: Store) => {
           // ON DUPLICATE KEY UPDATE: only the listed columns change
           for (const column of opts.updateOnDuplicate ?? []) if (column in r) existing[column] = r[column];
         } else {
-          store[name].push({ ...cloneDeep(r), ...(OWNED_TABLES.includes(name) ? { organisationid: r.organisationid ?? null } : {}) });
+          store[name].push({ ...cloneDeep(r), ...(FAKE_OWNED_TABLES.includes(name) ? { organisationid: r.organisationid ?? null } : {}) });
         }
       }
       return [];
@@ -252,6 +256,7 @@ const content = (tag: string, n: number, owner: string | null): Store => {
     lessonpracticequestions: [{ lessonpracticequestionid: k("prq"), lessonpracticeid: k("pr"), questionid: k("q1") }],
     lessonquizquestions: [{ lessonquizquestionid: k("qzq"), lessonquizid: k("qz"), questionid: k("q2") }],
     levelquizquestions: [{ levelquizquestionid: k("lvq"), levelid: k("level"), questionid: k("q2"), lessonid: k("lesson") }],
+    contenttranslations: [],
   };
 };
 
@@ -1650,5 +1655,142 @@ describe("who may import one organisation's content", () => {
       message: "This server accepts one organisation's content (format 3). Export it from the admin and send it again.",
     });
     expect(writes).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------- translations (bilingual content, B-1)
+
+/** One translation row of organisation `owner`'s lesson `tag`-lesson-`n`: a text in Khmer-block code points only. */
+const translationOf = (tag: string, n: number, owner: string | null, over: Row = {}): Row => ({
+  translationid: `${tag}-tr-${n}`,
+  organisationid: owner,
+  tablename: "lessons",
+  rowid: `${tag}-lesson-${n}`,
+  field: "lessonname",
+  subkey: "",
+  language: "km",
+  text: String.fromCodePoint(0x1780, 0x1781, 0x1782, 0x1783),
+  sourcehash: "0".repeat(64),
+  lastupdated: "2026-10-28T03:00:00.000Z",
+  ...over,
+});
+const withTranslations = (tag: string, n: number, owner: string | null, rows: Row[] = [translationOf(tag, n, owner)]): Store =>
+  merge(content(tag, n, owner), { contenttranslations: rows });
+
+describe("translations: contenttranslations and organisations.contentlanguage", () => {
+  it("a payload with translations is written with its owner, counted, and upserted by the listed columns only", async () => {
+    install({});
+    const rows = [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-2", field: "lessondescription", language: "th" })];
+    const result: any = await importIt(payloadOf(withTranslations("x", 1, ORG_X, rows))); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(store.contenttranslations).toEqual(rows);
+    expect(new Set(store.contenttranslations.map((r) => r.organisationid))).toEqual(new Set([ORG_X]));
+    expect(result.counts.contenttranslations).toEqual({ deleted: 0, written: 2, markedDeleted: 0 });
+    expect((contenttranslations.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate).toEqual([
+      "organisationid", "tablename", "rowid", "field", "subkey", "language", "text", "sourcehash", "lastupdated",
+    ]);
+  });
+
+  it("is the LAST table written, after the rows it names", async () => {
+    install({});
+    await importIt(payloadOf(withTranslations("x", 1, ORG_X)));
+    const order = writes.filter((w) => w.endsWith(".bulkCreate"));
+    expect(order[order.length - 1]).toBe("contenttranslations.bulkCreate");
+    expect(order.indexOf("lessons.bulkCreate")).toBeLessThan(order.indexOf("contenttranslations.bulkCreate"));
+  });
+
+  it("a second import replaces the organisation's translations (none stale), the same payload again changes nothing, and another organisation's are untouched", async () => {
+    install({ ...merge(withTranslations("y", 1, ORG_Y)), organisations: [organisationRow(ORG_Y, "yorg")], countries: [] });
+    const yBefore = cloneDeep(store.contenttranslations);
+    await importIt(payloadOf(withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-2", field: "lessondescription" })])));
+    const second = withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X, { translationid: "x-tr-new", field: "lessondescription", language: "th" })]);
+    const result: any = await importIt(payloadOf(second)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(store.contenttranslations.filter((r) => r.organisationid === ORG_X).map((r) => r.translationid)).toEqual(["x-tr-new"]);
+    expect(result.counts.contenttranslations).toEqual({ deleted: 2, written: 1, markedDeleted: 0 });
+    expect(store.contenttranslations.filter((r) => r.organisationid === ORG_Y)).toEqual(yBefore);
+    const once = cloneDeep(store);
+    await importIt(payloadOf(second));
+    expect(store).toEqual(once);
+  });
+
+  it("an organisation whose payload now has none loses the ones it had", async () => {
+    install({});
+    await importIt(payloadOf(withTranslations("x", 1, ORG_X)));
+    const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+    expect(store.contenttranslations).toEqual([]);
+    expect(result.counts.contenttranslations).toEqual({ deleted: 1, written: 0, markedDeleted: 0 });
+  });
+
+  it("a curriculum left out of the payload keeps its rows but loses its translations (stated)", async () => {
+    install({});
+    await importIt(payloadOf({ ...merge(withTranslations("x", 1, ORG_X), withTranslations("x", 3, ORG_X)), countries: content("x", 1, ORG_X).countries }));
+    expect(store.contenttranslations).toHaveLength(2);
+    await importIt(payloadOf(withTranslations("x", 1, ORG_X)));
+    expect(store.contenttranslations.map((r) => r.translationid)).toEqual(["x-tr-1"]);
+    expect(store.lessons.map((r) => r.lessonid).sort()).toEqual(["x-lesson-1", "x-lesson-3"]);
+  });
+
+  it("a translationid that another organisation already holds refuses the whole file, naming the table and the count, and writes nothing", async () => {
+    install({ ...withTranslations("y", 1, ORG_Y), organisations: [organisationRow(ORG_Y, "yorg")], countries: [] });
+    const stolen = withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X, { translationid: "y-tr-1" })]);
+    const snapshot = cloneDeep(store);
+    await expect(importIt(payloadOf(stolen))).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/contenttranslations: 1 row already belongs to another organisation here/),
+    });
+    expect(store).toEqual(snapshot);
+  });
+
+  it("a dangling parent refuses the whole file before anything is written, and the message names the table and the count", async () => {
+    install({});
+    const bad = withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-9", rowid: "x-lesson-gone" })]);
+    await expect(importIt(payloadOf(bad))).rejects.toMatchObject({
+      status: 400,
+      message: "contenttranslations: 1 row names a lessons row (rowid) that is not in the payload.",
+    });
+    expect(writes).toEqual([]);
+    expect(store.contenttranslations).toEqual([]);
+  });
+
+  describe("organisations.contentlanguage", () => {
+    const languageOf = () => store.organisations.find((o) => o.organisationid === ORG_X)?.contentlanguage;
+
+    it("is stored from the payload's organisation row, and the update list names it", async () => {
+      install({});
+      await importIt(payloadOf(content("x", 1, ORG_X), { organisations: [organisationRow(ORG_X, "xorg", { contentlanguage: "en" })], contenttranslations: [] }));
+      expect(languageOf()).toBe("en");
+      expect((organisations.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate).toContain("contentlanguage");
+    });
+
+    it("a later payload changes it, and a null clears it", async () => {
+      install({});
+      const send = (value: unknown) =>
+        importIt(payloadOf(content("x", 1, ORG_X), { organisations: [organisationRow(ORG_X, "xorg", { contentlanguage: value })], contenttranslations: [] }));
+      await send("en");
+      await send("km");
+      expect(languageOf()).toBe("km");
+      await send(null);
+      expect(languageOf()).toBeNull();
+    });
+
+    it("a sender that has no such column leaves the stored value as it is (the column is not in the update list for that row)", async () => {
+      install({});
+      await importIt(payloadOf(content("x", 1, ORG_X), { organisations: [organisationRow(ORG_X, "xorg", { contentlanguage: "en" })], contenttranslations: [] }));
+      await importIt(payloadOf(content("x", 1, ORG_X), { contenttranslations: [] }));
+      expect(languageOf()).toBe("en");
+      expect((organisations.bulkCreate as jest.Mock).mock.calls[1][1].updateOnDuplicate).not.toContain("contentlanguage");
+    });
+  });
+
+  it("a payload from before translations (no key, no column) is refused whole with the validator's own message: the learning-items rule, a sequenced break (student API first, central straight after)", async () => {
+    install(dbBefore());
+    const snapshot = cloneDeep(store);
+    const old = payloadOf(content("x", 1, ORG_X));
+    delete old.contenttranslations;
+    await expect(importIt(old)).rejects.toMatchObject({ status: 400, message: "contenttranslations must be an array (an empty one if the organisation has none)." });
+    expect(store).toEqual(snapshot);
+    expect(writes).toEqual([]);
+    // and the same payload with the key (empty) and no column is a main-shaped payload that imports
+    const withKey = payloadOf(content("x", 1, ORG_X), { contenttranslations: [] });
+    await expect(importIt(withKey)).resolves.toMatchObject({ error: false, organisationid: ORG_X });
   });
 });

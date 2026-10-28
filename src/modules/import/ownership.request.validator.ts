@@ -1,6 +1,7 @@
 import joi from "joi";
 import { ValidationException } from "src/models/ValidationException";
 import { fieldForJoiDetail, humanizeJoiMessage } from "src/utils/joi-message";
+import { LANGUAGE_CODE } from "src/constants/content-translations";
 
 /**
  * The body of `PUT /import/ownership` (see ownership.business.ts for what it
@@ -101,6 +102,9 @@ export const organisation = joi.object({
     .required(),
   brandingconfig,
   settingsconfig,
+  // The language of the organisation's content text. Optional (an older sender has none; the stored value is then left
+  // as it is), null for "no translations yet".
+  contentlanguage: joi.string().pattern(LANGUAGE_CODE).allow(null),
   isdeleted: joi.boolean().strict().required(),
 });
 
@@ -131,6 +135,8 @@ export interface OwnershipOrganisation {
   uitheme: string;
   brandingconfig: object | null;
   settingsconfig: object | null;
+  /** Absent when the sender does not know the column. */
+  contentlanguage?: string | null;
   isdeleted: boolean;
 }
 

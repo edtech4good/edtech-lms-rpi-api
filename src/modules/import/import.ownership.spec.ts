@@ -126,6 +126,7 @@ const installFakes = () => {
     }
   }
 
+  jest.spyOn(organisations, "scope").mockReturnValue(organisations as never); // `withContentLanguage`: the fake returns every column
   jest.spyOn(organisations, "findAll").mockImplementation((async (opts: any) => {
     calls.push("organisations.findAll");
     const ids = inList(opts.where.organisationid).map((x) => x.toLowerCase());
@@ -385,6 +386,40 @@ describe("PUT /import/ownership", () => {
       );
       const again = await put(body).expect(200);
       expect(again.body.applied.organisations).toBe(0);
+    });
+
+    describe("contentlanguage (bilingual content)", () => {
+      const language = (org: string) => store.organisations.find((o) => o.organisationid === org)?.contentlanguage;
+
+      it("is stored on a new organisation row, and set again (and cleared) by a later call", async () => {
+        await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: "en" }), orgRow(ORG_B)] })).expect(200);
+        expect(language(ORG_A)).toBe("en");
+        expect(language(ORG_B)).toBeUndefined();
+        const changed = await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: "km" }), orgRow(ORG_B)] })).expect(200);
+        expect(changed.body.applied.organisations).toBe(1);
+        expect(language(ORG_A)).toBe("km");
+        await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: null }), orgRow(ORG_B)] })).expect(200);
+        expect(language(ORG_A)).toBeNull();
+      });
+
+      it("a sender with no such column leaves the stored value as it is, and counts nothing for it", async () => {
+        store.organisations.push(orgRow(ORG_A, { contentlanguage: "en" }), orgRow(ORG_B));
+        const res = await put(validBody()).expect(200);
+        expect(res.body.applied.organisations).toBe(0);
+        expect(language(ORG_A)).toBe("en");
+      });
+
+      it("is read through the withContentLanguage scope (the column is out of ordinary queries)", async () => {
+        await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: "en" }), orgRow(ORG_B)] })).expect(200);
+        expect(organisations.scope).toHaveBeenCalledWith("withContentLanguage");
+      });
+
+      it.each([["too short", "k"], ["too long", "khmerkhmer"], ["with a space", "k m"], ["not a string", 7]])("refuses a content language that is %s, and writes nothing", async (_label, value) => {
+        const before = cloneDeep(store);
+        await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: value }), orgRow(ORG_B)] })).expect(400);
+        expect(store).toEqual(before);
+        expect(tnx.commit).not.toHaveBeenCalled();
+      });
     });
 
     it("refuses the whole call, before writing anything, when a map names an organisation that is neither sent nor known", async () => {

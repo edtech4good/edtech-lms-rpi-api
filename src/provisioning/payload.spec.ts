@@ -82,6 +82,7 @@ describe("the sample content payload", () => {
       questions: 8,
       documents: 2,
       subjects: 1,
+      contenttranslations: 0,
     });
     const text = JSON.stringify(sample());
     // demo content only: no address, no link, and every named thing is a demo one
@@ -101,6 +102,20 @@ describe("the sample content payload", () => {
     void lessonlearningdocuments;
     expect(refusal(() => validatePayload(old))).toBe(
       "The content payload is refused: lessonlearningdocuments must be an array (an empty one if the organisation has none).",
+    );
+  });
+
+  it("carries the translations key (empty) and the organisation's content language", () => {
+    const body = sample();
+    expect(body.contenttranslations).toEqual([]);
+    expect((body.organisations as Row[]).map((r) => r.contentlanguage)).toEqual(["en"]);
+  });
+
+  it("without contenttranslations (the sample as it was before translations) is refused, with the validator's own message", () => {
+    const { contenttranslations, ...old } = sample();
+    void contenttranslations;
+    expect(refusal(() => validatePayload(old))).toBe(
+      "The content payload is refused: contenttranslations must be an array (an empty one if the organisation has none).",
     );
   });
 

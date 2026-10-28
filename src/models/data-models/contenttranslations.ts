@@ -62,6 +62,9 @@ export class contenttranslations
         sequelize,
         tableName: 'contenttranslations',
         timestamps: false,
+        // Owned like the content tables: the content import reads every owned table through this scope. (No default
+        // scope: the owner is the column the student routes filter by.)
+        scopes: { withOwnership: {} },
         indexes: [
           { name: 'PRIMARY', unique: true, using: 'BTREE', fields: [{ name: 'translationid' }] },
           {
