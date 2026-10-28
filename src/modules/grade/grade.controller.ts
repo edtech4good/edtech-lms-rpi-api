@@ -64,12 +64,14 @@ export class GradeController {
     @Query("schoolname") schoolname: string = '',
     @Query("schoolid") schoolid: string = '',
     @User() user?: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
-    const data = await new GradeBusiness().getGradesWithFilter(gradename, curid, standardid, schoolname, schoolid, user);
-    return {
+    const translations = ContentTranslations.from(translationsheader, user);
+    const data = await new GradeBusiness().getGradesWithFilter(gradename, curid, standardid, schoolname, schoolid, user, translations);
+    return withContentLanguage(translations, {
         data: data,
         error: false,
-    };
+    });
   }
   
   @Get("/curriculum/:curriculumid")

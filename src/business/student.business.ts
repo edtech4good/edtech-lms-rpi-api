@@ -13,9 +13,13 @@ import {
   studentsAttributes,
 } from "../models/data-models/init-models";
 import { CurriculumBusiness } from "./curriculum.business";
+import type { ContentTranslations } from "./content-translations";
 import { GradeBusiness } from "./grade.business";
 import { learnersInScope, ReportScope } from "./report-scope";
 import { schoolRefIsOwn, SchoolScope, studentsOfSchool, withRequiredSchoolIds } from "./school-identity";
+
+/** `{ "<language>": { "<field>": text } }`, present only when the request asked for translations. */
+export type StudentProgressSummaryTranslations = Record<string, Record<string, string>>;
 
 export interface StudentProgressSummaryCurrentLevel {
   levelid: string;
@@ -24,6 +28,7 @@ export interface StudentProgressSummaryCurrentLevel {
   gradename: string;
   lessonsCompleted: number;
   lessonsTotal: number;
+  translations?: StudentProgressSummaryTranslations;
 }
 
 export interface StudentProgressSummaryLevel {
@@ -32,6 +37,7 @@ export interface StudentProgressSummaryLevel {
   lessonsCompleted: number;
   lessonsTotal: number;
   completed: boolean;
+  translations?: StudentProgressSummaryTranslations;
 }
 
 export interface StudentProgressSummaryGrade {
@@ -42,6 +48,7 @@ export interface StudentProgressSummaryGrade {
   levelsCompleted: number;
   levelsTotal: number;
   levels: StudentProgressSummaryLevel[];
+  translations?: StudentProgressSummaryTranslations;
 }
 
 export interface StudentProgressSummaryCurriculum {
@@ -53,6 +60,7 @@ export interface StudentProgressSummaryCurriculum {
   levelsTotal: number;
   currentLevel: StudentProgressSummaryCurrentLevel | null;
   grades: StudentProgressSummaryGrade[];
+  translations?: StudentProgressSummaryTranslations;
 }
 
 export interface StudentProgressSummary {
@@ -377,7 +385,7 @@ WHERE
   // level, ordered by grade gradeorder then level levelorder, that has at
   // least one active lesson and is not yet completed; it is null once every
   // level is completed, or when the curriculum has no active lessons at all.
-  getprogresssummary = async (user: Token): Promise<StudentProgressSummary> => {
+  getprogresssummary = async (user: Token, translations?: ContentTranslations): Promise<StudentProgressSummary> => {
     const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
     const curricula = await new CurriculumBusiness().getEnrolledCurriculums(user);
     if (curricula.length === 0) {
@@ -543,6 +551,26 @@ WHERE
       };
     });
 
+    if (translations) {
+      // One query per table for the whole payload: every curriculum, grade and level row names itself, and the
+      // current level (which names its level and its grade) takes both rows' translations.
+      const gradeRows = curriculaOut.flatMap((cur) => cur.grades);
+      const levelRows = gradeRows.flatMap((grade) => grade.levels);
+      await translations.decorate("curriculums", curriculaOut);
+      await translations.decorate("grades", gradeRows);
+      await translations.decorate("levels", levelRows);
+      for (const cur of curriculaOut) {
+        const current = cur.currentLevel;
+        if (!current) continue;
+        const level = levelRows.find((l) => l.levelid === current.levelid);
+        const grade = gradeRows.find((g) => g.gradeid === current.gradeid);
+        const merged: StudentProgressSummaryTranslations = {};
+        for (const source of [level?.translations ?? {}, grade?.translations ?? {}]) {
+          for (const [language, fields] of Object.entries(source)) merged[language] = { ...merged[language], ...fields };
+        }
+        current.translations = merged;
+      }
+    }
     return { curricula: curriculaOut, totals };
   };
 

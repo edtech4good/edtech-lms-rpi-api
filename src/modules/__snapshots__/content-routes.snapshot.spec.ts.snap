@@ -18,6 +18,25 @@ exports[`the content routes without the translations header GET curriculum/subje
 }
 `;
 
+exports[`the content routes without the translations header GET grade/all answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "curriculumid": "c1",
+      "gradedescription": "The first grade",
+      "gradeid": "g1",
+      "gradename": "Grade One",
+      "gradeorder": 1,
+      "gradestatus": true,
+      "isdeleted": false,
+      "passing_points": null,
+      "points": 100,
+    },
+  ],
+  "error": false,
+}
+`;
+
 exports[`the content routes without the translations header GET grade/curriculum/:curriculumid answers as it always did 1`] = `
 {
   "data": [
@@ -222,6 +241,26 @@ exports[`the content routes without the translations header GET lesson/level/:le
     "levelid": "lv1",
     "pass_percentage": 80,
   },
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET level/all answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "gradeid": "g1",
+      "isdeleted": false,
+      "leveldescription": "An introduction",
+      "levelid": "lv1",
+      "levelname": "Level A",
+      "levelorder": 1,
+      "levelstatus": true,
+      "passing_points": null,
+      "points": 50,
+      "quiz_points": 0,
+    },
+  ],
   "error": false,
 }
 `;
@@ -504,6 +543,57 @@ exports[`the content routes without the translations header GET question/quiz/:l
       "questionid": "q1",
     },
   ],
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET student/progress/summary answers as it always did 1`] = `
+{
+  "data": {
+    "curricula": [
+      {
+        "currentLevel": {
+          "gradeid": "g1",
+          "gradename": "Grade One",
+          "lessonsCompleted": 0,
+          "lessonsTotal": 2,
+          "levelid": "lv1",
+          "levelname": "Level A",
+        },
+        "curriculumid": "c1",
+        "curriculumname": "Mathematics",
+        "grades": [
+          {
+            "gradeid": "g1",
+            "gradename": "Grade One",
+            "lessonsCompleted": 0,
+            "lessonsTotal": 2,
+            "levels": [
+              {
+                "completed": false,
+                "lessonsCompleted": 0,
+                "lessonsTotal": 2,
+                "levelid": "lv1",
+                "levelname": "Level A",
+              },
+            ],
+            "levelsCompleted": 0,
+            "levelsTotal": 1,
+          },
+        ],
+        "lessonsCompleted": 0,
+        "lessonsTotal": 2,
+        "levelsCompleted": 0,
+        "levelsTotal": 1,
+      },
+    ],
+    "totals": {
+      "lessonsCompleted": 0,
+      "lessonsTotal": 2,
+      "levelsCompleted": 0,
+      "levelsTotal": 1,
+    },
+  },
   "error": false,
 }
 `;

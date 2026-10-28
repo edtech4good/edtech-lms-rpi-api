@@ -158,7 +158,7 @@ export class GradeBusiness {
   // has yet filters learners by the name, as it always did.
   // Only the grades of curricula in the caller's scope (a learner's enrolments, or a school's list, of the token's
   // organisation). The curriculum, class and school the request names can only narrow that, never widen it.
-  getGradesWithFilter = async (gradename: string, curid: string, standardid: string, schoolname: unknown, schoolid: unknown, user?: Token) => {
+  getGradesWithFilter = async (gradename: string, curid: string, standardid: string, schoolname: unknown, schoolid: unknown, user?: Token, translations?: ContentTranslations) => {
     const own = await schoolScopeFromToken(user);
     if(!(await schoolRefIsOwn(own, { schoolid, schoolname }))) return [];
     let allowed = await curriculumIdsInScope(user);
@@ -187,7 +187,9 @@ export class GradeBusiness {
     where.curriculumid = { [Op.in]: allowed };
     const order = ["gradename"];
 
-    return await grades.findAll({ where, order });
+    const found = await grades.findAll({ where, order });
+    await translations?.decorate("grades", found);
+    return found;
   };
 
   gettotalprogressofgrade = async (user: Token, gradeid: string) => {

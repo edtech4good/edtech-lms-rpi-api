@@ -28,6 +28,7 @@ import { LessonController } from "src/modules/lesson/lesson.controller";
 import { LessonLearningController } from "src/modules/lesson/lesson.learning.controller";
 import { LevelController } from "src/modules/level/level.controller";
 import { QuestionController } from "src/modules/question/question.controller";
+import { StudentController } from "src/modules/student/student.controller";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
 
@@ -141,7 +142,10 @@ export const CONTENT: Record<string, Row[]> = {
 
 const matches = (row: Row, where: Row = {}): boolean =>
   Object.entries(where).every(([key, cond]) => {
+    if (Array.isArray(cond)) return cond.includes(row[key]); // `{ gradeid: [..] }` is an IN
     if (cond && typeof cond === "object") {
+      const like = (cond as Record<symbol, unknown>)[Op.like as unknown as symbol];
+      if (typeof like === "string") return String(row[key] ?? "").toLowerCase().includes(like.replace(/%/g, "").toLowerCase());
       const list = (cond as Record<symbol, unknown[]>)[Op.in as unknown as symbol];
       if (list) return list.includes(row[key]);
       if (Op.ne in cond) return row[key] !== (cond as Record<symbol, unknown>)[Op.ne as unknown as symbol];
@@ -201,6 +205,8 @@ export const installContentFakes = (): void => {
   initModels(dbinstance.getdbinstance());
   jest.spyOn(Logger, "info").mockImplementation((() => Logger) as never);
   jest.spyOn(contentAccess, "enrolledCurriculumIds").mockResolvedValue(["c1"]);
+  jest.spyOn(contentAccess, "curriculumIdsInScope").mockResolvedValue(["c1"]);
+  jest.spyOn(contentAccess, "gradeIdsInScope").mockResolvedValue(["g1"]);
   for (const [name, model] of MODELS) {
     jest.spyOn(model, "scope").mockReturnValue(model as never);
     jest.spyOn(model, "findAll").mockImplementation((async (options: any = {}) => // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -233,6 +239,9 @@ export const ROUTES: Record<string, (user: Token, header?: string) => Promise<un
   "GET grade/curriculum/:curriculumid": (user, header) => any(new GradeController()).getgradesbycurriculumid(IDS.curriculum, user, header),
   "GET level/grade/:gradeid": (user, header) => any(new LevelController()).getlevelsbygradeid(IDS.grade, user, header),
   "GET level/library": (user, header) => any(new LevelController()).getlibrary(user, header),
+  "GET student/progress/summary": (user, header) => any(new StudentController()).getStudentProgressSummary(user, header),
+  "GET grade/all": (user, header) => any(new GradeController()).getAllGrades("", "", "", "", "", user, header),
+  "GET level/all": (user, header) => any(new LevelController()).getAllLevels("", "", user, header),
   "GET lesson/level/:levelid": (user, header) => any(new LessonController()).getlessonbylevelid(IDS.level, user, header),
   "GET lesson/level/:levelid/steps": (user) => any(new LessonController()).getlevelactivitiesprogress(IDS.level, user),
   "GET lesson/:lessonid/learning": (user, header) => any(new LessonLearningController()).getlessonbricks(IDS.lesson, user, header),

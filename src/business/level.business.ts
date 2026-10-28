@@ -156,7 +156,7 @@ export class LevelBusiness {
   };
 
   // Only the levels of grades of curricula in the caller's scope; the grade named in the query can only narrow that.
-  getLevelsWithFilter = async (gradeid: string, levelname: string, user?: Token) => {
+  getLevelsWithFilter = async (gradeid: string, levelname: string, user?: Token, translations?: ContentTranslations) => {
     let allowed = await gradeIdsInScope(user);
     const where: WhereOptions<levelsAttributes> = {
       isdeleted: false,
@@ -170,6 +170,8 @@ export class LevelBusiness {
     where.gradeid = { [Op.in]: allowed };
     const order = ["levelname"];
 
-    return await levels.findAll({ where, order });
+    const found = await levels.findAll({ where, order });
+    await translations?.decorate("levels", found);
+    return found;
   };
 }
