@@ -9,7 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 
 const TWINS: Record<string, string> = {
-  "dcrs-content-plan.js": "036fe73809daa19a1c26a1c1628358d50126ea1642496343d152601a0dc74ebd",
+  "dcrs-content-plan.js": "fa70d5e6ea0d9f97812797fa7501a9af981f3efcd88c1a300404c63ab9c0ab64",
   "dcrs-content-apply.js": "ae6de381e48bfd43d385c5b7f6c33b4c9ba323525f6b14b4d3de3de4514940dd",
   "dcrs-content-cli.js": "b2721a32e1164c7dc7e42d9868402855b6f6e37c8eb49dbbf300e0730b0abafe",
 };

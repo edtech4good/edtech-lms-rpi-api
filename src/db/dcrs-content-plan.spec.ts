@@ -374,6 +374,66 @@ describe("planning a content file", () => {
   });
 });
 
+describe("the programme", () => {
+  const withProgramme = (over: Json = {}) => sample({ programme: bi("programme"), ...over });
+  const gradeStep = (p: Json) => p.steps.find((s: Json) => s.kind === "upsert" && s.table === "grades");
+
+  it("names the grade after the programme: English in the base column, Khmer as its km row with the hash of that English", () => {
+    const p = plan(withProgramme());
+    expect(gradeStep(p).values.gradename).toBe("en programme");
+    expect(gradeStep(p).values.gradename).not.toBe("en module");
+    expect(forRow(p, "grades", ID.grade)).toEqual([
+      {
+        translationid: translationId("grades", ID.grade, "gradename", "", "km"),
+        organisationid: ORG,
+        tablename: "grades",
+        rowid: ID.grade,
+        field: "gradename",
+        subkey: "",
+        language: "km",
+        text: km("programme"),
+        sourcehash: createHash("sha256").update("en programme", "utf8").digest("hex"),
+        lastupdated: "2026-10-28 09:30:15.123",
+      },
+    ]);
+    // nothing Khmer in the base columns, and one grade row only
+    expect(JSON.stringify(gradeStep(p).values)).not.toMatch(/[\u1780-\u17ff]/);
+    expect(translations(p).filter((v) => v.tablename === "grades")).toHaveLength(1);
+  });
+
+  it("leaves the curriculum, level and lesson names as the file gives them, and adds no row but the grade's", () => {
+    const withIt = plan(withProgramme());
+    const without = plan();
+    const names = (p: Json) => translations(p).filter((v) => v.tablename !== "grades").map((v) => [v.tablename, v.rowid, v.field, v.subkey, v.text, v.sourcehash]);
+    expect(names(withIt)).toEqual(names(without));
+    expect(translations(withIt)).toHaveLength(translations(without).length);
+    const base = (p: Json, table: string) => p.steps.find((s: Json) => s.kind === "upsert" && s.table === table).values;
+    expect(base(withIt, "curriculums").curriculumname).toBe("en module");
+    expect(base(withIt, "levels").levelname).toBe("en module level");
+    expect(base(withIt, "lessons").lessonname).toBe("en lesson");
+    // the rest of the plan is the same
+    const rest = (p: Json) => JSON.stringify(p.steps.filter((s: Json) => s.table !== "grades" && s.values?.tablename !== "grades"));
+    expect(rest(withIt)).toBe(rest(without));
+  });
+
+  it("without a programme the grade takes the module title, as it did", () => {
+    const p = plan();
+    expect(gradeStep(p).values.gradename).toBe("en module");
+    expect(forRow(p, "grades", ID.grade).map((v) => [v.text, v.sourcehash])).toEqual([[km("module"), sourceHash("en module")]]);
+  });
+
+  it("is accepted by the validator and refused when not a pair of non-empty lines", () => {
+    expect(() => validateContent(withProgramme(), ID)).not.toThrow();
+    expect(refusal(withProgramme({ programme: { en: "only english" } }))).toEqual(['programme needs a non-empty "en" and "km"']);
+    expect(refusal(withProgramme({ programme: { en: "  ", km: km("x") } }))).toEqual(['programme needs a non-empty "en" and "km"']);
+    expect(refusal(withProgramme({ programme: null }))).toEqual(['programme needs a non-empty "en" and "km"']);
+    expect(refusal(withProgramme({ programme: "text" }))).toEqual(['programme needs a non-empty "en" and "km"']);
+    expect(refusal(withProgramme({ programme: { en: "two\nlines", km: km("x") } }))).toEqual(["programme.en must be one line (it has a line break)"]);
+    expect(refusal(withProgramme({ programme: { en: "x", km: `${km("a")}\r\n${km("b")}` } }))).toEqual(["programme.km must be one line (it has a line break)"]);
+    expect(refusal(withProgramme({ programme: { en: "x\u2028y", km: km("x") } }))).toEqual(["programme.en must be one line (it has a line break)"]);
+  });
+});
+
 describe("refusing a content file", () => {
   it("refuses a question with no correct option, and one with two", () => {
     const none = sample();
@@ -615,6 +675,30 @@ describe("applying a plan", () => {
     expect(second.tables.contenttranslations).toEqual({ inserted: 0, updated: 0, unchanged: 30, hidden: 0 });
     expect(second.tables.organisations).toEqual({ inserted: 0, updated: 0, unchanged: 1, hidden: 0 });
     expect(formatReport(second)).toMatch(/^ {2}table +inserted updated unchanged hidden\n/);
+  });
+
+  it("writes the programme into the grade, a second run changes nothing, an edited Khmer programme updates its row and keeps its id, and dropping it goes back to the module title", async () => {
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    const key = `grades|${ID.grade}|gradename||km`;
+    const first = await applyPlan(fake.conn, plan(sample({ programme: bi("programme") })));
+    expect(fake.store.grades[ID.grade]).toMatchObject({ gradename: "en programme", gradedescription: "" });
+    expect(fake.store.contenttranslations[key]).toMatchObject({ text: km("programme"), sourcehash: sourceHash("en programme") });
+    expect(first.tables.contenttranslations).toEqual({ inserted: 30, updated: 0, unchanged: 0, hidden: 0 });
+    const id = fake.store.contenttranslations[key].translationid;
+
+    const second = await applyPlan(fake.conn, plan(sample({ programme: bi("programme") })));
+    for (const c of Object.values(second.tables) as Json[]) expect(c).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
+    expect(second.tables.contenttranslations).toEqual({ inserted: 0, updated: 0, unchanged: 30, hidden: 0 });
+
+    const edited = await applyPlan(fake.conn, plan(sample({ programme: { en: "en programme", km: km("programme edited") } }), new Date("2026-11-01T00:00:00.000Z")));
+    expect(edited.tables.contenttranslations).toEqual({ inserted: 0, updated: 1, unchanged: 29, hidden: 0 });
+    expect(fake.store.contenttranslations[key]).toMatchObject({ translationid: id, text: km("programme edited"), lastupdated: "2026-11-01 00:00:00.000" });
+
+    const dropped = await applyPlan(fake.conn, plan(sample(), new Date("2026-11-02T00:00:00.000Z")));
+    expect(dropped.tables.grades.updated).toBe(1);
+    expect(fake.store.grades[ID.grade].gradename).toBe("en module");
+    expect(fake.store.contenttranslations[key]).toMatchObject({ translationid: id, text: km("module"), sourcehash: sourceHash("en module") });
   });
 
   it("is reversible: naming the hidden lesson again makes it live", async () => {
