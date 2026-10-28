@@ -15,6 +15,8 @@ export interface organisationsAttributes {
   uitheme?: string;
   brandingconfig?: object | null;
   settingsconfig?: object | null;
+  /** The language of the organisation's content text (the base language of its translations); null = no translations yet. Read only through the `withContentLanguage` scope. */
+  contentlanguage?: string | null;
   isdeleted?: boolean;
 }
 
@@ -25,6 +27,7 @@ export type organisationsOptionalAttributes =
   | "uitheme"
   | "brandingconfig"
   | "settingsconfig"
+  | "contentlanguage"
   | "isdeleted";
 export type organisationsCreationAttributes = Optional<organisationsAttributes, organisationsOptionalAttributes>;
 
@@ -39,6 +42,7 @@ export class organisations
   uitheme!: string;
   brandingconfig!: object | null;
   settingsconfig!: object | null;
+  contentlanguage!: string | null;
   isdeleted!: boolean;
 
   static initModel(sequelize: Sequelize.Sequelize): typeof organisations {
@@ -77,6 +81,11 @@ export class organisations
           allowNull: true,
           defaultValue: null,
         },
+        contentlanguage: {
+          type: DataTypes.STRING(8),
+          allowNull: true,
+          defaultValue: null,
+        },
         isdeleted: {
           type: DataTypes.BOOLEAN,
           allowNull: false,
@@ -87,6 +96,9 @@ export class organisations
         sequelize,
         tableName: 'organisations',
         timestamps: false,
+        // A new column stays out of every query unless it is asked for (outward payloads keep their shape).
+        defaultScope: { attributes: { exclude: ['contentlanguage'] } },
+        scopes: { withContentLanguage: {} },
         indexes: [
           {
             name: 'PRIMARY',
