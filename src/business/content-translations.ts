@@ -5,6 +5,7 @@ import {
   NO_SUBKEY,
   TRANSLATABLE_FIELDS,
   isAnswerBearing,
+  normaliseLanguage,
   sourceHash,
 } from "src/constants/content-translations";
 import { contenttranslations } from "src/models/data-models/contenttranslations";
@@ -25,8 +26,10 @@ import { Token } from "src/models/token.model";
  *
  * A translation is served only when it is still current: its `sourcehash` must equal the sha-256 of the row's base
  * text as the row carries it NOW. A mismatch (the base text changed after it was translated), a base text the row
- * does not carry (a field the route does not select, an option that no longer exists) and a field an answer is graded
- * by on that question's template are all left out: the learner sees the base text.
+ * does not carry (a field the route does not select, an option that no longer exists), a field an answer is graded
+ * by on that question's template, and a row in the organisation's own `contentlanguage` (the columns already hold that
+ * language; the organisation's language may have been changed after the row was stored) are all left out: the learner
+ * sees the base text. Languages are keyed by their stored code, the primary subtag in lower case.
  */
 
 type AnyRow = Record<string, unknown> & { get?: (key: string) => unknown; setDataValue?: (key: string, value: unknown) => void };
@@ -148,14 +151,17 @@ export class ContentTranslations {
     }
     const translations = new Map<AnyRow, Record<string, Record<string, string>>>();
     for (const row of list) translations.set(row, {});
+    const baseLanguage = ((await this.contentLanguage()) ?? "").toLowerCase();
     for (const t of found) {
       if (!allowed.includes(t.field)) continue;
+      const language = normaliseLanguage(String(t.language));
+      if (baseLanguage !== "" && language.toLowerCase() === baseLanguage) continue; // the base language is the columns' own
       for (const row of byId.get(String(t.rowid).toLowerCase()) ?? []) {
         const subkey = t.subkey ?? NO_SUBKEY;
         const base = baseText(tablename, row, t.field, subkey);
         if (base === undefined || sourceHash(base) !== String(t.sourcehash).toLowerCase()) continue; // stale or not on this row: untranslated
         if (tablename === "questions" && isAnswerBearing(read(row, "templatetypeid"), t.field)) continue;
-        const forLanguage = (translations.get(row)![t.language] ??= {});
+        const forLanguage = (translations.get(row)![language] ??= {});
         forLanguage[subkey === NO_SUBKEY ? t.field : `${t.field}.${subkey}`] = t.text;
       }
     }

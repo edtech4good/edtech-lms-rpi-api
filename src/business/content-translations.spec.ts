@@ -310,12 +310,65 @@ describe("decorate", () => {
       }
     });
 
+    it("template 23 (FOption4) never serves its questiontext, whatever is stored; its option text is display text and is served", async () => {
+      stored = [
+        tr("questions", "q1", "questiontext", "Which is larger?", { text: "A" }),
+        tr("questions", "q1", "questionoptiontext", "12", { subkey: "o2", text: "C" }),
+        tr("questions", "q1", "headingtext", "Larger", { text: "B" }),
+      ];
+      const row = question({ templatetypeid: 23 });
+      await asked().decorate("questions", row);
+      expect(row.translations).toEqual({ km: { headingtext: "B", "questionoptiontext.o2": "C" } });
+    });
+
     it("reads the template when it is stored as a string", async () => {
       stored = [tr("questions", "q1", "questiontext", "Which is larger?", { text: "A" })];
       const row = question({ templatetypeid: "21" });
       await asked().decorate("questions", row);
       expect(row.translations).toEqual({});
     });
+  });
+});
+
+describe("the base language is never served as a translation, and a language is keyed by its stored code", () => {
+  it("a row in the organisation's own contentlanguage is left out, whatever its letter case", async () => {
+    stored = [
+      tr("lessons", "l1", "lessonname", "Counting", { language: "en", text: "E" }),
+      tr("lessons", "l1", "lessondescription", "Numbers", { language: "EN", text: "F" }),
+      tr("lessons", "l1", "lessonname", "Counting", { language: "km", text: "K" }),
+    ];
+    const row: Row = { lessonid: "l1", lessonname: "Counting", lessondescription: "Numbers" };
+    await asked().decorate("lessons", row);
+    expect(row.translations).toEqual({ km: { lessonname: "K" } });
+  });
+
+  it("follows the organisation's language when it is changed after the rows were stored", async () => {
+    stored = [
+      tr("lessons", "l1", "lessonname", "Counting", { language: "en", text: "E" }),
+      tr("lessons", "l1", "lessonname", "Counting", { language: "km", text: "K" }),
+    ];
+    jest.spyOn(organisations, "findOne").mockResolvedValue({ contentlanguage: "km" } as never);
+    const row: Row = { lessonid: "l1", lessonname: "Counting" };
+    await asked().decorate("lessons", row);
+    expect(row.translations).toEqual({ en: { lessonname: "E" } });
+  });
+
+  it("serves everything when the organisation has no contentlanguage", async () => {
+    stored = [tr("lessons", "l1", "lessonname", "Counting", { language: "en", text: "E" })];
+    jest.spyOn(organisations, "findOne").mockResolvedValue({ contentlanguage: null } as never);
+    const row: Row = { lessonid: "l1", lessonname: "Counting" };
+    await asked().decorate("lessons", row);
+    expect(row.translations).toEqual({ en: { lessonname: "E" } });
+  });
+
+  it("a row stored as KM is served under km, and pt-BR keeps its region", async () => {
+    stored = [
+      tr("lessons", "l1", "lessonname", "Counting", { language: "KM", text: "K" }),
+      tr("lessons", "l1", "lessondescription", "Numbers", { language: "PT-BR", text: "P" }),
+    ];
+    const row: Row = { lessonid: "l1", lessonname: "Counting", lessondescription: "Numbers" };
+    await asked().decorate("lessons", row);
+    expect(row.translations).toEqual({ km: { lessonname: "K" }, "pt-BR": { lessondescription: "P" } });
   });
 });
 

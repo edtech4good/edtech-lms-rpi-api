@@ -104,7 +104,7 @@ describe("B-1 up()", () => {
     expect(typeOf(columns.tablename)).toBe("VARCHAR(40)");
     expect(typeOf(columns.rowid)).toBe("VARCHAR(36)");
     expect(typeOf(columns.field)).toBe("VARCHAR(64)");
-    expect(typeOf(columns.subkey)).toBe("VARCHAR(36)");
+    expect(typeOf(columns.subkey)).toBe("VARCHAR(64)");
     expect(typeOf(columns.language)).toBe("VARCHAR(8)");
     expect(typeOf(columns.text)).toBe("TEXT");
     expect(typeOf(columns.sourcehash)).toBe("CHAR(64)");

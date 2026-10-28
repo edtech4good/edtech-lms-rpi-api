@@ -505,12 +505,50 @@ export class OrganisationContentImport {
         refused.push(`${key}: ${rows(foreign)} already belong${foreign === 1 ? "s" : ""} to another organisation here`);
       }
     }
+    // A translation is unique over (table, row, field, subkey, language) whoever owns it: a payload row that repeats one
+    // of another organisation's would take that row over (the unique key, then the update on duplicate), so it is refused.
+    const colliding = await this.translationsOfOthers(content, header);
+    if (colliding > 0) {
+      refused.push(
+        `contenttranslations: ${rows(colliding)} repeat${colliding === 1 ? "s" : ""} a table, row, field, subkey and language that another organisation here already translates`,
+      );
+    }
     if (refused.length > 0) {
       throw new ApiError(ErrorCode.INVALID_INPUT, {
         message: `The payload names content that belongs to another organisation here. Nothing was written. ${refused.join("; ")}.`,
         fields: refused.map((message) => ({ field: message.split(":")[0], message })),
       });
     }
+  };
+
+  /**
+   * How many rows of the payload's `contenttranslations` have the same (table, row, field, subkey, language) as a
+   * translation of ANOTHER organisation held here. One query per chunk of the payload's row ids.
+   */
+  private translationsOfOthers = async (content: OrganisationContent, header: string): Promise<number> => {
+    const wanted = content.tables.contenttranslations;
+    if (wanted.length === 0) return 0;
+    const keyOf = (r: Row): string => [r.tablename, r.rowid, r.field, r.subkey, r.language].map((v) => lower(String(v ?? ""))).join("\u0000");
+    const keys = new Set(wanted.map(keyOf));
+    let colliding = 0;
+    for (const part of chunk([...new Set(wanted.map((r) => String(r.rowid)))], CHUNK)) {
+      const found = (await contenttranslations.findAll({
+        attributes: ["tablename", "rowid", "field", "subkey", "language", "organisationid"],
+        where: { rowid: { [Op.in]: part }, organisationid: { [Op.ne]: header } },
+        raw: true,
+        transaction: this.transaction,
+      })) as unknown as Row[];
+      // the key counts once, however many other organisations hold it
+      const seen = new Set<string>();
+      for (const row of found) {
+        const key = keyOf(row);
+        if (keys.has(key) && !seen.has(key)) {
+          seen.add(key);
+          colliding += 1;
+        }
+      }
+    }
+    return colliding;
   };
 
   /** The ids of the rows of `key` whose `column` is one of `parents`. */

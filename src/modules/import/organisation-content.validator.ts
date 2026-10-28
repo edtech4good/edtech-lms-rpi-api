@@ -10,9 +10,11 @@ import {
   LANGUAGE_CODE,
   NO_SUBKEY,
   SUBKEYED_FIELDS,
+  SUBKEY_MAX_LENGTH,
   TRANSLATABLE_FIELDS,
   TRANSLATION_TEXT_MAX_BYTES,
   isAnswerBearing,
+  normaliseLanguage,
 } from "src/constants/content-translations";
 import {
   DOCUMENT_LICENCES,
@@ -56,9 +58,12 @@ import {
  * refused (never dropped: the student side refuses where central drops) when the parent is not a row of the payload,
  * when the table or field is not translatable, when the field is one an answer is graded by (it depends on the
  * question's template), when the subkey does not follow the field's rule (`''` for a field with none), or when the
- * language is the organisation's own `contentlanguage`. Like `lessonlearningdocuments` it is a required key, so a
+ * language is the organisation's own `contentlanguage`, or when the payload carries translations and its organisation
+ * row has no `contentlanguage` (nothing to differ from). Languages are kept as their primary subtag in lower case
+ * (`KM` is `km`). Like `lessonlearningdocuments` it is a required key, so a
  * payload from before translations (which lacks it) is refused, by design: the student API ships first, central
- * straight after, with no Sync Content in between. `organisations[0].contentlanguage` is optional.
+ * straight after, with no Sync Content in between. `organisations[0].contentlanguage` is optional (an empty
+ * `contenttranslations` needs none).
  *
  * A `documents` row may carry `documenttitle`, `documentlicence` and `documentattribution` (media library): each is
  * checked when the row has the key, and a row without it is accepted (the licence then takes its default).
@@ -552,6 +557,8 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
   const translationRows = tables.contenttranslations ?? [];
   if (translationRows.length > 0) {
     const baseLanguage = organisation && typeof organisation.contentlanguage === "string" ? organisation.contentlanguage.toLowerCase() : null;
+    // Translations are differences from the organisation's base language: without one there is nothing to differ from, and
+    // a row in the base language could not be told apart. (An older central never sends translations.)
     const templates = new Map<string, unknown>();
     for (const q of tables.questions ?? []) {
       if (isRow(q) && isId(q.questionid)) templates.set(lower(q.questionid), q.templatetypeid);
@@ -578,7 +585,7 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
       if (knownField && tablename === "questions" && typeof rowid === "string" && isAnswerBearing(templates.get(lower(rowid)), field as string)) answerBearing += 1;
       if (knownField) {
         const needsSubkey = SUBKEYED_FIELDS.includes(field as string);
-        const rule = typeof subkey === "string" && (needsSubkey ? subkey !== NO_SUBKEY && subkey.length <= ID_MAX_LENGTH : subkey === NO_SUBKEY);
+        const rule = typeof subkey === "string" && (needsSubkey ? subkey !== NO_SUBKEY && subkey.length <= SUBKEY_MAX_LENGTH : subkey === NO_SUBKEY);
         const feedbackOk = field !== "feedback" || (typeof subkey === "string" && FEEDBACK_KEYS.includes(subkey));
         if (!rule || !feedbackOk) badSubkey += 1;
       }
@@ -601,6 +608,7 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
       }
     }
     const tablesNamed = Object.keys(TRANSLATABLE_FIELDS).join(", ");
+    if (baseLanguage === null) problems.add("contenttranslations", "contenttranslations: the organisation has no contentlanguage; set it before sending translations.");
     if (badTable) problems.add("contenttranslations", `contenttranslations: ${rows(badTable)} ${badTable === 1 ? "names" : "name"} a tablename that is not translatable (it must be one of ${tablesNamed}).`);
     if (badField) problems.add("contenttranslations", `contenttranslations: ${rows(badField)} ${badField === 1 ? "names" : "name"} a field that its table does not have as translatable text.`);
     if (answerBearing) {
@@ -615,7 +623,7 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
     if (badSubkey) {
       problems.add(
         "contenttranslations",
-        `contenttranslations: ${rows(badSubkey)} ${badSubkey === 1 ? "has" : "have"} a subkey that does not follow its field's rule (an option, partner or distractor id, or a feedback message key, for ${SUBKEYED_FIELDS.join(", ")}; an empty string for every other field).`,
+        `contenttranslations: ${rows(badSubkey)} ${badSubkey === 1 ? "has" : "have"} a subkey that does not follow its field's rule (an option, partner or distractor id, or a feedback message key, of 1 to ${SUBKEY_MAX_LENGTH} characters, for ${SUBKEYED_FIELDS.join(", ")}; an empty string for every other field).`,
       );
     }
     if (badLanguage) problems.add("contenttranslations", `contenttranslations: ${rows(badLanguage)} ${badLanguage === 1 ? "has" : "have"} a language that is not 2 to 8 letters, digits or hyphens.`);
@@ -661,6 +669,13 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
   if (problems.list.length > 0 || !headerId || !headerCode || !organisation) {
     if (problems.list.length === 0) problems.add("body", "The content payload is not valid.");
     return fail();
+  }
+  // Stored as the primary subtag in lower case (`KM` is served as `km`): the organisation's contentlanguage and every translation's language.
+  if (typeof organisation.contentlanguage === "string") organisation = { ...organisation, contentlanguage: normaliseLanguage(organisation.contentlanguage) };
+  if (tables.contenttranslations.length > 0) {
+    tables.contenttranslations = tables.contenttranslations.map((row) =>
+      isRow(row) && typeof row.language === "string" ? { ...row, language: normaliseLanguage(row.language) } : row,
+    );
   }
   return { organisationid: headerId, organisationcode: headerCode, organisation, tables };
 }

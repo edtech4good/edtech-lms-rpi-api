@@ -539,7 +539,8 @@ export class Provisioner {
     mustExist: boolean,
     transaction?: Transaction,
   ): Promise<{ organisation: OwnershipOrganisation; action: "create" | "reuse" }> => {
-    const found = await organisations.findAll({ where: { organisationcode: options.code }, transaction });
+    // `withContentLanguage`: the column is left out of ordinary queries, and a reused organisation keeps its language.
+    const found = await organisations.scope("withContentLanguage").findAll({ where: { organisationcode: options.code }, transaction });
     if (found.length > 1) {
       throw new ProvisionError(`More than one organisation here has the code "${options.code}". Nothing was changed.`);
     }
@@ -566,6 +567,8 @@ export class Provisioner {
           uitheme: row.uitheme,
           brandingconfig: (row.brandingconfig ?? null) as OwnershipOrganisation["brandingconfig"],
           settingsconfig: (row.settingsconfig ?? null) as OwnershipOrganisation["settingsconfig"],
+          // the payload's language when it carries one (null included), else the one stored here
+          contentlanguage: original && "contentlanguage" in original.organisation ? original.organisation.contentlanguage : row.contentlanguage ?? null,
           isdeleted: false,
         },
       };
@@ -583,6 +586,8 @@ export class Provisioner {
         uitheme: original?.organisation.uitheme ?? "kids",
         brandingconfig: null,
         settingsconfig: null,
+        // the payload's language, so its translations have a base to differ from
+        ...(original && "contentlanguage" in original.organisation ? { contentlanguage: original.organisation.contentlanguage } : {}),
         isdeleted: false,
       },
     };

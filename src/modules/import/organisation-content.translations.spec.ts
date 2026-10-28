@@ -21,7 +21,7 @@ const LESSON = "b0000000-0000-4000-8000-000000000009";
 const QUESTION = "b0000000-0000-4000-8000-000000000100"; // template 1, three options
 const QUESTION_ORDER = "b0000000-0000-4000-8000-000000000104"; // template 5 (ordering)
 const QUESTION_BLANK = "b0000000-0000-4000-8000-000000000107"; // template 8 (fill in the blank)
-// An option id is a uuid on the real data (the subkey column is 36 characters; the sample's own demo option ids are longer).
+// An option id is a uuid on the real data; the sample's own demo option ids (`<uuid>-opt-1`, 42 characters) fit the 64-character subkey too.
 const OPTION = "d0000000-0000-4000-8000-000000000002";
 const ORDER_OPTION = "d0000000-0000-4000-8000-000000000011";
 const BLANK_OPTION = "d0000000-0000-4000-8000-000000000021";
@@ -91,11 +91,22 @@ describe("contenttranslations in a content payload", () => {
       expect(refusal(body)).toBeNull();
     });
 
-    it("a language equal to the organisation's content language is refused, but any language is accepted when the organisation has none", () => {
-      const body = withRows([translation({ language: "en" })], (b) => {
-        delete b.organisations[0].contentlanguage;
-      });
+    it("a translation keyed by one of the seed's 42-character option ids (`<uuid>-opt-1`)", () => {
+      const subkey = `${OPTION}-opt-1`;
+      expect(subkey).toHaveLength(42);
+      const body = withRows([translation({ tablename: "questions", rowid: QUESTION, field: "questionoptiontext", subkey, sourcehash: sourceHash("12") })]);
       expect(refusal(body)).toBeNull();
+    });
+
+    it("a language is stored as its primary subtag in lower case: KM is km, PT-BR is pt-BR; so is the organisation's contentlanguage", () => {
+      const body = withRows([translation({ language: "KM" }), translation({ language: "Pt-BR", field: "lessondescription", sourcehash: sourceHash("Demo lesson") })], (b) => {
+        b.organisations[0].contentlanguage = "EN";
+      });
+      const content = validateOrganisationContent(body);
+      expect(content.tables.contenttranslations.map((r) => r.language)).toEqual(["km", "pt-BR"]);
+      expect(content.organisation.contentlanguage).toBe("en");
+      // the caller's payload is not changed
+      expect(body.contenttranslations[0].language).toBe("KM");
     });
   });
 
@@ -112,6 +123,21 @@ describe("contenttranslations in a content payload", () => {
       delete body.organisations[0].contentlanguage;
       body.contenttranslations = [];
       expect(refusal(body)).toBeNull();
+    });
+  });
+
+  describe("the organisation's base language", () => {
+    const noLanguage = "contenttranslations: the organisation has no contentlanguage; set it before sending translations.";
+    it("translations are refused when the organisation row carries no contentlanguage (absent or null); an empty list needs none", () => {
+      const absent = withRows([translation()], (b) => {
+        delete b.organisations[0].contentlanguage;
+      });
+      expect(refusal(absent)).toBe(noLanguage);
+      const nulled = withRows([translation()], (b) => {
+        b.organisations[0].contentlanguage = null;
+      });
+      expect(refusal(nulled)).toBe(noLanguage);
+      expect(refusal(withRows([], (b) => delete b.organisations[0].contentlanguage))).toBeNull();
     });
   });
 
@@ -153,14 +179,18 @@ describe("contenttranslations in a content payload", () => {
       }
     });
 
-    it("an answer-bearing field: template 21's option text and questiontext, and fill-in-the-blank's questiontext", () => {
-      const graded = "template 8: questiontext; template 21: questiontext, questionoptiontext";
+    it("an answer-bearing field: template 21's option text and questiontext, and the questiontext of fill-in-the-blank (8) and template 23", () => {
+      const graded = "template 8: questiontext; template 21: questiontext, questionoptiontext; template 23: questiontext";
       const expected = `contenttranslations: 1 row translates a field that an answer is graded by (${graded}).`;
       const blank = withRows([translation({ tablename: "questions", rowid: QUESTION_BLANK, field: "questiontext" })]);
       expect(refusal(blank)).toBe(expected);
       const typed = (field: string, subkey: string) => withRows([translation({ tablename: "questions", rowid: QUESTION, field, subkey })], setTemplate(QUESTION, 21));
       expect(refusal(typed("questionoptiontext", OPTION))).toBe(expected);
       expect(refusal(typed("questiontext", ""))).toBe(expected);
+      // template 23 splits questiontext on the blank markers (FOption4): its questiontext is refused, its option text is display text
+      const four = (field: string, subkey: string) => withRows([translation({ tablename: "questions", rowid: QUESTION, field, subkey })], setTemplate(QUESTION, 23));
+      expect(refusal(four("questiontext", ""))).toBe(expected);
+      expect(refusal(four("questionoptiontext", OPTION))).toBeNull();
       // the same fields on a template that is graded by id are display text
       expect(refusal(withRows([translation({ tablename: "questions", rowid: QUESTION, field: "questionoptiontext", subkey: OPTION })]))).toBeNull();
     });
@@ -176,7 +206,10 @@ describe("contenttranslations in a content payload", () => {
       expect(refusal(q("questiontext", OPTION))).toMatch(rule); // must be '' for a plain field
       expect(refusal(q("questiontext", null))).toMatch(rule); // NULL is never stored: '' is "none"
       expect(refusal(withRows([translation({ subkey: "x" })]))).toMatch(rule);
-      expect(refusal(q("questionoptiontext", "x".repeat(37)))).toMatch(rule);
+      expect(refusal(q("questionoptiontext", "x".repeat(64)))).toBeNull(); // the column holds 64
+      const tooLong = refusal(q("questionoptiontext", "x".repeat(65)));
+      expect(tooLong).toMatch(rule);
+      expect(tooLong).toContain("of 1 to 64 characters");
     });
 
     it("a language that is not 2 to 8 letters, digits or hyphens, or is the organisation's own", () => {

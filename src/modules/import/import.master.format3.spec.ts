@@ -106,6 +106,7 @@ const matchesColumns = (row: Row, where: Row): boolean =>
     if (cond && typeof cond === "object" && (cond as Record<symbol, unknown>)[Op.in as unknown as symbol]) {
       return (cond as Record<symbol, string[]>)[Op.in as unknown as symbol].includes(String(row[key]));
     }
+    if (cond && typeof cond === "object" && Op.ne in (cond as object)) return row[key] !== (cond as Record<symbol, unknown>)[Op.ne as unknown as symbol];
     return row[key] === cond;
   });
 const matches = (row: Row, where: Row = {}): boolean => {
@@ -1677,11 +1678,14 @@ const translationOf = (tag: string, n: number, owner: string | null, over: Row =
 const withTranslations = (tag: string, n: number, owner: string | null, rows: Row[] = [translationOf(tag, n, owner)]): Store =>
   merge(content(tag, n, owner), { contenttranslations: rows });
 
+/** A payload of organisation X whose organisation row carries the base language its translations differ from. */
+const translatedPayloadOf = (data: Store, over: Row = {}): Row => payloadOf(data, { organisations: [organisationRow(ORG_X, "xorg", { contentlanguage: "en" })], ...over });
+
 describe("translations: contenttranslations and organisations.contentlanguage", () => {
   it("a payload with translations is written with its owner, counted, and upserted by the listed columns only", async () => {
     install({});
     const rows = [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-2", field: "lessondescription", language: "th" })];
-    const result: any = await importIt(payloadOf(withTranslations("x", 1, ORG_X, rows))); // eslint-disable-line @typescript-eslint/no-explicit-any
+    const result: any = await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X, rows))); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(store.contenttranslations).toEqual(rows);
     expect(new Set(store.contenttranslations.map((r) => r.organisationid))).toEqual(new Set([ORG_X]));
     expect(result.counts.contenttranslations).toEqual({ deleted: 0, written: 2, markedDeleted: 0 });
@@ -1692,7 +1696,7 @@ describe("translations: contenttranslations and organisations.contentlanguage", 
 
   it("is the LAST table written, after the rows it names", async () => {
     install({});
-    await importIt(payloadOf(withTranslations("x", 1, ORG_X)));
+    await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X)));
     const order = writes.filter((w) => w.endsWith(".bulkCreate"));
     expect(order[order.length - 1]).toBe("contenttranslations.bulkCreate");
     expect(order.indexOf("lessons.bulkCreate")).toBeLessThan(order.indexOf("contenttranslations.bulkCreate"));
@@ -1701,30 +1705,30 @@ describe("translations: contenttranslations and organisations.contentlanguage", 
   it("a second import replaces the organisation's translations (none stale), the same payload again changes nothing, and another organisation's are untouched", async () => {
     install({ ...merge(withTranslations("y", 1, ORG_Y)), organisations: [organisationRow(ORG_Y, "yorg")], countries: [] });
     const yBefore = cloneDeep(store.contenttranslations);
-    await importIt(payloadOf(withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-2", field: "lessondescription" })])));
+    await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-2", field: "lessondescription" })])));
     const second = withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X, { translationid: "x-tr-new", field: "lessondescription", language: "th" })]);
-    const result: any = await importIt(payloadOf(second)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    const result: any = await importIt(translatedPayloadOf(second)); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(store.contenttranslations.filter((r) => r.organisationid === ORG_X).map((r) => r.translationid)).toEqual(["x-tr-new"]);
     expect(result.counts.contenttranslations).toEqual({ deleted: 2, written: 1, markedDeleted: 0 });
     expect(store.contenttranslations.filter((r) => r.organisationid === ORG_Y)).toEqual(yBefore);
     const once = cloneDeep(store);
-    await importIt(payloadOf(second));
+    await importIt(translatedPayloadOf(second));
     expect(store).toEqual(once);
   });
 
   it("an organisation whose payload now has none loses the ones it had", async () => {
     install({});
-    await importIt(payloadOf(withTranslations("x", 1, ORG_X)));
-    const result: any = await importIt(payloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
+    await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X)));
+    const result: any = await importIt(translatedPayloadOf(content("x", 1, ORG_X))); // eslint-disable-line @typescript-eslint/no-explicit-any
     expect(store.contenttranslations).toEqual([]);
     expect(result.counts.contenttranslations).toEqual({ deleted: 1, written: 0, markedDeleted: 0 });
   });
 
   it("a curriculum left out of the payload keeps its rows but loses its translations (stated)", async () => {
     install({});
-    await importIt(payloadOf({ ...merge(withTranslations("x", 1, ORG_X), withTranslations("x", 3, ORG_X)), countries: content("x", 1, ORG_X).countries }));
+    await importIt(translatedPayloadOf({ ...merge(withTranslations("x", 1, ORG_X), withTranslations("x", 3, ORG_X)), countries: content("x", 1, ORG_X).countries }));
     expect(store.contenttranslations).toHaveLength(2);
-    await importIt(payloadOf(withTranslations("x", 1, ORG_X)));
+    await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X)));
     expect(store.contenttranslations.map((r) => r.translationid)).toEqual(["x-tr-1"]);
     expect(store.lessons.map((r) => r.lessonid).sort()).toEqual(["x-lesson-1", "x-lesson-3"]);
   });
@@ -1733,22 +1737,58 @@ describe("translations: contenttranslations and organisations.contentlanguage", 
     install({ ...withTranslations("y", 1, ORG_Y), organisations: [organisationRow(ORG_Y, "yorg")], countries: [] });
     const stolen = withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X, { translationid: "y-tr-1" })]);
     const snapshot = cloneDeep(store);
-    await expect(importIt(payloadOf(stolen))).rejects.toMatchObject({
+    await expect(importIt(translatedPayloadOf(stolen))).rejects.toMatchObject({
       status: 400,
       message: expect.stringMatching(/contenttranslations: 1 row already belongs to another organisation here/),
     });
     expect(store).toEqual(snapshot);
   });
 
+  it("a row that repeats another organisation's table, row, field, subkey and language is refused (it would take that row over), naming the table and the count, and writes nothing", async () => {
+    // organisation Y holds a Khmer translation of the lesson name of X's lesson (a row Y has no business holding), under its own id
+    const theirs = translationOf("x", 1, ORG_Y, { translationid: "y-tr-77" });
+    install({ ...withTranslations("y", 1, ORG_Y, [theirs]), organisations: [organisationRow(ORG_Y, "yorg")], countries: [] });
+    const clash = withTranslations("x", 1, ORG_X, [
+      translationOf("x", 1, ORG_X, { translationid: "x-tr-1" }), // the same key as Y's row
+      translationOf("x", 1, ORG_X, { translationid: "x-tr-2", field: "lessondescription" }), // a key nobody else holds
+    ]);
+    const snapshot = cloneDeep(store);
+    await expect(importIt(translatedPayloadOf(clash))).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringMatching(/contenttranslations: 1 row repeats a table, row, field, subkey and language that another organisation here already translates/),
+    });
+    expect(store).toEqual(snapshot);
+    expect(writes).toEqual([]);
+  });
+
+  it("the same key under another language, field or subkey is not a collision, and neither is the organisation's own earlier row", async () => {
+    const theirs = translationOf("x", 1, ORG_Y, { translationid: "y-tr-77", language: "th" });
+    install({ ...withTranslations("y", 1, ORG_Y, [theirs]), organisations: [organisationRow(ORG_Y, "yorg")], countries: [] });
+    await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X)])));
+    await importIt(translatedPayloadOf(withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X)]))); // again: its own row is replaced
+    expect(store.contenttranslations.map((r) => [r.translationid, r.organisationid]).sort()).toEqual([
+      ["x-tr-1", ORG_X],
+      ["y-tr-77", ORG_Y],
+    ]);
+  });
+
   it("a dangling parent refuses the whole file before anything is written, and the message names the table and the count", async () => {
     install({});
     const bad = withTranslations("x", 1, ORG_X, [translationOf("x", 1, ORG_X), translationOf("x", 1, ORG_X, { translationid: "x-tr-9", rowid: "x-lesson-gone" })]);
-    await expect(importIt(payloadOf(bad))).rejects.toMatchObject({
+    await expect(importIt(translatedPayloadOf(bad))).rejects.toMatchObject({
       status: 400,
       message: "contenttranslations: 1 row names a lessons row (rowid) that is not in the payload.",
     });
     expect(writes).toEqual([]);
     expect(store.contenttranslations).toEqual([]);
+  });
+
+  it("a language is stored as its primary subtag in lower case: a KM row is stored km, and an EN contentlanguage en", async () => {
+    install({});
+    const rows = [translationOf("x", 1, ORG_X, { language: "KM" })];
+    await importIt(payloadOf(withTranslations("x", 1, ORG_X, rows), { organisations: [organisationRow(ORG_X, "xorg", { contentlanguage: "EN" })] }));
+    expect(store.contenttranslations.map((r) => r.language)).toEqual(["km"]);
+    expect(store.organisations.find((o) => o.organisationid === ORG_X)?.contentlanguage).toBe("en");
   });
 
   describe("organisations.contentlanguage", () => {

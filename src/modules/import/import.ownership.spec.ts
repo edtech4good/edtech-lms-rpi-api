@@ -402,6 +402,14 @@ describe("PUT /import/ownership", () => {
         expect(language(ORG_A)).toBeNull();
       });
 
+      it("is stored with its primary subtag in lower case: EN is stored as en", async () => {
+        await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: "EN" }), orgRow(ORG_B)] })).expect(200);
+        expect(language(ORG_A)).toBe("en");
+        // and the same value again is no change
+        const again = await put(validBody({ organisations: [orgRow(ORG_A, { contentlanguage: "En" }), orgRow(ORG_B)] })).expect(200);
+        expect(again.body.applied.organisations).toBe(0);
+      });
+
       it("a sender with no such column leaves the stored value as it is, and counts nothing for it", async () => {
         store.organisations.push(orgRow(ORG_A, { contentlanguage: "en" }), orgRow(ORG_B));
         const res = await put(validBody()).expect(200);

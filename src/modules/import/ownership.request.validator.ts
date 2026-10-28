@@ -1,7 +1,7 @@
 import joi from "joi";
 import { ValidationException } from "src/models/ValidationException";
 import { fieldForJoiDetail, humanizeJoiMessage } from "src/utils/joi-message";
-import { LANGUAGE_CODE } from "src/constants/content-translations";
+import { LANGUAGE_CODE, normaliseLanguage } from "src/constants/content-translations";
 
 /**
  * The body of `PUT /import/ownership` (see ownership.business.ts for what it
@@ -163,5 +163,10 @@ export function validateOwnershipBody(body: unknown): OwnershipBody {
       }),
     );
   }
-  return body as OwnershipBody;
+  // A language is stored with its primary subtag in lower case (`EN` is stored as `en`).
+  const checked = body as OwnershipBody;
+  return {
+    ...checked,
+    organisations: checked.organisations.map((o) => (typeof o.contentlanguage === "string" ? { ...o, contentlanguage: normaliseLanguage(o.contentlanguage) } : o)),
+  };
 }

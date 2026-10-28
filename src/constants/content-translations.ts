@@ -23,6 +23,15 @@ export const NO_SUBKEY = "";
 /** A language code: 2 to 8 letters, digits and hyphens (`km`, `en`, `pt-BR`). */
 export const LANGUAGE_CODE = /^[A-Za-z0-9-]{2,8}$/;
 
+/** A language code as it is stored: its primary subtag (everything before the first hyphen) in lower case (`KM` is `km`, `PT-BR` is `pt-BR`). */
+export const normaliseLanguage = (code: string): string => {
+  const dash = code.indexOf("-");
+  return dash === -1 ? code.toLowerCase() : code.slice(0, dash).toLowerCase() + code.slice(dash);
+};
+
+/** The longest `contenttranslations.subkey`: an option id of the seed (`<uuid>-opt-1`, 42 characters) fits. */
+export const SUBKEY_MAX_LENGTH = 64;
+
 /** The most bytes of one translated text (the column is TEXT). */
 export const TRANSLATION_TEXT_MAX_BYTES = 65535;
 
@@ -55,6 +64,8 @@ export const FEEDBACK_KEYS: readonly string[] = ["correctmessage", "incorrectmes
  *  - 21 (FOption1): the learner types each option's text and it is compared with `questionoptiontext`
  *    (`gradeFOption1`); `questiontext` holds the blank markers (one input per option).
  *  - 8 (FillInBlank): `questiontext` holds the blank markers that the tiles are placed against.
+ *  - 23 (FOption4): `questiontext` is split on the `-----` markers and blank i is placed against option i, as in 21;
+ *    the option text is graded by `questionoptionvalue`, so it stays translatable.
  * Every other template is graded by option id, flag, sequence or numeric value (`gradeChoice`, `gradeOrder`,
  * `gradeMatch`, `gradeBlanks` by id and sequence; templates 19, 20, 22, 23, 24 by `questionoptionvalue`,
  * `questioncorrectvalue` and the numerator/denominator values), none of which is a translatable field, so their option
@@ -63,6 +74,7 @@ export const FEEDBACK_KEYS: readonly string[] = ["correctmessage", "incorrectmes
 export const ANSWER_BEARING_FIELDS: Readonly<Record<number, readonly string[]>> = {
   8: ["questiontext"],
   21: ["questiontext", "questionoptiontext"],
+  23: ["questiontext"],
 };
 
 export const isAnswerBearing = (templatetypeid: unknown, field: string): boolean => {

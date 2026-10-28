@@ -52,7 +52,7 @@ export class contenttranslations
         tablename: { type: DataTypes.STRING(40), allowNull: false },
         rowid: { type: DataTypes.STRING(36), allowNull: false },
         field: { type: DataTypes.STRING(64), allowNull: false },
-        subkey: { type: DataTypes.STRING(36), allowNull: false, defaultValue: '' },
+        subkey: { type: DataTypes.STRING(64), allowNull: false, defaultValue: '' },
         language: { type: DataTypes.STRING(8), allowNull: false },
         text: { type: DataTypes.TEXT, allowNull: false },
         sourcehash: { type: DataTypes.CHAR(64), allowNull: false },

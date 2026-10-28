@@ -8,7 +8,7 @@ import { addColumnIfMissing, tableNameList, tableOptionsMatchingColumn } from ".
  * `contenttranslations` holds one row per translated text of a content row. Columns: `translationid` STRING(36) PK;
  * `organisationid` STRING(36) NOT NULL, foreign key to `organisations` named `contenttranslations_organisationid_fk`
  * ON UPDATE CASCADE ON DELETE RESTRICT; `tablename` STRING(40) NOT NULL and `rowid` STRING(36) NOT NULL (the content
- * row it translates: polymorphic, so no foreign key); `field` STRING(64) NOT NULL; `subkey` STRING(36) NOT NULL
+ * row it translates: polymorphic, so no foreign key); `field` STRING(64) NOT NULL; `subkey` STRING(64) NOT NULL
  * DEFAULT '' (an option, matching-partner or distractor id, or a feedback message key); `language` STRING(8) NOT
  * NULL; `text` TEXT NOT NULL; `sourcehash` CHAR(64) NOT NULL (sha-256 of the base text that was translated);
  * `lastupdated` DATETIME(3) NOT NULL. No `isdeleted`: rows are hard-deleted, so a re-added translation never collides.
@@ -110,7 +110,7 @@ module.exports = {
             tablename: { type: DataTypes.STRING(40), allowNull: false },
             rowid: { type: DataTypes.STRING(36), allowNull: false },
             field: { type: DataTypes.STRING(64), allowNull: false },
-            subkey: { type: DataTypes.STRING(36), allowNull: false, defaultValue: "" },
+            subkey: { type: DataTypes.STRING(64), allowNull: false, defaultValue: "" },
             language: { type: DataTypes.STRING(8), allowNull: false },
             text: { type: DataTypes.TEXT, allowNull: false },
             sourcehash: { type: DataTypes.CHAR(64), allowNull: false },
