@@ -37,6 +37,20 @@
  * lessons, practices and so on) is not checked: INSERT IGNORE skips a row whose parent is missing without a word.
  *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
+ *
+ * Content mode: `npm run seed:dcrs -- --content <dir> [--lang km|en|both] [--dry-run]`
+ * replaces the placeholder text with the real programme content from
+ * `<dir>/content.json` (schema and rules in scripts/lib/dcrs-content-plan.js; the central
+ * repo's scripts/dcrs-content-from-xlsx.js writes it). Everything above still runs first,
+ * then the file's rows are upserted over the same fixed ids and what the file does not
+ * name is hidden, reversibly. A file that cannot be written as it stands is refused,
+ * exit 1, before anything is written. The folder is only read. Re-running changes
+ * nothing. Without `--content` this script behaves exactly as described above.
+ *  - `--lang` is the language of the learner-facing text: km (default), en, or both
+ *    (Khmer, a line break, English). The other language stays in content.json.
+ *  - `--dry-run` validates and prints the plan, with no database connection.
+ * The lesson video is not uploaded: its document row names `dcrs-m1-l1.mp4` and the
+ * script prints the copy to make into the media folder.
  */
 const path = require("path");
 const dotenv = require("dotenv");
@@ -44,6 +58,9 @@ const mysql = require("mysql2/promise");
 const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
 const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
+const { planContent } = require("./lib/dcrs-content-plan");
+const { applyPlan, formatReport } = require("./lib/dcrs-content-apply");
+const { prepare, printDryRun } = require("./lib/dcrs-content-cli");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -222,6 +239,12 @@ const QUESTIONS = [
 ];
 
 async function main() {
+  // Content mode (`--content <dir>`): arguments and content.json are checked first; a refusal exits 1 with nothing written.
+  const { args, content } = prepare(process.argv.slice(2), ID);
+  if (args.dryRun) {
+    printDryRun(content, ID, args.lang);
+    return;
+  }
   if (process.env.ALLOW_DEMO_SEED !== "true") {
     console.error("Refusing to run: set ALLOW_DEMO_SEED=true to seed demo data. This replaces the old NODE_ENV check so UAT re-seeds are explicit and prod can never be seeded by accident.");
     process.exit(1);
@@ -239,6 +262,8 @@ async function main() {
     user,
     password,
     database: process.env.RPI_DB_NAME || "edtech_lms_rpi",
+    // Content mode counts rows by affectedRows, which needs FOUND_ROWS off (see lib/dcrs-content-apply.js).
+    ...(content ? { flags: ["-FOUND_ROWS"] } : {}),
   });
 
   const q = (sql, params = []) => conn.execute(sql, params);
@@ -367,6 +392,10 @@ async function main() {
              VALUES (?,?,?,1,?,?,?,?,?,1,?,?,?,?,?,?,?,1,?)`,
       [ID.facilitator, "MIV", "Facilitator", "Battambang", "Cambodia", "Battambang", ID.curriculum, CURRICULUM_IDS, ID.facilitatorUser, ID.grade, ID.level, ID.level, ID.lesson1, ID.standard, "Mekong Inclusive Ventures", ID.school]);
 
+    // Content mode: the real text over the placeholder rows, in one transaction, then counted.
+    const contentPlan = content ? planContent(content, ID, { lang: args.lang, organisationid }) : null;
+    const contentReport = contentPlan ? await applyPlan(conn, contentPlan) : null;
+
     // INSERT IGNORE turns a refused row into a silent skip, and leaves rows seeded before owners existed as they
     // were: fill the NULL owners and school ids of this seed's own rows, then check every one is there.
     await fillAndVerify(conn, [
@@ -389,13 +418,24 @@ async function main() {
     console.log("DCRS content seeded into the student API database.");
     console.log(`  lessons ${c.lessons} | questions ${c.questions} | students ${c.students}`);
     console.log(`  logins (password ${DEMO_PASSWORD}): miv.demo, miv.facilitator`);
-    console.log("  Lesson videos will not play: no media is seeded.");
+    if (contentReport) {
+      console.log(`DCRS content applied from ${path.basename(path.resolve(args.content))}/content.json (language ${contentPlan.lang}):`);
+      console.log(formatReport(contentReport));
+      for (const m of contentPlan.media) console.log(`  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`);
+    } else {
+      console.log("  Lesson videos will not play: no media is seeded.");
+    }
   } finally {
     await conn.end();
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Run as a script; a spec may require this file for its id map without seeding anything.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = { ID };
