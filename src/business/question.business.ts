@@ -7,6 +7,7 @@ import { Token } from "src/models/token.model";
 import { rawfilenameextractor } from "src/services/util.service";
 import { LessonBusiness } from "./lesson.business";
 import { baselinequestion } from "src/models/data-models/baselinequestion";
+import type { ContentTranslations } from "./content-translations";
 export class QuestionBusiness {
     getlessonquestions = async (lessonid: string, user: Token) => {
 
@@ -341,7 +342,7 @@ export class QuestionBusiness {
         }
     }
 
-    getpracticequestions = async (lessonpracticeid: string) => {
+    getpracticequestions = async (lessonpracticeid: string, translations?: ContentTranslations) => {
         lessonpracticequestions.hasOne(questions, {
             foreignKey: 'questionid',
             sourceKey: 'questionid',
@@ -362,10 +363,12 @@ export class QuestionBusiness {
                 },
             ],
         });
+        // The translations are of the questions, which hang from each attach row
+        await translations?.decorate("questions", lpq.map((x) => x.get("question")));
         return lpq;
     }
 
-    getquizquestions = async (lessonquizid: string) => {
+    getquizquestions = async (lessonquizid: string, translations?: ContentTranslations) => {
         lessonquizquestions.hasOne(questions, {
             foreignKey: 'questionid',
             sourceKey: 'questionid',
@@ -386,6 +389,7 @@ export class QuestionBusiness {
                 },
             ],
         });
+        await translations?.decorate("questions", lqq.map((x) => x.get("question")));
         return lqq;
     }
 

@@ -62,6 +62,14 @@ describe.each([
     expect(browserAllows(withOthers, "authorization,content-type,x-learning-item-types,timeoffset")).toBe(true);
   });
 
+  it("allows X-Content-Translations (the learner app asks for translations with it), alone and with the others it sends", async () => {
+    const res = await preflight(app, "x-content-translations");
+    expect(res.status).toBe(204);
+    expect(browserAllows(res, "x-content-translations")).toBe(true);
+    const all = "authorization,content-type,x-learning-item-types,x-content-translations,timeoffset";
+    expect(browserAllows(await preflight(app, all), all)).toBe(true);
+  });
+
   it("does NOT allow a header that is not on the list: the browser would refuse the real request", async () => {
     const res = await preflight(app, "x-not-on-the-list");
     expect(browserAllows(res, "x-not-on-the-list")).toBe(false);
@@ -85,7 +93,9 @@ describe("CORS preflight, an origin that is not allowed (production)", () => {
 });
 
 describe("the allowed request headers", () => {
-  it("are the ones the server has always allowed, plus X-Learning-Item-Types", () => {
-    expect(CORS_ALLOWED_HEADERS).toEqual(["Content-Type", "Authorization", "Accept", "Accept-Language", "Cache-Control", "TIMEOFFSET", "X-Learning-Item-Types"]);
+  it("are the ones the server has always allowed, plus X-Learning-Item-Types and X-Content-Translations", () => {
+    expect(CORS_ALLOWED_HEADERS).toEqual([
+      "Content-Type", "Authorization", "Accept", "Accept-Language", "Cache-Control", "TIMEOFFSET", "X-Learning-Item-Types", "X-Content-Translations",
+    ]);
   });
 });

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -10,6 +11,8 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
+import { CONTENT_TRANSLATIONS_HEADER } from "src/constants/content-translations";
+import { ContentTranslations, withContentLanguage } from "src/business/content-translations";
 import {
   ApiTags,
   ApiBearerAuth,
@@ -169,14 +172,16 @@ export class LessonLearningController {
   @HttpCode(HttpStatus.OK)
   async getlearning(
     @Param("lessonlearningid") lessonlearningid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<LessonLearningResponse> {
-    const data = await new LessonBusiness().getlearninglesson(lessonlearningid, user);
+    const translations = ContentTranslations.from(translationsheader, user);
+    const data = await new LessonBusiness().getlearninglesson(lessonlearningid, user, translations);
     Logger.info(`<${user.studentfirstname}> get progress of learning video <${lessonlearningid}>`, {logaccesstype: LOGTYPE.GETLEARNINGPROGRESS, userid: user.schooluserid});
-    return {
+    return withContentLanguage(translations, {
       data: data,
       error: false,
-    };
+    }) as Promise<LessonLearningResponse>;
   }
 
   @Get(':lessonid/learning')
@@ -200,17 +205,19 @@ export class LessonLearningController {
   @HttpCode(HttpStatus.OK)
   async getlessonbricks(
     @Param('lessonid') lessonid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
-    const question = await new LessonBusiness().getlessonbricks(lessonid, user);
+    const translations = ContentTranslations.from(translationsheader, user);
+    const question = await new LessonBusiness().getlessonbricks(lessonid, user, translations);
     if (!question) {
       throw new ApiError(ErrorCode.NOT_FOUND);
     }
     Logger.info(`<${user.studentfirstname}> get all learnings by lesson <${lessonid}>`, {logaccesstype: LOGTYPE.GETALLLEARNINGS, userid: user.schooluserid});
-    return {
+    return withContentLanguage(translations, {
       data: question,
       error: false,
-    };
+    });
   }
 
   @Get("plan/:lessonplanid")

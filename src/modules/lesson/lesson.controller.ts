@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -9,6 +10,8 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
+import { CONTENT_TRANSLATIONS_HEADER } from "src/constants/content-translations";
+import { ContentTranslations, withContentLanguage } from "src/business/content-translations";
 import { ApiTags, ApiBearerAuth, ApiParam, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { ActivityProgressBusiness } from "src/business/activityprogress.business";
 import { LessonBusiness } from "src/business/lesson.business";
@@ -88,13 +91,15 @@ export class LessonController {
   @HttpCode(HttpStatus.OK)
   async getlessonbylevelid(
     @Param("levelid") levelid: string,
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
     Logger.info(`<${user.studentfirstname}> get all lessons <${levelid}>`, {logaccesstype: LOGTYPE.GETLESSONS, userid: user.schooluserid});
-    return {
-      data: await new LessonBusiness().getlessonsbylevelid(levelid, user),
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: await new LessonBusiness().getlessonsbylevelid(levelid, user, translations),
       error: false,
-    };
+    });
   }
 
   @Get("progress/level/:levelid")

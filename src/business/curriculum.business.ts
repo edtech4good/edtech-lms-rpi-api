@@ -17,6 +17,7 @@ import { callerKindOf, enrolledCurriculumIds, curriculumIdsInScope } from "./con
 import { findSchoolIdByName, schoolRefIsOwn, schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
+import type { ContentTranslations } from "./content-translations";
 export class CurriculumBusiness {
   // Every curriculum the caller may see (their learner list, or their school's list, of their organisation's).
   findallcurriculum = async (user?: Token) =>
@@ -211,7 +212,7 @@ export class CurriculumBusiness {
     return await curriculums.findAll({ where, order });
   };
 
-  getCurriculumsWithSubject = async (user?: Token) => {
+  getCurriculumsWithSubject = async (user?: Token, translations?: ContentTranslations) => {
     if(!user) throw new ApiError(ErrorCode.NOT_ALLOWED, { message: 'This account is not a student.' });
     const currs = await this.getEnrolledCurriculums(user);
     for await (const cur of currs) {
@@ -225,6 +226,7 @@ export class CurriculumBusiness {
       }
       (cur as any).setDataValue('progress', progress);
     }
+    await translations?.decorate("curriculums", currs);
     return currs
   };
 }

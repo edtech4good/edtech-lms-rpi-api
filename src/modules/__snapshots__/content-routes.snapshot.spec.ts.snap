@@ -1,0 +1,509 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`the content routes without the translations header GET curriculum/subjects answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "curriculumdescription": "Numbers and shapes",
+      "curriculumid": "c1",
+      "curriculumname": "Mathematics",
+      "curriculumstatus": true,
+      "isdeleted": false,
+      "organisationid": "a1000000-0000-4000-8000-00000000000a",
+      "progress": 0,
+      "subjectid": null,
+    },
+  ],
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET grade/curriculum/:curriculumid answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "curriculumid": "c1",
+      "gradedescription": "The first grade",
+      "gradeid": "g1",
+      "gradename": "Grade One",
+      "gradeorder": 1,
+      "gradestatus": true,
+      "isdeleted": false,
+      "number_levels": null,
+      "passing_points": null,
+      "points": 100,
+      "progress": 0,
+    },
+  ],
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET lesson/:lessonid/learning answers as it always did 1`] = `
+{
+  "data": {
+    "brick_points": null,
+    "isdeleted": false,
+    "learning_points": 0,
+    "lessondescription": "Count to ten",
+    "lessonheading": "Counting",
+    "lessonid": "ls1",
+    "lessonlearnings": [
+      {
+        "documentid": "d1",
+        "lessonid": "ls1",
+        "lessonlearningbody": null,
+        "lessonlearningdescription": "A short film",
+        "lessonlearningid": "ll1",
+        "lessonlearningname": "Watch the video",
+        "lessonlearningorder": 1,
+        "lessonlearningstatus": true,
+        "lessonlearningtype": "video",
+        "points": 0,
+      },
+    ],
+    "lessonname": "Counting",
+    "lessonorder": 1,
+    "lessonpasspercentage": 80,
+    "lessonpractices": [
+      {
+        "lessonid": "ls1",
+        "lessonpracticedescription": "Try it",
+        "lessonpracticeid": "pr1",
+        "lessonpracticename": "Practice counting",
+        "lessonpracticeorder": 1,
+        "lessonpracticestatus": true,
+        "points": 0,
+      },
+    ],
+    "lessonquizzes": [
+      {
+        "lessonid": "ls1",
+        "lessonquizdescription": "Test it",
+        "lessonquizid": "qz1",
+        "lessonquizname": "Counting quiz",
+        "lessonquizorder": 1,
+        "lessonquizstatus": true,
+        "points": 0,
+      },
+    ],
+    "lessonstatus": true,
+    "levelid": "lv1",
+    "passing_points": 80,
+    "practicecount": 0,
+    "practices_points": 0,
+    "quizcount": 0,
+    "quizzes_points": 0,
+    "total_points": 100,
+  },
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET lesson/learning/:lessonlearningid answers as it always did 1`] = `
+{
+  "data": {
+    "documentid": "d1",
+    "documents": [],
+    "lessonid": "ls1",
+    "lessonlearningbody": null,
+    "lessonlearningdescription": "A short film",
+    "lessonlearningfileobject": {
+      "fileext": "mp4",
+      "filename": "video.mp4",
+      "filetype": 2,
+    },
+    "lessonlearningid": "ll1",
+    "lessonlearningname": "Watch the video",
+    "lessonlearningorder": 1,
+    "lessonlearningstatus": true,
+    "lessonlearningtype": "video",
+    "points": 0,
+  },
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET lesson/level/:levelid answers as it always did 1`] = `
+{
+  "data": {
+    "lesson": [
+      {
+        "brick_points": null,
+        "completed": false,
+        "isdeleted": false,
+        "learning_points": 0,
+        "lessondescription": "Count to ten",
+        "lessonheading": "Counting",
+        "lessonid": "ls1",
+        "lessonname": "Counting",
+        "lessonorder": 1,
+        "lessonpasspercentage": 80,
+        "lessonstatus": true,
+        "levelid": "lv1",
+        "passing_points": 80,
+        "practicecount": 0,
+        "practices_points": 0,
+        "progress": 0,
+        "quizcount": 0,
+        "quizzes_points": 0,
+        "total_points": 100,
+      },
+      {
+        "brick_points": null,
+        "completed": false,
+        "isdeleted": false,
+        "learning_points": 0,
+        "lessondescription": "Add small numbers",
+        "lessonheading": "Adding",
+        "lessonid": "ls2",
+        "lessonname": "Adding",
+        "lessonorder": 2,
+        "lessonpasspercentage": 80,
+        "lessonstatus": true,
+        "levelid": "lv1",
+        "passing_points": 80,
+        "practicecount": 0,
+        "practices_points": 0,
+        "progress": 0,
+        "quizcount": 0,
+        "quizzes_points": 0,
+        "total_points": 100,
+      },
+    ],
+    "level": null,
+    "level_has_quiz": false,
+  },
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET lesson/level/:levelid/steps answers as it always did 1`] = `
+{
+  "data": {
+    "lessons": [
+      {
+        "learnings": [
+          {
+            "lessonlearningid": "ll1",
+            "progress_percentage": 0,
+            "status": "todo",
+          },
+        ],
+        "lessonid": "ls1",
+        "lessonorder": 1,
+        "practices": [
+          {
+            "attempts": 0,
+            "best_percentage": null,
+            "lessonpracticeid": "pr1",
+            "question_count": 2,
+            "status": "todo",
+          },
+        ],
+        "quizzes": [
+          {
+            "attempts": 0,
+            "best_percentage": null,
+            "lessonquizid": "qz1",
+            "question_count": 1,
+            "status": "todo",
+          },
+        ],
+      },
+      {
+        "learnings": [],
+        "lessonid": "ls2",
+        "lessonorder": 2,
+        "practices": [],
+        "quizzes": [],
+      },
+    ],
+    "levelid": "lv1",
+    "pass_percentage": 80,
+  },
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET level/grade/:gradeid answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "gradeid": "g1",
+      "isdeleted": false,
+      "leveldescription": "An introduction",
+      "levelid": "lv1",
+      "levelname": "Level A",
+      "levelorder": 1,
+      "levelstatus": true,
+      "passing_points": null,
+      "points": 50,
+      "progress": 0,
+      "quiz_points": 0,
+    },
+  ],
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET level/library answers as it always did 1`] = `
+{
+  "data": {
+    "curricula": [
+      {
+        "curriculumdescription": "Numbers and shapes",
+        "curriculumid": "c1",
+        "curriculumname": "Mathematics",
+        "grades": [
+          {
+            "gradeid": "g1",
+            "gradename": "Grade One",
+            "gradeorder": 1,
+            "levels": [
+              {
+                "leveldescription": "An introduction",
+                "levelid": "lv1",
+                "levelname": "Level A",
+                "levelorder": 1,
+                "number_completed_lessons": 0,
+                "number_lessons": 2,
+                "progress": 0,
+              },
+            ],
+            "progress": 0,
+          },
+        ],
+        "progress": 0,
+      },
+    ],
+    "generated_at": "<time>",
+  },
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET question/practice/:lessonpracticeid answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "lessonpracticeid": "pr1",
+      "lessonpracticequestionid": "prq1",
+      "lessonpracticequestionorder": 1,
+      "lessonpracticequestionstatus": true,
+      "question": {
+        "isdeleted": false,
+        "lastupdated": {
+          "val": "CURRENT_TIMESTAMP",
+        },
+        "organisationid": "a1000000-0000-4000-8000-00000000000a",
+        "questiondistractors": [],
+        "questionfeedback": {
+          "correctmessage": "Well done",
+          "incorrectmessage": "Try again",
+        },
+        "questionheading": {
+          "headingfile": null,
+          "headingtext": "Larger",
+        },
+        "questionid": "q1",
+        "questionobject": {
+          "questioncorrectvalue": null,
+          "questiondistractors": [],
+          "questionfeedback": {
+            "correctmessage": "Well done",
+            "incorrectmessage": "Try again",
+          },
+          "questionfile": null,
+          "questionheading": {
+            "headingfile": null,
+            "headingtext": "Larger",
+          },
+          "questionoptions": [
+            {
+              "questionassociate": null,
+              "questionoptionfile": null,
+              "questionoptionid": "00000000-0000-4000-8000-0000000000a1",
+              "questionoptioniscorrect": false,
+              "questionoptionsequence": 1,
+              "questionoptiontext": "7",
+            },
+            {
+              "questionassociate": null,
+              "questionoptionfile": null,
+              "questionoptionid": "00000000-0000-4000-8000-0000000000a2",
+              "questionoptioniscorrect": true,
+              "questionoptionsequence": 2,
+              "questionoptiontext": "12",
+            },
+          ],
+          "questiontext": "Which number is larger?",
+        },
+        "questionoptions": [
+          {
+            "questionassociate": null,
+            "questionoptionfile": null,
+            "questionoptionid": "00000000-0000-4000-8000-0000000000a1",
+            "questionoptioniscorrect": false,
+            "questionoptionsequence": 1,
+            "questionoptiontext": "7",
+          },
+          {
+            "questionassociate": null,
+            "questionoptionfile": null,
+            "questionoptionid": "00000000-0000-4000-8000-0000000000a2",
+            "questionoptioniscorrect": true,
+            "questionoptionsequence": 2,
+            "questionoptiontext": "12",
+          },
+        ],
+        "questionstatus": true,
+        "questiontext": "Which number is larger?",
+        "templatetypeid": 1,
+      },
+      "questionid": "q1",
+    },
+    {
+      "lessonpracticeid": "pr1",
+      "lessonpracticequestionid": "prq2",
+      "lessonpracticequestionorder": 2,
+      "lessonpracticequestionstatus": true,
+      "question": {
+        "isdeleted": false,
+        "lastupdated": {
+          "val": "CURRENT_TIMESTAMP",
+        },
+        "organisationid": "a1000000-0000-4000-8000-00000000000a",
+        "questiondistractors": [],
+        "questionfeedback": null,
+        "questionheading": {
+          "headingfile": null,
+          "headingtext": "Typing",
+        },
+        "questionid": "q21",
+        "questionobject": {
+          "questioncorrectvalue": null,
+          "questiondistractors": [],
+          "questionfeedback": null,
+          "questionfile": null,
+          "questionheading": {
+            "headingfile": null,
+            "headingtext": "Typing",
+          },
+          "questionoptions": [
+            {
+              "questionassociate": null,
+              "questionoptionfile": null,
+              "questionoptionid": "00000000-0000-4000-8000-0000000000b1",
+              "questionoptioniscorrect": true,
+              "questionoptionsequence": 1,
+              "questionoptiontext": "twelve",
+            },
+          ],
+          "questiontext": "Type ----- the number",
+        },
+        "questionoptions": [
+          {
+            "questionassociate": null,
+            "questionoptionfile": null,
+            "questionoptionid": "00000000-0000-4000-8000-0000000000b1",
+            "questionoptioniscorrect": true,
+            "questionoptionsequence": 1,
+            "questionoptiontext": "twelve",
+          },
+        ],
+        "questionstatus": true,
+        "questiontext": "Type ----- the number",
+        "templatetypeid": 21,
+      },
+      "questionid": "q21",
+    },
+  ],
+  "error": false,
+}
+`;
+
+exports[`the content routes without the translations header GET question/quiz/:lessonquizid answers as it always did 1`] = `
+{
+  "data": [
+    {
+      "lessonquizid": "qz1",
+      "lessonquizquestionid": "qzq1",
+      "lessonquizquestionorder": 1,
+      "lessonquizquestionstatus": true,
+      "question": {
+        "isdeleted": false,
+        "lastupdated": {
+          "val": "CURRENT_TIMESTAMP",
+        },
+        "organisationid": "a1000000-0000-4000-8000-00000000000a",
+        "questiondistractors": [],
+        "questionfeedback": {
+          "correctmessage": "Well done",
+          "incorrectmessage": "Try again",
+        },
+        "questionheading": {
+          "headingfile": null,
+          "headingtext": "Larger",
+        },
+        "questionid": "q1",
+        "questionobject": {
+          "questioncorrectvalue": null,
+          "questiondistractors": [],
+          "questionfeedback": {
+            "correctmessage": "Well done",
+            "incorrectmessage": "Try again",
+          },
+          "questionfile": null,
+          "questionheading": {
+            "headingfile": null,
+            "headingtext": "Larger",
+          },
+          "questionoptions": [
+            {
+              "questionassociate": null,
+              "questionoptionfile": null,
+              "questionoptionid": "00000000-0000-4000-8000-0000000000a1",
+              "questionoptioniscorrect": false,
+              "questionoptionsequence": 1,
+              "questionoptiontext": "7",
+            },
+            {
+              "questionassociate": null,
+              "questionoptionfile": null,
+              "questionoptionid": "00000000-0000-4000-8000-0000000000a2",
+              "questionoptioniscorrect": true,
+              "questionoptionsequence": 2,
+              "questionoptiontext": "12",
+            },
+          ],
+          "questiontext": "Which number is larger?",
+        },
+        "questionoptions": [
+          {
+            "questionassociate": null,
+            "questionoptionfile": null,
+            "questionoptionid": "00000000-0000-4000-8000-0000000000a1",
+            "questionoptioniscorrect": false,
+            "questionoptionsequence": 1,
+            "questionoptiontext": "7",
+          },
+          {
+            "questionassociate": null,
+            "questionoptionfile": null,
+            "questionoptionid": "00000000-0000-4000-8000-0000000000a2",
+            "questionoptioniscorrect": true,
+            "questionoptionsequence": 2,
+            "questionoptiontext": "12",
+          },
+        ],
+        "questionstatus": true,
+        "questiontext": "Which number is larger?",
+        "templatetypeid": 1,
+      },
+      "questionid": "q1",
+    },
+  ],
+  "error": false,
+}
+`;

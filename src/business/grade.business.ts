@@ -11,9 +11,10 @@ import { Token } from "src/models/token.model";
 import { randomUUID } from "node:crypto";
 import { curriculumIdsInScope } from "./content-access";
 import { schoolRefIsOwn, schoolScopeFromToken, studentsOfSchool } from "./school-identity";
+import type { ContentTranslations } from "./content-translations";
 
 export class GradeBusiness {
-  getgradesbycurriculumid = async (curriculumid: string, user: Token) => {
+  getgradesbycurriculumid = async (curriculumid: string, user: Token, translations?: ContentTranslations) => {
     grades.hasMany(studentgradesprogress, { foreignKey: "gradeid" });
     studentgradesprogress.belongsTo(grades, { foreignKey: "gradeid" });
     let gs = await grades.findAll({
@@ -42,6 +43,7 @@ export class GradeBusiness {
         return grade;
       })
     );
+    await translations?.decorate("grades", gs);
     return gs;
   };
 

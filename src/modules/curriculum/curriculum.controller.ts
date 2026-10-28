@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -11,6 +12,8 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
+import { CONTENT_TRANSLATIONS_HEADER } from "src/constants/content-translations";
+import { ContentTranslations, withContentLanguage } from "src/business/content-translations";
 import { ApiBearerAuth, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { CurriculumBusiness } from "src/business/curriculum.business";
 import { CurriculumBaseLineBusiness } from "src/business/curriculumbaseline.business";
@@ -104,14 +107,16 @@ export class CurriculumController {
   @UseGuards(AccessGuard(TokenType.ACCESS))
   @HttpCode(HttpStatus.OK)
   async getAllCurriculumsWithSubjects(
-    @User() user: Token
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
     Logger.info(`<${user.studentfirstname}> get all curriculum-subject`, {logaccesstype: LOGTYPE.GETCURRICULUM, userid: user.schooluserid});
-    const data = await new CurriculumBusiness().getCurriculumsWithSubject(user);
-    return {
+    const translations = ContentTranslations.from(translationsheader, user);
+    const data = await new CurriculumBusiness().getCurriculumsWithSubject(user, translations);
+    return withContentLanguage(translations, {
         data: data,
         error: false,
-    };
+    });
   }
 
   @Get(":curriculumid")

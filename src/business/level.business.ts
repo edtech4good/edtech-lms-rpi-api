@@ -6,9 +6,10 @@ import { levels, levelsAttributes } from "src/models/data-models/levels";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { Token } from "src/models/token.model";
+import type { ContentTranslations } from "./content-translations";
 
 export class LevelBusiness {
-  getlevelsbygradeid = async (gradeid: string, user: Token) => {
+  getlevelsbygradeid = async (gradeid: string, user: Token, translations?: ContentTranslations) => {
     levels.hasMany(studentlevelsprogress, { foreignKey: "levelid" });
     studentlevelsprogress.belongsTo(levels, { foreignKey: "levelid" });
     let lvs = await levels.findAll({
@@ -29,6 +30,7 @@ export class LevelBusiness {
       level.setDataValue("progress", progress);
       return level;
     });
+    await translations?.decorate("levels", lvs);
     return lvs;
   };
 
