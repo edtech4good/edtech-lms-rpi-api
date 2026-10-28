@@ -30,7 +30,7 @@ import { exportpayload, StudentProgressBusiness } from "src/business/studentprog
 import { OrganisationContent } from "./organisation-content.validator";
 import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
 import { assertRosterBelongsToSchool, RosterSchoolError, withRequiredSchoolIds } from "src/business/school-identity";
-import { assertRosterClassesKnown, assertRosterProgressKnown, RosterRowsError } from "src/business/roster-refs";
+import { assertRosterClassesKnown, assertRosterProgressKnown, RosterRowsError, withCurriculumLists } from "src/business/roster-refs";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
@@ -172,7 +172,7 @@ export class ImportController {
   async studentsimport(
     @UploadedFile() file: Express.Multer.File,
     @User() user: Token
-  ): Promise<ResponseBoolean> {
+  ): Promise<ResponseBoolean & { curriculumListsFromCurriculumid?: number }> {
     const zip = openZip(file);
     const zipEntries = zip.getEntries(); // an array of ZipEntry records
     if (zipEntries.length > 0) {
@@ -197,6 +197,7 @@ export class ImportController {
             dateofjoin: x.student.dateofjoin ? parseISO(x.student.dateofjoin) : null,
           },
         }));
+        let curriculumListsFilled = 0;
         const su = new SchoolUserBusiness();
         const st = new StudentBusiness();
         const stp = new StudentProgressBusiness();
@@ -216,6 +217,11 @@ export class ImportController {
           // The class of every learner and the content and learner of every progress row must be here: each is a
           // foreign key in the database, and a roster that names one that is not is refused, by row, before a write.
           await assertRosterClassesKnown(newstudents, tnx);
+          // The content guard reads only `curriculumids`: a learner with `curriculumid` and no list is given
+          // `[curriculumid]`, one with neither is refused (by row, before a write), and the report counts the first.
+          const withLists = withCurriculumLists(newstudents);
+          newstudents = withLists.rows;
+          curriculumListsFilled = withLists.filled;
           if (studentprogresses) {
             await assertRosterProgressKnown(newstudents, studentprogresses, tnx);
           }
@@ -251,11 +257,11 @@ export class ImportController {
             errormessage: "Invalid file",
           });
         }
-        Logger.info(`<${user.schoolusername}> import students`, {logaccesstype: LOGTYPE.IMPORTSTUDENT, userid: user.schooluserid});
-        return {
-          error: false,
-          data: true,
-        };
+        Logger.info(`<${user.schoolusername}> import students`, {logaccesstype: LOGTYPE.IMPORTSTUDENT, userid: user.schooluserid, curriculumListsFromCurriculumid: curriculumListsFilled});
+        // The report says how many learners were given their curriculum list from `curriculumid` (left out when none were).
+        return curriculumListsFilled > 0
+          ? { error: false, data: true, curriculumListsFromCurriculumid: curriculumListsFilled }
+          : { error: false, data: true };
       } catch (e) {
         if (e instanceof RosterSchoolError || e instanceof RosterRowsError) {
           throw e;

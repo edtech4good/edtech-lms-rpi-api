@@ -88,6 +88,43 @@ export async function assertRosterClassesKnown(rosterRows: ReadonlyArray<{ stude
   }
 }
 
+/** A usable id of a curriculum list, as `content-access.ts` reads one: text, 1 to 64 long. */
+const usableListId = (value: unknown): boolean => typeof value === "string" && value.length > 0 && value.length <= 64;
+
+/**
+ * The curriculum list of every learner row (`students.curriculumids`). The content guard reads only that list, so a
+ * learner who arrives with it NULL, absent or empty is locked out of every route even though `curriculumid` is set. A
+ * row with `curriculumid` and no usable list is therefore stored with `curriculumids = [curriculumid]`; a row with a
+ * usable list is left as it is; a row with neither names no curriculum, and the roster is refused, by row position as
+ * the other roster checks do, before anything is written. Returns the rows to write (copies; the input is not
+ * changed) and how many were given their list from `curriculumid`, which the import report states.
+ */
+export function withCurriculumLists<T extends { student?: unknown } | null | undefined>(rosterRows: ReadonlyArray<T>): { rows: T[]; filled: number } {
+  let filled = 0;
+  const lines: string[] = [];
+  const rows = rosterRows.map((row, at) => {
+    const student = (row as { student?: unknown } | null | undefined)?.student as Row | null | undefined;
+    const list = student?.curriculumids;
+    if (Array.isArray(list) && list.some(usableListId)) return row;
+    const curriculumid = student?.curriculumid;
+    if (typeof curriculumid !== "string" || curriculumid.trim().length === 0) {
+      lines.push(`students row ${at + 1}: curriculum`);
+      return row;
+    }
+    filled += 1;
+    return { ...row, student: { ...student, curriculumids: [curriculumid] } } as T;
+  });
+  if (lines.length > 0) {
+    const message = `That roster has learners with no curriculum (${listRows(lines)}). Nothing was written.`;
+    throw new RosterRowsError(ErrorCode.INVALID_INPUT, {
+      message,
+      hint: "Give each learner a curriculumid or a curriculumids list, then send the roster again.",
+      fields: [{ field: "curriculumid", message }],
+    });
+  }
+  return { rows, filled };
+}
+
 interface ProgressTable {
   table: "studentgradesprogress" | "studentlevelsprogress" | "studentlessonsprogress";
   /** column -> what a person calls what it points at */

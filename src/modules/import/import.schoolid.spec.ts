@@ -35,7 +35,7 @@ const learner = (n: number, extra: Record<string, unknown> = {}) => ({
   schoolusername: `learner${n}`,
   schooluserrole: "STUDENT",
   schoolname: "School A",
-  student: { studentid: `s${n}`, schooluserid: `su${n}`, schoolname: "School A" },
+  student: { studentid: `s${n}`, curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: `su${n}`, schoolname: "School A" },
   ...extra,
 });
 
@@ -68,7 +68,7 @@ const updateList = (model: typeof students | typeof schoolusers, call = 0) =>
 
 describe("PUT /import/students", () => {
   it("an old payload (names only) stores each learner's and login's school id beside the name", async () => {
-    mockZipContaining({ studentusers: [learner(1), learner(2, { schoolname: "school b", student: { studentid: "s2", schooluserid: "su2", schoolname: "school b" } })] });
+    mockZipContaining({ studentusers: [learner(1), learner(2, { schoolname: "school b", student: { studentid: "s2", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su2", schoolname: "school b" } })] });
     await new ImportController().studentsimport(file, user);
     expect(learnerRows().map((r) => [r.schoolname, r.schoolid])).toEqual([
       ["School A", A],
@@ -82,7 +82,7 @@ describe("PUT /import/students", () => {
 
   it("a payload that carries schoolid stores it", async () => {
     mockZipContaining({
-      studentusers: [learner(1, { schoolid: B, schoolname: "School B", student: { studentid: "s1", schooluserid: "su1", schoolname: "School B", schoolid: B } })],
+      studentusers: [learner(1, { schoolid: B, schoolname: "School B", student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1", schoolname: "School B", schoolid: B } })],
     });
     await new ImportController().studentsimport(file, user);
     expect(learnerRows()[0]).toMatchObject({ schoolname: "School B", schoolid: B });
@@ -91,7 +91,7 @@ describe("PUT /import/students", () => {
 
   it("a payload with only an id (no name) stores the id", async () => {
     mockZipContaining({
-      studentusers: [learner(1, { schoolid: B, schoolname: undefined, student: { studentid: "s1", schooluserid: "su1", schoolid: B } })],
+      studentusers: [learner(1, { schoolid: B, schoolname: undefined, student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1", schoolid: B } })],
     });
     await new ImportController().studentsimport(file, user);
     expect(learnerRows()[0]).toMatchObject({ schoolid: B });
@@ -100,7 +100,7 @@ describe("PUT /import/students", () => {
 
   it("a payload whose id and name name different schools fails: 400, rolled back, nothing written", async () => {
     mockZipContaining({
-      studentusers: [learner(1, { schoolid: B, student: { studentid: "s1", schooluserid: "su1", schoolname: "School A", schoolid: B } })],
+      studentusers: [learner(1, { schoolid: B, student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1", schoolname: "School A", schoolid: B } })],
     });
     await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
     expect(students.bulkCreate).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe("PUT /import/students", () => {
   });
 
   it("a learner who moves school gets the new id with the new name (the id is rewritten, not left stale)", async () => {
-    mockZipContaining({ studentusers: [learner(1, { schoolname: "School B", student: { studentid: "s1", schooluserid: "su1", schoolname: "School B" } })] });
+    mockZipContaining({ studentusers: [learner(1, { schoolname: "School B", student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1", schoolname: "School B" } })] });
     await new ImportController().studentsimport(file, user);
     expect(learnerRows()[0]).toMatchObject({ schoolname: "School B", schoolid: B });
   });
@@ -132,8 +132,8 @@ describe("PUT /import/students", () => {
     mockZipContaining({
       studentusers: [
         learner(1),
-        learner(2, { schoolname: "Not Here Yet", student: { studentid: "s2", schooluserid: "su2", schoolname: "Not Here Yet" } }),
-        learner(3, { schoolname: undefined, student: { studentid: "s3", schooluserid: "su3" } }),
+        learner(2, { schoolname: "Not Here Yet", student: { studentid: "s2", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su2", schoolname: "Not Here Yet" } }),
+        learner(3, { schoolname: undefined, student: { studentid: "s3", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su3" } }),
       ],
     });
     const err = await new ImportController().studentsimport(file, user).catch((e) => e);
@@ -149,7 +149,7 @@ describe("PUT /import/students", () => {
   });
 
   it("a learner row alone with no school refuses the import before the logins are written", async () => {
-    mockZipContaining({ studentusers: [learner(1, { student: { studentid: "s1", schooluserid: "su1" } })] });
+    mockZipContaining({ studentusers: [learner(1, { student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1" } })] });
     await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
     expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
     expect(students.bulkCreate).not.toHaveBeenCalled();
@@ -157,7 +157,7 @@ describe("PUT /import/students", () => {
 
   it("a login with a school id this server does not have is refused as well", async () => {
     mockZipContaining({
-      studentusers: [learner(1, { schoolid: "5c000000-0000-4000-8000-0000000000ff", schoolname: undefined, student: { studentid: "s1", schooluserid: "su1", schoolname: "School A" } })],
+      studentusers: [learner(1, { schoolid: "5c000000-0000-4000-8000-0000000000ff", schoolname: undefined, student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1", schoolname: "School A" } })],
     });
     await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
     expect(schoolusers.bulkCreate).not.toHaveBeenCalled();

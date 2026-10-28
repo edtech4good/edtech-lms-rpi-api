@@ -31,10 +31,10 @@ VALUES
   ('a2222222-2222-4222-8222-222222222222', 'demo.student', '__PASSWORD_HASH__', 4, 1, 'Demo Primary School', 0, 'b0000000-0000-4000-8000-000000000002'),
   ('a3333333-3333-4333-8333-333333333333', 'demo.teacher', '__PASSWORD_HASH__', 3, 1, 'Demo Primary School', 0, 'b0000000-0000-4000-8000-000000000002');
 
-INSERT IGNORE INTO `students` (`studentid`, `studentfirstname`, `studentlastname`, `genderid`, `city`, `country`, `state`, `curriculumid`, `isactive`, `schooluserid`, `is_teacher_acc`, `schoolname`, `schoolid`)
+INSERT IGNORE INTO `students` (`studentid`, `studentfirstname`, `studentlastname`, `genderid`, `city`, `country`, `state`, `curriculumid`, `curriculumids`, `isactive`, `schooluserid`, `is_teacher_acc`, `schoolname`, `schoolid`)
 VALUES
-  ('a4444444-4444-4444-8444-444444444444', 'Demo', 'Student', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', 1, 'a2222222-2222-4222-8222-222222222222', 0, 'Demo Primary School', 'b0000000-0000-4000-8000-000000000002'),
-  ('a5555555-5555-4555-8555-555555555555', 'Demo', 'Teacher', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', 1, 'a3333333-3333-4333-8333-333333333333', 1, 'Demo Primary School', 'b0000000-0000-4000-8000-000000000002');
+  ('a4444444-4444-4444-8444-444444444444', 'Demo', 'Student', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', JSON_ARRAY('a1111111-1111-4111-8111-111111111111'), 1, 'a2222222-2222-4222-8222-222222222222', 0, 'Demo Primary School', 'b0000000-0000-4000-8000-000000000002'),
+  ('a5555555-5555-4555-8555-555555555555', 'Demo', 'Teacher', 1, 'Local', 'Local', 'Local', 'a1111111-1111-4111-8111-111111111111', JSON_ARRAY('a1111111-1111-4111-8111-111111111111'), 1, 'a3333333-3333-4333-8333-333333333333', 1, 'Demo Primary School', 'b0000000-0000-4000-8000-000000000002');
 
 -- INSERT IGNORE is a no-op on a re-run against rows that already exist (e.g.
 -- from before `schoolname` was added to this seed), so backfill it
@@ -42,6 +42,12 @@ VALUES
 UPDATE `students` SET `schoolname` = 'Demo Primary School'
 WHERE `studentid` IN ('a4444444-4444-4444-8444-444444444444', 'a5555555-5555-4555-8555-555555555555')
   AND (`schoolname` IS NULL OR `schoolname` = '' OR `schoolname` = 'Demo School');
+
+-- The learner routes read only `curriculumids`, so a learner seeded before this seed set it (INSERT IGNORE leaves
+-- the row as it was) is repaired: only a NULL list, only these two learners, from their own `curriculumid`.
+UPDATE `students` SET `curriculumids` = JSON_ARRAY(`curriculumid`)
+WHERE `studentid` IN ('a4444444-4444-4444-8444-444444444444', 'a5555555-5555-4555-8555-555555555555')
+  AND `curriculumids` IS NULL;
 
 -- Also update schoolusers for self-healing from old to new name.
 UPDATE `schoolusers` SET `schoolname` = 'Demo Primary School'
