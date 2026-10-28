@@ -91,13 +91,15 @@ export class LevelController {
   async getAllLevels(
     @Query("gradeid") gradeid: string = '',
     @Query("level") levelname: string = '',
-    @User() user?: Token
+    @User() user?: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
   ): Promise<any> {
-    const data = await new LevelBusiness().getLevelsWithFilter(gradeid, levelname, user);
-    return {
+    const translations = ContentTranslations.from(translationsheader, user);
+    const data = await new LevelBusiness().getLevelsWithFilter(gradeid, levelname, user, translations);
+    return withContentLanguage(translations, {
         data: data,
         error: false,
-    };
+    });
   }
 
   @Get("/grade/:gradeid")

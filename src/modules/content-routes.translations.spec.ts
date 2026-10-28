@@ -106,6 +106,50 @@ describe("with the header, every content row of every route carries its translat
     expect(body.data[0].translations).toEqual({ km: { levelname: TEXT(3) } });
   });
 
+  it("GET student/progress/summary: every curriculum, grade and level row, and the current level (its level and its grade), one query per table", async () => {
+    const body = await get("GET student/progress/summary");
+    expect(body.contentlanguage).toBe("en");
+    const curriculum = body.data.curricula[0];
+    expect(curriculum.translations).toEqual({ km: { curriculumname: TEXT(1) } });
+    expect(curriculum.grades[0].translations).toEqual({ km: { gradename: TEXT(2) } });
+    expect(curriculum.grades[0].levels[0].translations).toEqual({ km: { levelname: TEXT(3) } });
+    expect(curriculum.currentLevel.translations).toEqual({ km: { levelname: TEXT(3), gradename: TEXT(2) } });
+    expect(curriculum.currentLevel.levelname).toBe("Level A"); // the base text is still the base text
+    expect(body.data.totals.translations).toBeUndefined();
+    expect(queries.map((q) => q.tablename).sort()).toEqual(["curriculums", "grades", "levels"]);
+  });
+
+  it("GET student/progress/summary: a stale name and a name in the content language are absent; nothing enrolled answers with the root only", async () => {
+    stored.push(tr("levels", "lv1", "levelname", "OLD level", TEXT(20), { language: "th" })); // stale
+    stored.push(tr("grades", "g1", "gradename", "Grade One", TEXT(21), { language: "EN" })); // the organisation's own language
+    const body = await get("GET student/progress/summary");
+    const curriculum = body.data.curricula[0];
+    expect(curriculum.grades[0].levels[0].translations).toEqual({ km: { levelname: TEXT(3) } });
+    expect(curriculum.grades[0].translations).toEqual({ km: { gradename: TEXT(2) } });
+    expect(JSON.stringify(body)).not.toContain(TEXT(20));
+    expect(JSON.stringify(body)).not.toContain(TEXT(21));
+    jest.spyOn(require("src/business/content-access"), "enrolledCurriculumIds").mockResolvedValue([]); // eslint-disable-line @typescript-eslint/no-require-imports
+    expect(await get("GET student/progress/summary")).toEqual({ data: { curricula: [], totals: { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 } }, error: false, contentlanguage: "en" });
+  });
+
+  it("GET grade/all", async () => {
+    const body = await get("GET grade/all");
+    expect(body.contentlanguage).toBe("en");
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].translations).toEqual({ km: { gradename: TEXT(2) } });
+    expect(body.data[0].gradename).toBe("Grade One");
+    expect(queries.map((q) => q.tablename)).toEqual(["grades"]);
+  });
+
+  it("GET level/all", async () => {
+    const body = await get("GET level/all");
+    expect(body.contentlanguage).toBe("en");
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0].translations).toEqual({ km: { levelname: TEXT(3) } });
+    expect(body.data[0].levelname).toBe("Level A");
+    expect(queries.map((q) => q.tablename)).toEqual(["levels"]);
+  });
+
   it("GET level/library: the curricula, grades and levels, one query per table", async () => {
     const body = await get("GET level/library");
     expect(body.contentlanguage).toBe("en");
