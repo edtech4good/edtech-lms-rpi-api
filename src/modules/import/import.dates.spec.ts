@@ -59,6 +59,7 @@ const studentuser = (student: Record<string, unknown>) => ({
   schoolid: SCHOOL,
   student: {
     studentid: "s1",
+    curriculumid: "cur-1",
     schooluserid: "su1",
     schoolid: SCHOOL,
     studentfirstname: "សុខា",

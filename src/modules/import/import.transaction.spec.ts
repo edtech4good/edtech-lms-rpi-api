@@ -84,7 +84,7 @@ const SCHOOL = "5c000000-0000-4000-8000-0000000000a1";
 
 const studentPayload = {
   studentusers: [
-    { schooluserid: "su1", schoolusername: "student1", schoolid: SCHOOL, student: { studentid: "s1", schoolid: SCHOOL } },
+    { schooluserid: "su1", schoolusername: "student1", schoolid: SCHOOL, student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schoolid: SCHOOL } },
   ],
   studentprogresses: {
     studentprogress: [{ studentprogressid: "p1", studentid: "s1" }],

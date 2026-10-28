@@ -54,7 +54,7 @@ const learner = (n: number, school: Record<string, unknown> = { schoolid: A }): 
   schoolusername: `learner${n}`,
   schooluserrole: "STUDENT",
   ...school,
-  student: { studentid: `s${n}`, schooluserid: `su${n}`, ...school },
+  student: { studentid: `s${n}`, curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: `su${n}`, ...school },
 });
 const nothingWritten = () => {
   expect(students.bulkCreate).not.toHaveBeenCalled();

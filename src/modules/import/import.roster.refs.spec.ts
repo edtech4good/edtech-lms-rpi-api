@@ -69,7 +69,7 @@ const learner = (n: number, student: Record<string, unknown> = {}): Record<strin
   schoolusername: `learner${n}`,
   schooluserrole: "STUDENT",
   schoolid: SCHOOL,
-  student: { studentid: `s${n}`, schooluserid: `su${n}`, schoolid: SCHOOL, ...student },
+  student: { studentid: `s${n}`, curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: `su${n}`, schoolid: SCHOOL, ...student },
 });
 const nothingWritten = () => {
   expect(students.bulkCreate).not.toHaveBeenCalled();
@@ -159,7 +159,7 @@ describe("PUT /import/students: the class of a learner", () => {
 
 const lessonRow = (n: number, row: Record<string, unknown> = {}) => ({ studentlessonprogressid: `p${n}`, studentid: "s1", curid: "cur-1", gradeid: "gr-1", levelid: "lv-1", lessonid: "ls-1", ...row });
 const levelRow = (n: number, row: Record<string, unknown> = {}) => ({ studentlevelprogressid: `p${n}`, studentid: "s1", curid: "cur-1", gradeid: "gr-1", levelid: "lv-1", ...row });
-const gradeRow = (n: number, row: Record<string, unknown> = {}) => ({ studentgradeprogressid: `p${n}`, studentid: "s1", curriculumid: "cur-1", gradeid: "gr-1", ...row });
+const gradeRow = (n: number, row: Record<string, unknown> = {}) => ({ studentgradeprogressid: `p${n}`, studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], gradeid: "gr-1", ...row });
 const progress = (rows: { grades?: unknown[]; levels?: unknown[]; lessons?: unknown[] }) => ({
   studentprogress: [],
   studentlearningprogress: [],
