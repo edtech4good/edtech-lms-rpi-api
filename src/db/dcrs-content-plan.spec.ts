@@ -1,26 +1,49 @@
 /**
  * `seed:dcrs -- --content <dir>`: the plan a content.json turns into (a pure function of the
- * file), what is refused, the applier on a stand-in connection, and the command line.
+ * file: English in the base columns, Khmer as `contenttranslations` rows), what is refused, the
+ * applier on a stand-in connection, and the command line.
  * The seed itself is run for real against scratch databases (see the change description).
  *
  * Khmer fixtures here are opaque runs of Khmer-block code points (consonants, the subscript
  * sign, vowels), not words: the specs need text that only a Khmer-aware check can tell from
  * ASCII, not text that means anything.
  */
+import { createHash } from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { ID } = require("../../scripts/seed-dcrs-content");
-const { ContentRefused, LESSON_IDS, validateContent, planContent, statementOf, slotsOf } = require("../../scripts/lib/dcrs-content-plan");
-const { applyPlan, formatReport } = require("../../scripts/lib/dcrs-content-apply");
+const {
+  ContentRefused,
+  LESSON_IDS,
+  BASE_LANGUAGE,
+  TRANSLATION_LANGUAGE,
+  ANSWER_BEARING_FIELDS,
+  validateContent,
+  planContent,
+  statementOf,
+  slotsOf,
+  sourceHash,
+  translationId,
+  questionTexts,
+  isAnswerBearing,
+} = require("../../scripts/lib/dcrs-content-plan");
+const { applyPlan, preflight, formatReport } = require("../../scripts/lib/dcrs-content-apply");
 const { parseArgs, prepare, printDryRun } = require("../../scripts/lib/dcrs-content-cli");
 /* eslint-enable @typescript-eslint/no-var-requires */
+import {
+  ANSWER_BEARING_FIELDS as CONSTANT_ANSWER_BEARING_FIELDS,
+  SUBKEY_MAX_LENGTH,
+  TRANSLATABLE_FIELDS,
+  sourceHash as constantSourceHash,
+} from "../constants/content-translations";
 
 type Json = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const ORG = "a0000000-0000-4000-8000-0000000000aa";
+const NOW = new Date("2026-10-28T09:30:15.123Z");
 // consonant + subscript sign + consonant + dependent vowel, then a second run; never a real word
 const km = (tag: string) => `\u1780\u17d2\u1781\u17b6${tag}\u1782\u17d2\u1783\u17c1`;
 const bi = (tag: string) => ({ en: `en ${tag}`, km: km(tag) });
@@ -47,7 +70,7 @@ const sample = (over: Json = {}): Json => ({
   ...over,
 });
 
-const plan = (content: Json = sample(), lang?: string) => planContent(content, ID, { lang, organisationid: ORG });
+const plan = (content: Json = sample(), now: Date = NOW) => planContent(content, ID, { organisationid: ORG, now });
 const refusal = (content: unknown): string[] => {
   try {
     validateContent(content, ID);
@@ -58,6 +81,8 @@ const refusal = (content: unknown): string[] => {
   throw new Error("expected the content to be refused");
 };
 
+const translations = (p: Json): Json[] => p.steps.filter((s: Json) => s.kind === "translate").map((s: Json) => s.values);
+const forRow = (p: Json, tablename: string, rowid: string): Json[] => translations(p).filter((v) => v.tablename === tablename && v.rowid === rowid);
 const hidden = (p: Json) => Object.fromEntries(p.steps.filter((s: Json) => s.kind === "hide").map((s: Json) => [s.table, s.ids]));
 const upserted = (p: Json, table: string): string[] => p.steps.filter((s: Json) => s.kind === "upsert" && s.table === table).map((s: Json) => s.id);
 
@@ -88,8 +113,9 @@ describe("the seed's id map and the plan's slots", () => {
 describe("planning a content file", () => {
   it("writes lesson 1 with its four questions and joins, and hides everything the file does not name", () => {
     const p = plan();
-    expect(p.steps.map((s: Json) => `${s.kind}:${s.table}`)).toEqual([
+    expect(p.steps.filter((s: Json) => s.kind !== "translate").map((s: Json) => `${s.kind}:${s.table}`)).toEqual([
       "upsert:curriculums",
+      "upsert:grades",
       "upsert:levels",
       "upsert:lessons",
       "upsert:documents",
@@ -161,24 +187,161 @@ describe("planning a content file", () => {
       [`${ID.q3}-opt-4`, false, 4],
     ]);
     expect(q3.values).toMatchObject({ templatetypeid: 1, isdeleted: 0, questionstatus: 1, questionidentifier: "DCRS-M1-Q1", questionfeedback: null, organisationid: ORG });
-    expect(JSON.parse(q3.values.questionheading)).toEqual({ headingtext: km("q1 stem"), headingfile: null });
-    expect(q3.values.questiontext).toBe(km("q1 stem"));
+    expect(JSON.parse(q3.values.questionheading)).toEqual({ headingtext: "en q1 stem", headingfile: null });
+    expect(q3.values.questiontext).toBe("en q1 stem");
     expect(q3.update).not.toContain("questionid");
     expect(q3.update).not.toContain("organisationid");
   });
 
-  it("learner-facing text is Khmer by default, English with lang=en, Khmer then English with lang=both", () => {
-    const name = (p: Json) => p.steps.find((s: Json) => s.table === "lessons").values.lessonname;
-    const stem = (p: Json) => p.steps.find((s: Json) => s.table === "questions").values.questiontext;
-    expect(name(plan())).toBe(km("lesson"));
-    expect(name(plan(sample(), "km"))).toBe(km("lesson"));
-    expect(name(plan(sample(), "en"))).toBe("en lesson");
-    expect(name(plan(sample(), "both"))).toBe(`${km("lesson")}\nen lesson`);
-    expect(stem(plan(sample(), "both"))).toBe(`${km("p1 stem")}\nen p1 stem`);
-    const option = (p: Json) => JSON.parse(p.steps.find((s: Json) => s.table === "questions").values.questionoptions)[0];
-    expect(option(plan(sample(), "en"))).toMatchObject({ questionoptiontext: "en p1 option 0", questionoptionvalue: "en p1 option 0" });
-    expect(plan().steps.find((s: Json) => s.table === "curriculums").values.curriculumname).toBe(km("module"));
-    expect(() => plan(sample(), "fr")).toThrow(ContentRefused);
+  it("blanks every placeholder description and names the grade after the module title the file gives", () => {
+    const p = plan();
+    const row = (table: string) => p.steps.find((s: Json) => s.kind === "upsert" && s.table === table);
+    for (const [table, column] of [
+      ["curriculums", "curriculumdescription"],
+      ["grades", "gradedescription"],
+      ["levels", "leveldescription"],
+      ["lessons", "lessondescription"],
+      ["lessonlearnings", "lessonlearningdescription"],
+      ["lessonpractices", "lessonpracticedescription"],
+      ["lessonquizzes", "lessonquizdescription"],
+    ]) {
+      expect(row(table).values[column]).toBe("");
+      // in the update list too, or a row the seed's placeholder pass made first would keep its placeholder
+      expect(row(table).update).toContain(column);
+    }
+    expect(row("grades").values).toMatchObject({ gradeid: ID.grade, curriculumid: ID.curriculum, gradename: "en module", gradestatus: 1, isdeleted: 0 });
+    expect(row("grades").update).toEqual(["gradename", "gradedescription", "gradestatus", "isdeleted"]);
+    expect(forRow(p, "grades", ID.grade).map((v) => [v.field, v.text])).toEqual([["gradename", km("module")]]);
+    // the grade comes after its curriculum and before the level that hangs from it
+    const order = p.steps.map((s: Json) => s.table);
+    expect(order.indexOf("grades")).toBeGreaterThan(order.indexOf("curriculums"));
+    expect(order.indexOf("grades")).toBeLessThan(order.indexOf("levels"));
+    // nothing of the seed's placeholder wording is left in what is written
+    expect(JSON.stringify(p.steps.filter((s: Json) => s.kind !== "hide").map((s: Json) => s.values))).not.toMatch(/DCRS (curriculum|grade|level|lesson|practice set|quiz)|Cohort II/);
+  });
+
+  it("writes the English text into the base columns and no Khmer into them", () => {
+    const p = plan();
+    const row = (table: string) => p.steps.find((s: Json) => s.kind === "upsert" && s.table === table).values;
+    expect(row("curriculums").curriculumname).toBe("en module");
+    expect(row("levels").levelname).toBe("en module level");
+    expect(row("lessons").lessonname).toBe("en lesson");
+    expect(row("lessonlearnings").lessonlearningname).toBe("en lesson");
+    expect(row("lessonpractices").lessonpracticename).toBe("en lesson");
+    expect(row("lessonquizzes").lessonquizname).toBe("en lesson");
+    const options = JSON.parse(row("questions").questionoptions);
+    expect(options[0]).toMatchObject({ questionoptiontext: "en p1 option 0", questionoptionvalue: "en p1 option 0" });
+    for (const step of p.steps.filter((x: Json) => x.kind === "upsert")) expect(JSON.stringify(step.values)).not.toMatch(/[\u1780-\u17ff]/);
+    expect(p).toMatchObject({ baseLanguage: BASE_LANGUAGE, translationLanguage: TRANSLATION_LANGUAGE, organisationid: ORG });
+    expect([BASE_LANGUAGE, TRANSLATION_LANGUAGE]).toEqual(["en", "km"]);
+    expect(() => planContent(sample(), ID, { organisationid: ORG })).toThrow(ContentRefused); // no clock, no plan
+    expect(() => planContent(sample(), ID, { organisationid: ORG, now: "not a date" })).toThrow(ContentRefused);
+  });
+
+  it("writes one km row for each Khmer text, keyed by row, field and option id, with the hash of the English", () => {
+    const p = plan();
+    const names = ["curriculums", "grades", "levels", "lessons", "lessonlearnings", "lessonpractices", "lessonquizzes"];
+    const keyed = (v: Json) => `${v.tablename}/${v.rowid}/${v.field}/${v.subkey}`;
+    const all = translations(p);
+    expect(new Set(all.map(keyed)).size).toBe(all.length);
+    // 7 names (curriculum, grade, level, lesson, learning item, practice, quiz) + 4 questions x (text + heading) + 15 options
+    expect(all).toHaveLength(7 + 8 + 15);
+    const lessonSlot = slotsOf(ID).lessons[0];
+    expect(all.slice(0, 7).map(keyed)).toEqual([
+      `curriculums/${ID.curriculum}/curriculumname/`,
+      `grades/${ID.grade}/gradename/`,
+      `levels/${ID.level}/levelname/`,
+      `lessons/${lessonSlot.id}/lessonname/`,
+      `lessonlearnings/${lessonSlot.learning}/lessonlearningname/`,
+      `lessonpractices/${lessonSlot.practice}/lessonpracticename/`,
+      `lessonquizzes/${lessonSlot.quiz}/lessonquizname/`,
+    ]);
+    for (const v of all.slice(0, 7)) expect(names).toContain(v.tablename);
+    expect(forRow(p, "lessons", ID.lesson1)).toEqual([
+      {
+        translationid: translationId("lessons", ID.lesson1, "lessonname", "", "km"),
+        organisationid: ORG,
+        tablename: "lessons",
+        rowid: ID.lesson1,
+        field: "lessonname",
+        subkey: "",
+        language: "km",
+        text: km("lesson"),
+        sourcehash: createHash("sha256").update("en lesson", "utf8").digest("hex"),
+        lastupdated: "2026-10-28 09:30:15.123",
+      },
+    ]);
+    // the third question of the file takes q3; its options are keyed by the option ids the question row carries
+    const q3 = forRow(p, "questions", ID.q3);
+    expect(q3.map((v) => [v.field, v.subkey])).toEqual([
+      ["questiontext", ""],
+      ["headingtext", ""],
+      ["questionoptiontext", `${ID.q3}-opt-1`],
+      ["questionoptiontext", `${ID.q3}-opt-2`],
+      ["questionoptiontext", `${ID.q3}-opt-3`],
+      ["questionoptiontext", `${ID.q3}-opt-4`],
+    ]);
+    expect(q3.map((v) => v.text)).toEqual([km("q1 stem"), km("q1 stem"), ...[0, 1, 2, 3].map((i) => km(`q1 option ${i}`))]);
+    const stored = p.steps.find((s: Json) => s.table === "questions" && s.id === ID.q3).values;
+    const stem = JSON.parse(stored.questionheading).headingtext;
+    expect(q3[1].sourcehash).toBe(createHash("sha256").update(stem, "utf8").digest("hex"));
+    const stored3 = JSON.parse(stored.questionoptions);
+    q3.slice(2).forEach((v, i) => {
+      expect(stored3[i].questionoptionid).toBe(v.subkey);
+      expect(v.sourcehash).toBe(createHash("sha256").update(stored3[i].questionoptiontext, "utf8").digest("hex"));
+    });
+    expect(all.every((v) => v.language === "km" && v.organisationid === ORG && v.subkey.length <= SUBKEY_MAX_LENGTH)).toBe(true);
+  });
+
+  it("hashes the exact English UTF-8 text, with no normalising, and agrees with the API's own function", () => {
+    const text = " caf\u00e9\u00a0 \n\ttwo lines \u2713 \ud83d\ude00 ";
+    expect(sourceHash(text)).toBe(constantSourceHash(text));
+    expect(sourceHash(text)).toBe(createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex"));
+    const c = sample();
+    c.lessons[0].name = { en: text, km: km("odd") };
+    const row = translations(plan(c)).find((v) => v.tablename === "lessons")!;
+    expect(row.sourcehash).toBe(constantSourceHash(text));
+    expect(plan(c).steps.find((s: Json) => s.table === "lessons").values.lessonname).toBe(text);
+  });
+
+  it("only plans rows for fields the API accepts as translations, and never for a text an answer is graded by", () => {
+    for (const v of translations(plan())) expect(TRANSLATABLE_FIELDS[v.tablename]).toContain(v.field);
+    expect(ANSWER_BEARING_FIELDS).toEqual(CONSTANT_ANSWER_BEARING_FIELDS);
+    // the readiness questions are template 1: nothing they carry is answer-bearing
+    expect(translations(plan()).filter((v) => isAnswerBearing(1, v.field))).toEqual([]);
+    // the same texts as a template whose answer is the typed text: the question text and the options go, the heading stays
+    const q = question("DCRS-M1-P1", "p1");
+    const fields = (template: number) => questionTexts(template, ID.q1, q).map((t: Json) => t.field);
+    expect(fields(1)).toEqual(["questiontext", "headingtext", "questionoptiontext", "questionoptiontext", "questionoptiontext", "questionoptiontext"]);
+    expect(fields(21)).toEqual(["headingtext"]);
+    expect(fields(8)).toEqual(["headingtext", "questionoptiontext", "questionoptiontext", "questionoptiontext", "questionoptiontext"]);
+    expect(fields(23)).toEqual(fields(8));
+  });
+
+  it("carries a question's feedback messages when the file has them, as the base text and as km rows", () => {
+    const c = sample();
+    c.lessons[0].practice[0].feedback = { correctmessage: bi("well done"), incorrectmessage: bi("look again") };
+    c.lessons[0].practice[1].feedback = { incorrectmessage: bi("only this one") };
+    const p = plan(c);
+    expect(JSON.parse(p.steps.find((s: Json) => s.table === "questions" && s.id === ID.q1).values.questionfeedback)).toEqual({ correctmessage: "en well done", incorrectmessage: "en look again" });
+    expect(JSON.parse(p.steps.find((s: Json) => s.table === "questions" && s.id === ID.q2).values.questionfeedback)).toEqual({ incorrectmessage: "en only this one" });
+    expect(p.steps.find((s: Json) => s.table === "questions" && s.id === ID.q3).values.questionfeedback).toBeNull();
+    expect(forRow(p, "questions", ID.q1).filter((v) => v.field === "feedback").map((v) => [v.subkey, v.text])).toEqual([
+      ["correctmessage", km("well done")],
+      ["incorrectmessage", km("look again")],
+    ]);
+    expect(forRow(p, "questions", ID.q2).filter((v) => v.field === "feedback").map((v) => v.subkey)).toEqual(["incorrectmessage"]);
+    expect(refusal({ ...sample(), lessons: [{ ...sample().lessons[0], practice: [{ ...question("DCRS-M1-P1", "p1"), feedback: { other: bi("x") } }] }] })).toEqual([
+      "lessons[0].practice[0].feedback.other is not a message (correctmessage, incorrectmessage)",
+    ]);
+  });
+
+  it("gives a translation the same id on every run, so the same file seeds the same rows in both APIs", () => {
+    const ids = translations(plan()).map((v) => v.translationid);
+    expect(ids).toEqual(translations(plan(sample(), new Date("2030-01-01T00:00:00Z"))).map((v) => v.translationid));
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(translationId("lessons", ID.lesson1, "lessonname", "", "km")).not.toBe(translationId("lessons", ID.lesson1, "lessonname", "", "en"));
   });
 
   it("a lesson with fewer questions hides the join slots and question ids it no longer uses", () => {
@@ -270,17 +433,28 @@ describe("statementOf", () => {
     const p = plan();
     const lesson = statementOf(p.steps.find((s: Json) => s.table === "lessons"));
     expect(lesson.sql).toMatch(/^INSERT INTO `lessons` \(`lessonid`, `levelid`,/);
-    expect(lesson.sql).toMatch(/ON DUPLICATE KEY UPDATE `lessonname` = VALUES\(`lessonname`\), `lessonorder` = VALUES\(`lessonorder`\), `lessonstatus` = VALUES\(`lessonstatus`\), `isdeleted` = VALUES\(`isdeleted`\)$/);
+    expect(lesson.sql).toMatch(/ON DUPLICATE KEY UPDATE `lessonname` = VALUES\(`lessonname`\), `lessondescription` = VALUES\(`lessondescription`\), `lessonorder` = VALUES\(`lessonorder`\), `lessonstatus` = VALUES\(`lessonstatus`\), `isdeleted` = VALUES\(`isdeleted`\)$/);
     expect(lesson.sql.match(/\?/g)).toHaveLength(lesson.params.length);
     const hide = statementOf(p.steps.find((s: Json) => s.kind === "hide" && s.table === "lessons"));
     expect(hide).toEqual({ sql: "UPDATE `lessons` SET `isdeleted` = ? WHERE `lessonid` IN (?, ?, ?)", params: [1, ID.lesson2, ID.lesson3, ID.lesson4] });
+  });
+
+  it("builds a translation upsert that keeps the row's id and moves lastupdated only when the text or the hash changes", () => {
+    const stmt = statementOf(plan().steps.find((s: Json) => s.kind === "translate"));
+    expect(stmt.sql).toMatch(/^INSERT INTO `contenttranslations` \(`translationid`, `organisationid`, `tablename`, `rowid`, `field`, `subkey`, `language`, `text`, `sourcehash`, `lastupdated`\) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?\) /);
+    // lastupdated is assigned before the text and hash, which MySQL would otherwise have already overwritten when it tests them
+    expect(stmt.sql).toMatch(
+      /ON DUPLICATE KEY UPDATE `lastupdated` = IF\(BINARY `text` <> BINARY VALUES\(`text`\) OR `sourcehash` <> VALUES\(`sourcehash`\), VALUES\(`lastupdated`\), `lastupdated`\), `text` = VALUES\(`text`\), `sourcehash` = VALUES\(`sourcehash`\)$/,
+    );
+    expect(stmt.sql).not.toMatch(/`translationid` = VALUES|`organisationid` = VALUES/);
+    expect(stmt.sql.match(/\?/g)).toHaveLength(stmt.params.length);
   });
 });
 
 // ---- the applier, on an in-memory stand-in for the connection ----------------------------------
 
 type Store = Record<string, Record<string, Json>>;
-const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string } = {}) => {
+const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string; noTranslationsTable?: boolean } = {}) => {
   let store: Store = {};
   let snapshot: Store | null = null;
   const log: string[] = [];
@@ -300,6 +474,49 @@ const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string } = {}) 
       log.push("rollback");
     }),
     execute: jest.fn(async (sql: string, params: unknown[]): Promise<[Json, undefined]> => {
+      if (/information_schema\.columns/.test(sql)) return [[{ n: opts.noTranslationsTable ? 1 : 2 }] as unknown as Json, undefined];
+      const lang = /^SELECT contentlanguage FROM organisations WHERE organisationid = \?( FOR UPDATE)?$/.exec(sql);
+      if (lang) {
+        const org = store.organisations?.[params[0] as string];
+        return [(org ? [{ contentlanguage: org.contentlanguage }] : []) as unknown as Json, undefined];
+      }
+      if (/^UPDATE organisations SET contentlanguage = \? WHERE organisationid = \? AND contentlanguage IS NULL$/.test(sql)) {
+        const org = store.organisations?.[params[1] as string];
+        if (!org || org.contentlanguage !== null || opts.ignoreUpdates) return [{ affectedRows: 0 }, undefined];
+        org.contentlanguage = params[0];
+        return [{ affectedRows: 1 }, undefined];
+      }
+      if (/^SELECT COUNT\(\*\) AS n FROM organisations WHERE organisationid = \? AND contentlanguage = \?$/.test(sql)) {
+        return [[{ n: String(store.organisations?.[params[0] as string]?.contentlanguage).toLowerCase() === params[1] ? 1 : 0 }] as unknown as Json, undefined];
+      }
+      const owner = /^SELECT COUNT\(\*\) AS n FROM `(\w+)` WHERE `(\w+)` IN \((.*?)\) AND `organisationid` IS NOT NULL AND `organisationid` <> \?$/.exec(sql);
+      if (owner) {
+        const ids = params.slice(0, -1) as string[];
+        const n = ids.filter((id) => { const o = store[owner[1]]?.[id]?.organisationid; return o !== undefined && o !== null && o !== params[params.length - 1]; }).length;
+        return [[{ n }] as unknown as Json, undefined];
+      }
+      if (/^INSERT INTO `contenttranslations`/.test(sql)) {
+        if (opts.failOnTable === "contenttranslations") throw new Error("boom");
+        const cols = ["translationid", "organisationid", "tablename", "rowid", "field", "subkey", "language", "text", "sourcehash", "lastupdated"];
+        const row: Json = Object.fromEntries(cols.map((c, i) => [c, params[i]]));
+        const rows = (store.contenttranslations ??= {});
+        const key = [row.tablename, row.rowid, row.field, row.subkey, row.language].join("|");
+        const old = rows[key];
+        if (!old) {
+          rows[key] = row;
+          return [{ affectedRows: 1 }, undefined];
+        }
+        // the statement's own rule: the id and owner stay, text and hash follow, lastupdated moves only when one of them changed
+        const changed = old.text !== row.text || old.sourcehash !== row.sourcehash;
+        if (changed) Object.assign(old, { text: row.text, sourcehash: row.sourcehash, lastupdated: row.lastupdated });
+        return [{ affectedRows: changed ? 2 : 0 }, undefined];
+      }
+      const tcount = /^SELECT COUNT\(\*\) AS n FROM `contenttranslations` WHERE `tablename` = \?/.exec(sql);
+      if (tcount) {
+        const [tablename, rowid, field, subkey, language, organisationid, sourcehash, text] = params as string[];
+        const r = store.contenttranslations?.[[tablename, rowid, field, subkey, language].join("|")];
+        return [[{ n: r && r.organisationid === organisationid && r.sourcehash === sourcehash && r.text === text ? 1 : 0 }] as unknown as Json, undefined];
+      }
       const ins = /^INSERT INTO `(\w+)` \((.*?)\) VALUES .* ON DUPLICATE KEY UPDATE (.*)$/.exec(sql);
       if (ins) {
         const [, table, colList, updList] = ins;
@@ -352,7 +569,9 @@ const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string } = {}) 
 const placeholderRows = (store: Store) => {
   const put = (table: string, row: Json) => ((store[table] ??= {})[row[Object.keys(row)[0]]] = row);
   const s = slotsOf(ID);
-  put("curriculums", { curriculumid: ID.curriculum, curriculumname: "placeholder", curriculumstatus: 1, isdeleted: 0 });
+  put("organisations", { organisationid: ORG, contentlanguage: null });
+  put("curriculums", { curriculumid: ID.curriculum, curriculumname: "placeholder", curriculumdescription: "DCRS curriculum", curriculumstatus: 1, isdeleted: 0 });
+  put("grades", { gradeid: ID.grade, gradename: "Cohort II", gradedescription: "DCRS grade", gradestatus: 1, isdeleted: 0 });
   put("levels", { levelid: ID.level, levelname: "placeholder", levelstatus: 1, isdeleted: 0 });
   for (const l of s.lessons) {
     put("lessons", { lessonid: l.id, lessonname: "placeholder", lessonorder: l.n, lessonstatus: 1, isdeleted: 0 });
@@ -371,6 +590,12 @@ describe("applying a plan", () => {
     const fake = fakeConn();
     placeholderRows(fake.store);
     const first = await applyPlan(fake.conn, plan());
+    expect(first.tables.organisations).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
+    expect(first.tables.grades).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
+    expect(fake.store.grades[ID.grade]).toMatchObject({ gradename: "en module", gradedescription: "" });
+    expect(fake.store.curriculums[ID.curriculum].curriculumdescription).toBe("");
+    expect(first.tables.contenttranslations).toEqual({ inserted: 30, updated: 0, unchanged: 0, hidden: 0 });
+    expect(fake.store.organisations[ORG].contentlanguage).toBe("en");
     expect(first.tables.lessons).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 3 });
     expect(first.tables.questions).toEqual({ inserted: 0, updated: 4, unchanged: 0, hidden: 3 });
     // one join row was already there for lesson 1 and one is new; the three that exist for the hidden lessons are hidden
@@ -381,10 +606,14 @@ describe("applying a plan", () => {
     expect(fake.store.documents[ID.doc1].documentname).toBe("dcrs-m1-l1.mp4");
     expect(fake.store.lessons[ID.lesson3].isdeleted).toBe(1);
     expect(fake.store.questions[ID.q7].isdeleted).toBe(1);
-    expect(fake.log).toEqual(["begin", "commit"]);
+    expect(fake.log[0]).toBe("begin");
+    expect(fake.log[fake.log.length - 1]).toBe("commit");
+    expect(fake.log.filter((l: string) => l === "rollback")).toEqual([]);
 
     const second = await applyPlan(fake.conn, plan());
     for (const c of Object.values(second.tables) as Json[]) expect(c).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
+    expect(second.tables.contenttranslations).toEqual({ inserted: 0, updated: 0, unchanged: 30, hidden: 0 });
+    expect(second.tables.organisations).toEqual({ inserted: 0, updated: 0, unchanged: 1, hidden: 0 });
     expect(formatReport(second)).toMatch(/^ {2}table +inserted updated unchanged hidden\n/);
   });
 
@@ -395,8 +624,84 @@ describe("applying a plan", () => {
     const c = sample();
     c.lessons.push({ id: ID.lesson2, order: 2, name: bi("two"), video: { ref: "R2", filename: "dcrs-m1-l2.mp4" }, practice: [], quiz: [] });
     await applyPlan(fake.conn, plan(c));
-    expect(fake.store.lessons[ID.lesson2]).toMatchObject({ isdeleted: 0, lessonstatus: 1, lessonname: km("two") });
+    expect(fake.store.lessons[ID.lesson2]).toMatchObject({ isdeleted: 0, lessonstatus: 1, lessonname: "en two" });
     expect(fake.store.documents[ID.doc2].isdeleted).toBe(0);
+  });
+
+  it("a second run with a changed Khmer text updates that row, keeps its id and moves its date; the rest stay as they were", async () => {
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    await applyPlan(fake.conn, plan());
+    const key = `lessons|${ID.lesson1}|lessonname||km`;
+    const before = { ...fake.store.contenttranslations[key] };
+    const snapshot = JSON.stringify(fake.store.contenttranslations);
+    const changed = sample();
+    changed.lessons[0].name.km = km("edited lesson");
+    const later = new Date("2026-11-01T00:00:00.000Z");
+    const run = await applyPlan(fake.conn, plan(changed, later));
+    // the lesson's name, and the learning item, practice and quiz that carry it
+    expect(run.tables.contenttranslations).toEqual({ inserted: 0, updated: 4, unchanged: 26, hidden: 0 });
+    const after = fake.store.contenttranslations[key];
+    expect(after).toMatchObject({ translationid: before.translationid, text: km("edited lesson"), sourcehash: before.sourcehash, lastupdated: "2026-11-01 00:00:00.000" });
+    expect(before.lastupdated).toBe("2026-10-28 09:30:15.123");
+    const others = JSON.parse(snapshot);
+    const now = { ...fake.store.contenttranslations };
+    for (const k of Object.keys(now).filter((x) => /^lesson(s|learnings|practices|quizzes)\|/.test(x))) {
+      delete now[k];
+      delete others[k];
+    }
+    expect(Object.keys(now)).toHaveLength(26);
+    expect(now).toEqual(others);
+  });
+
+  it("an English edit gives the row a new hash and a later date, and a row an admin saved keeps its own id", async () => {
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    const adminId = "11111111-1111-4111-8111-111111111111";
+    fake.store.contenttranslations = {
+      [`lessons|${ID.lesson1}|lessonname||km`]: { translationid: adminId, organisationid: ORG, tablename: "lessons", rowid: ID.lesson1, field: "lessonname", subkey: "", language: "km", text: "x", sourcehash: "0".repeat(64), lastupdated: "2020-01-01 00:00:00.000" },
+    };
+    await applyPlan(fake.conn, plan());
+    expect(fake.store.contenttranslations[`lessons|${ID.lesson1}|lessonname||km`]).toMatchObject({ translationid: adminId, text: km("lesson"), sourcehash: sourceHash("en lesson") });
+    const edited = sample();
+    edited.lessons[0].name.en = "en lesson, reworded";
+    const run = await applyPlan(fake.conn, plan(edited, new Date("2026-11-02T00:00:00Z")));
+    // the lesson name, the learning item, practice and quiz names that carry it
+    expect(run.tables.contenttranslations.updated).toBe(4);
+    expect(fake.store.contenttranslations[`lessons|${ID.lesson1}|lessonname||km`].sourcehash).toBe(sourceHash("en lesson, reworded"));
+  });
+
+  it("refuses an organisation with another content language, writing nothing", async () => {
+    for (const language of ["km", "fr", "KM"]) {
+      const fake = fakeConn();
+      placeholderRows(fake.store);
+      fake.store.organisations[ORG].contentlanguage = language;
+      const before = JSON.stringify(fake.store);
+      await expect(preflight(fake.conn, plan())).rejects.toThrow(ContentRefused);
+      await expect(applyPlan(fake.conn, plan())).rejects.toThrow(/content language is "/);
+      expect(JSON.stringify(fake.store)).toBe(before);
+      expect(fake.log).toContain("rollback");
+    }
+    // an organisation already on en (any case) is accepted and left as it is
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    fake.store.organisations[ORG].contentlanguage = "EN";
+    await expect(preflight(fake.conn, plan())).resolves.toBeUndefined();
+    await applyPlan(fake.conn, plan());
+    expect(fake.store.organisations[ORG].contentlanguage).toBe("EN");
+  });
+
+  it("the preflight also refuses a database without the translations migration, and seed rows another organisation owns", async () => {
+    const noTable = fakeConn({ noTranslationsTable: true });
+    placeholderRows(noTable.store);
+    await expect(preflight(noTable.conn, plan())).rejects.toThrow(/run the migrations first/);
+    const foreign = fakeConn();
+    placeholderRows(foreign.store);
+    foreign.store.questions[ID.q2].organisationid = "a0000000-0000-4000-8000-0000000000bb";
+    await expect(preflight(foreign.conn, plan())).rejects.toThrow(/1 questions row\(s\) of this seed belong to another organisation/);
+    foreign.store.questions[ID.q2].organisationid = ORG;
+    foreign.store.curriculums[ID.curriculum].organisationid = null;
+    await expect(preflight(foreign.conn, plan())).resolves.toBeUndefined();
   });
 
   it("rolls the whole run back when a statement fails", async () => {
@@ -405,26 +710,62 @@ describe("applying a plan", () => {
     const before = JSON.stringify(fake.store);
     await expect(applyPlan(fake.conn, plan())).rejects.toThrow("boom");
     expect(JSON.stringify(fake.store)).toBe(before);
-    expect(fake.log).toEqual(["begin", "rollback"]);
+    expect(fake.log.filter((l: string) => l === "begin" || l === "commit" || l === "rollback")).toEqual(["begin", "rollback"]);
+    // a failing translation write rolls back the organisation's language and every row before it too
+    const late = fakeConn({ failOnTable: "contenttranslations" });
+    placeholderRows(late.store);
+    const untouched = JSON.stringify(late.store);
+    await expect(applyPlan(late.conn, plan())).rejects.toThrow("boom");
+    expect(JSON.stringify(late.store)).toBe(untouched);
+    expect(late.store.organisations[ORG].contentlanguage).toBeNull();
+  });
+
+  it("refuses to report success when a translation is not there as the plan wrote it, and rolls back", async () => {
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    const realExecute = fake.conn.execute.getMockImplementation() as (sql: string, params: unknown[]) => Promise<[Json, undefined]>;
+    // a store that silently kept an older text (as a unique key held by another row would)
+    fake.conn.execute.mockImplementation(async (sql: string, params: unknown[]) => {
+      const result = await realExecute(sql, params);
+      if (/^INSERT INTO `contenttranslations`/.test(sql) && params[2] === "curriculums") fake.store.contenttranslations[`curriculums|${ID.curriculum}|curriculumname||km`].text = "older";
+      return result;
+    });
+    await expect(applyPlan(fake.conn, plan())).rejects.toThrow(/content check failed: the km translation of curriculums\.curriculumname is not there as the plan wrote it/);
+    expect(fake.log[fake.log.length - 1]).toBe("rollback");
   });
 
   it("refuses to report success when a hide did not take, and rolls back", async () => {
     const fake = fakeConn({ ignoreUpdates: true });
     placeholderRows(fake.store);
-    await expect(applyPlan(fake.conn, plan())).rejects.toThrow(/content check failed: lessons has 3 of 3 rows the plan hid still showing/);
-    expect(fake.log).toEqual(["begin", "rollback"]);
+    await expect(applyPlan(fake.conn, plan())).rejects.toThrow(/content check failed/);
+    expect(fake.log[fake.log.length - 1]).toBe("rollback");
   });
 });
 
 // ---- the command line ----------------------------------------------------------------------------
 
 describe("the command line", () => {
-  it("reads --content, --lang and --dry-run, and refuses anything else", () => {
-    expect(parseArgs([])).toEqual({ content: null, lang: "km", dryRun: false });
-    expect(parseArgs(["--content", "/x"])).toEqual({ content: "/x", lang: "km", dryRun: false });
-    expect(parseArgs(["--content", "/x", "--lang", "both", "--dry-run"])).toEqual({ content: "/x", lang: "both", dryRun: true });
-    for (const bad of [["--wat"], ["--content"], ["--content", "--lang"], ["--content", "/x", "--lang", "fr"], ["--lang", "en"], ["--dry-run"], ["--content", "/x", "--lang"]]) {
+  it("reads --content and --dry-run, and refuses anything else", () => {
+    expect(parseArgs([])).toEqual({ content: null, dryRun: false });
+    expect(parseArgs(["--content", "/x"])).toEqual({ content: "/x", dryRun: false });
+    expect(parseArgs(["--content", "/x", "--dry-run"])).toEqual({ content: "/x", dryRun: true });
+    for (const bad of [["--wat"], ["--content"], ["--content", "--dry-run"], ["--dry-run"]]) {
       expect(() => parseArgs(bad)).toThrow(ContentRefused);
+    }
+  });
+
+  it("refuses --lang in every form: it is retired", () => {
+    for (const bad of [["--lang", "en"], ["--content", "/x", "--lang", "km"], ["--content", "/x", "--lang=both"], ["--content", "/x", "--lang"]]) {
+      expect(() => parseArgs(bad)).toThrow(/--lang is retired: the English text is the base text/);
+    }
+    const err = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = exitSpy();
+    try {
+      expect(() => prepare(["--content", "/x", "--lang", "km"], ID)).toThrow("exit 1");
+      expect(err.mock.calls.pop()?.[0]).toMatch(/^Refusing to run: --lang is retired/);
+    } finally {
+      exit.mockRestore();
+      err.mockRestore();
     }
   });
 
@@ -440,7 +781,7 @@ describe("the command line", () => {
   const exitSpy = () => jest.spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
 
   it("without --content there is no content and nothing to refuse", () => {
-    expect(prepare([], ID)).toEqual({ args: { content: null, lang: "km", dryRun: false }, content: null });
+    expect(prepare([], ID)).toEqual({ args: { content: null, dryRun: false }, content: null });
   });
 
   it("loads a good folder, and exits 1 with the reasons for a missing file, bad JSON or a refused file", () => {
@@ -468,12 +809,15 @@ describe("the command line", () => {
     const out: string[] = [];
     const log = jest.spyOn(console, "log").mockImplementation((m: string) => void out.push(m));
     try {
-      printDryRun(sample(), ID, "km");
+      printDryRun(sample(), ID);
     } finally {
       log.mockRestore();
     }
     const text = out.join("\n");
-    expect(text).toMatch(/^DCRS content plan \(dry run, language km\): 23 steps, no database used\./);
+    expect(text).toMatch(/^DCRS content plan \(dry run, base language en, translations km\): 54 steps, no database used\./);
+    expect(text).toContain("translate questions 23");
+    expect(text).toContain("translate lessons 1");
+    expect(text).toContain("translate grades 1");
     expect(text).toContain("upsert questions 1");
     expect(text).toContain("hide   lessons 3");
     expect(text).toContain("media: copy lesson_final.mp4 to <media folder>/dcrs-m1-l1.mp4");
