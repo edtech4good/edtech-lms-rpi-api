@@ -9,8 +9,8 @@ import * as fs from "fs";
 import * as path from "path";
 
 const TWINS: Record<string, string> = {
-  "dcrs-content-plan.js": "366f25ef878a6bf3e9de3403c1d875a52895025de42cca1b45acb49ad1fc56f5",
-  "dcrs-content-apply.js": "eacdff9fd30183e2f5b930409d0b778120a64e83d0a326a583214bb320945145",
+  "dcrs-content-plan.js": "ea67ca8961f29c60a8f54780ee5d247a83ddd1ad949c3aedc770a8f44d7a6390",
+  "dcrs-content-apply.js": "fe231f58dcd348d8424a09c6f3cf4cb5ecda323da63e54d7f600913f02e49e57",
   "dcrs-content-cli.js": "93148a7c33dcb4465d063b938c281e513ad2262f85bde98ae727abd0448a6e84",
 };
 

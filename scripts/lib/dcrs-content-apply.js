@@ -24,7 +24,7 @@
  * printing the client's text, whether the run changes the curriculum's name.
  *
  * `readExisting` is what the seed reads, read-only, BEFORE it plans (and before its placeholder pass): the grade's levels (whether
- * each is switched on, its points) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
+ * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
  * require one for a new level, compute the grade's points over the live levels, and refuse a lesson slot that would change meaning.
  */
 const { statementOf, slotsOf, ContentRefused } = require("./dcrs-content-plan");
@@ -53,7 +53,13 @@ async function organisationLanguage(conn, plan, lock) {
  */
 async function readExisting(conn, content, ID) {
   const slots = slotsOf(ID, content.module.number);
-  const [levels] = await conn.execute("SELECT levelid, levelstatus, isdeleted, points, quiz_points FROM `levels` WHERE `gradeid` = ?", [ID.grade]);
+  // `levelquizrows`: the level's active level-quiz questions (the same "active" the student API reports as level_has_quiz); its quiz_points count only when there is one.
+  const [levels] = await conn.execute(
+    "SELECT l.levelid, l.levelstatus, l.isdeleted, l.points, l.quiz_points, " +
+      "(SELECT COUNT(*) FROM `levelquizquestions` q WHERE q.`levelid` = l.`levelid` AND q.`levelquizquestionstatus` = 1) AS levelquizrows " +
+      "FROM `levels` l WHERE l.`gradeid` = ?",
+    [ID.grade],
+  );
   const lessonids = slots.lessons.map((l) => l.id);
   const [lessons] = await conn.execute(
     `SELECT lessonid, lessonname, isdeleted, total_points FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,

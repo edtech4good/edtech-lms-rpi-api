@@ -42,13 +42,16 @@
  *    `levelstatus` it has (the run does not write the column), and a NEW level (the first run of a module) is refused: say which. `draft`
  *    is refused for Module 1, which is the delivered module.
  *  - POINTS follow central's own rule (`updateLevelPoints`, src/business/level.business.ts): a level's `points` is the sum of the
- *    `total_points` of its lessons that are not hidden plus its `quiz_points`; the grade's `points` is the sum of the `points` of its
+ *    `total_points` of its lessons that are not hidden, plus its `quiz_points` ONLY WHEN the level has at least one active level-quiz
+ *    row (`levelquizquestions`, `levelquizquestionstatus`; a learner can earn the quiz points only through that quiz, and this
+ *    import writes none, so a new level is worth its lessons alone; `quiz_points` itself is left as it is); the grade's `points` is the sum of the `points` of its
  *    levels that are switched on and not deleted. The plan computes both for what it writes; the levels it does not write (the other
  *    modules, and any a person added) come in as `existing`, which the seed reads from the database before it plans. So the
  *    learner's progress (`points * 100 / grade.points`) is out of the live modules only: a draft module does not move it.
  *  - A MODULE 2+ LESSON SLOT CANNOT CHANGE MEANING. A later module's lesson is identified by its `order`; a run is refused when an
- *    existing, not-hidden lesson in a slot has another English name than the file's lesson for that slot, unless `renameLessons`
- *    (`--rename-lessons`) says the rename is meant. Hide the old lesson first, or give the new lesson a new order.
+ *    existing lesson in a slot, hidden or not, has another English name than the file's lesson for that slot, unless `renameLessons`
+ *    (`--rename-lessons`) says the rename is meant. A hidden slot is not free: reviving it would hand a different lesson the old
+ *    row's id, its question ids and its learners' progress. Give the new lesson a new order.
  *
  * Where the ids come from.
  *  - MODULE 1 keeps every id it ever had: the seed's fixed ids (the level, the four lessons, their documents, learning
@@ -398,7 +401,8 @@ const optionRow = (i, text, correct) => ({
  * written switched off, `levelstatus` 0: built, not shown to learners), "live" (switched on) or null (neither: an existing level keeps
  * its switch, a new level is refused); `renameLessons` allows a later module's lesson slot to take another name.
  * `existing` is what the database holds that the plan needs to know, or null when it is not known (a dry run):
- * `{ levels: [{ levelid, levelstatus, isdeleted, points, quiz_points }] }` for every level of the grade, and
+ * `{ levels: [{ levelid, levelstatus, isdeleted, points, quiz_points, levelquizrows }] }` for every level of the grade (`levelquizrows`: how
+ * many active level-quiz questions it has), and
  * `lessons: [{ lessonid, lessonname, isdeleted, total_points }]` for the module's lesson slots that exist (`readExisting` in dcrs-content-apply.js).
  * Returns `{ baseLanguage, translationLanguage, organisationid, module, curriculumName, requires, steps, media, owned }`. A step is one of
  *   `{ kind: "upsert", table, pk, id, values, update }`  (INSERT ... ON DUPLICATE KEY UPDATE `update` columns)
@@ -456,13 +460,13 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
   const live = slots.lessons.filter((s) => named.has(s.id)).sort((a, b) => named.get(a.id).order - named.get(b.id).order);
   const hidden = slots.lessons.filter((s) => !named.has(s.id));
 
-  // A later module's lesson slot must not change meaning under a re-run: an existing, not-hidden lesson of the slot keeps its name unless the rename is asked for.
+  // A later module's lesson slot must not change meaning under a re-run: an existing lesson of the slot, hidden or not, keeps its name unless the rename is asked for.
   if (later && existing !== null && !renameLessons) {
     for (const lesson of content.lessons) {
       const row = existing.lessons.find((l) => l.lessonid === slotOfLesson(lesson).id);
-      if (row && !Number(row.isdeleted) && row.lessonname !== lesson.name.en) {
+      if (row && row.lessonname !== lesson.name.en) {
         problems.push(
-          `module ${moduleNumber}, lesson slot ${lesson.order}: the lesson there now has another English name than the file's; give the new lesson a new order, or hide the old one first (--rename-lessons renames it in place)`,
+          `module ${moduleNumber}, lesson slot ${lesson.order}: the lesson there now (hidden or not) has another English name than the file's; give the new lesson a new order (--rename-lessons renames it in place)`,
         );
       }
     }
@@ -476,7 +480,9 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     const row = existing === null ? undefined : existing.lessons.find((l) => l.lessonid === slot.id);
     return row ? Number(row.total_points ?? 0) : LESSON_TOTAL_POINTS;
   };
-  const levelpoints = live.reduce((sum, slot) => sum + lessonPoints(slot), 0) + (ownLevel !== null ? Number(ownLevel.quiz_points ?? 0) : DEFAULT_QUIZ_POINTS);
+  // The level's quiz points count only when the level has an active level-quiz row (a new level has none; the import writes none).
+  const quizPoints = ownLevel !== null && Number(ownLevel.levelquizrows ?? 0) > 0 ? Number(ownLevel.quiz_points ?? 0) : 0;
+  const levelpoints = live.reduce((sum, slot) => sum + lessonPoints(slot), 0) + quizPoints;
   const siblings = existing === null ? [] : existing.levels.filter((l) => l.levelid !== slots.level);
   const gradepoints =
     siblings.filter((l) => Number(l.levelstatus) === 1 && !Number(l.isdeleted)).reduce((sum, l) => sum + Number(l.points ?? 0), 0) + (levelstatus === 0 ? 0 : levelpoints);

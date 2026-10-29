@@ -53,10 +53,11 @@
  *    is already in the database keeps its switch (the run does not write the column), and a NEW level (the first run of a
  *    module) is refused, with the reason. `--draft` is refused for Module 1, the delivered module. Run a draft module again
  *    with `--live` to switch it on.
- *  - Points follow central's rule: a level's points are its not-hidden lessons' total_points plus its quiz_points, and the
+ *  - Points follow central's rule: a level's points are its not-hidden lessons' total_points, plus its quiz_points only when the
+ *    level has an active level-quiz question (a learner can earn them only through that quiz; this import writes none), and the
  *    grade's points are the sum over its levels that are switched on, so a draft module does not move a learner's progress.
  *  - `--rename-lessons`: a Module 2+ lesson is identified by its `order`; a run whose lesson in a slot has another English
- *    name than the one already there (not hidden) is refused unless this flag says the rename is meant.
+ *    name than the one already there (hidden or not) is refused unless this flag says the rename is meant.
  *  - A Module 2+ file attaches to the curriculum and the grade that exist and is refused when they are absent
  *    (seed Module 1 first). It renames the curriculum and the grade when its `programme` differs from their
  *    current name; the run prints the old and the new name's length, never the name.
