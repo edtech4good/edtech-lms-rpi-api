@@ -179,7 +179,7 @@ describe("a document used only through a link row", () => {
   const tree = (): Record<string, Row[]> => ({
     ...base(),
     lessons: [{ lessonid: "lesson-1", levelid: "level-1" }],
-    levels: [{ levelid: "level-1", gradeid: "grade-1" }],
+    levels: [{ levelid: "level-1", gradeid: "grade-1", levelstatus: true }], // a learner reaches content only under a level that is switched on
     grades: [{ gradeid: "grade-1", curriculumid: "cur-1" }],
     curriculums: [{ curriculumid: "cur-1", organisationid: ORG_X }],
     students: [{ studentid: "st-x", curriculumids: ["cur-1"] }],
