@@ -9,9 +9,9 @@ import * as fs from "fs";
 import * as path from "path";
 
 const TWINS: Record<string, string> = {
-  "dcrs-content-plan.js": "4dc573554395023451c028be9fc2a961b870cf7ebe29fb324e5fd9cf078e2027",
-  "dcrs-content-apply.js": "320138d5efbd96c41fda83b37e2241656d3260ef26f3f9fbbca093e05aeb1226",
-  "dcrs-content-cli.js": "20d2fbe511af22f4220ffe3f6b4fa59a120d22d88936f57a5cdce34ea2e9abfb",
+  "dcrs-content-plan.js": "366f25ef878a6bf3e9de3403c1d875a52895025de42cca1b45acb49ad1fc56f5",
+  "dcrs-content-apply.js": "eacdff9fd30183e2f5b930409d0b778120a64e83d0a326a583214bb320945145",
+  "dcrs-content-cli.js": "93148a7c33dcb4465d063b938c281e513ad2262f85bde98ae727abd0448a6e84",
 };
 
 describe("the files shared with the other API", () => {

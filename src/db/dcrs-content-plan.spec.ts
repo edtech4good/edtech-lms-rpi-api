@@ -23,6 +23,8 @@ const {
   ANSWER_BEARING_FIELDS,
   MODULE_ID_NAMESPACE,
   MAX_LESSONS_LATER_MODULE,
+  LESSON_TOTAL_POINTS,
+  DEFAULT_QUIZ_POINTS,
   OLD_SHAPE,
   validateContent,
   planContent,
@@ -36,8 +38,8 @@ const {
   questionTexts,
   isAnswerBearing,
 } = require("../../scripts/lib/dcrs-content-plan");
-const { applyPlan, preflight, formatReport, curriculumNameLengths, formatCurriculumName } = require("../../scripts/lib/dcrs-content-apply");
-const { USAGE, parseArgs, prepare, printDryRun } = require("../../scripts/lib/dcrs-content-cli");
+const { applyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName } = require("../../scripts/lib/dcrs-content-apply");
+const { USAGE, parseArgs, levelSwitchOf, prepare, printDryRun } = require("../../scripts/lib/dcrs-content-cli");
 /* eslint-enable @typescript-eslint/no-var-requires */
 import {
   ANSWER_BEARING_FIELDS as CONSTANT_ANSWER_BEARING_FIELDS,
@@ -220,7 +222,7 @@ describe("planning a content file", () => {
       expect(row(table).update).toContain(column);
     }
     expect(row("grades").values).toMatchObject({ gradeid: ID.grade, curriculumid: ID.curriculum, gradename: "en programme", gradestatus: 1, isdeleted: 0 });
-    expect(row("grades").update).toEqual(["gradename", "gradedescription", "gradestatus", "isdeleted"]);
+    expect(row("grades").update).toEqual(["gradename", "gradedescription", "gradestatus", "isdeleted", "points"]);
     expect(forRow(p, "grades", ID.grade).map((v) => [v.field, v.text])).toEqual([["gradename", km("programme")]]);
     // the grade comes after its curriculum and before the level that hangs from it
     const order = p.steps.map((s: Json) => s.table);
@@ -586,28 +588,35 @@ describe("planning a module after the first", () => {
     expect(createHash("sha256").update(ids.join("\n")).digest("hex")).toBe(MODULE_1_STEP_IDS_DIGEST);
   });
 
-  it("writes the module's own level under the existing grade: order = module number, on by default", () => {
+  it("writes the module's own level under the existing grade: order = module number; without a switch the plan does not write levelstatus", () => {
     const level = p2().steps.find((s: Json) => s.kind === "upsert" && s.table === "levels");
     expect(level.id).toBe(moduleId(2, "level"));
     expect(level.values).toMatchObject({ gradeid: ID.grade, levelname: "en module 2", leveldescription: "", levelorder: 2, levelstatus: 1, isdeleted: 0 });
-    expect(level.update).toEqual(["levelname", "leveldescription", "levelstatus", "levelorder", "isdeleted"]);
-    expect(p2().module).toEqual({ number: 2, levelid: moduleId(2, "level"), levelorder: 2, levelstatus: 1 });
+    expect(level.update).toEqual(["levelname", "leveldescription", "levelorder", "points", "isdeleted"]);
+    // nothing is known of the database here (existing: null), so the switch is unknown; two lessons of 100 and the level quiz of 20
+    expect(p2().module).toEqual({ number: 2, levelid: moduleId(2, "level"), levelorder: 2, levelstatus: null, levelpoints: 220, gradepoints: 220, levelIsNew: null });
     expect(plan(laterSample(7)).module).toMatchObject({ number: 7, levelorder: 7 });
     expect(plan(laterSample(7)).steps.find((s: Json) => s.table === "levels").values.levelorder).toBe(7);
     expect(forRow(p2(), "levels", moduleId(2, "level")).map((v) => [v.text, v.sourcehash])).toEqual([[km("module 2"), sourceHash("en module 2")]]);
   });
 
-  it("with draft the level is written switched off (levelstatus 0), and nothing else about the plan changes", () => {
-    const draft = p2({}, { draft: true });
+  it("with the draft switch the level is written switched off (levelstatus 0), and nothing else about the plan changes but the grade's points", () => {
+    const draft = p2({}, { levelSwitch: "draft" });
+    const live = p2({}, { levelSwitch: "live" });
     expect(draft.steps.find((s: Json) => s.table === "levels").values.levelstatus).toBe(0);
+    expect(draft.steps.find((s: Json) => s.table === "levels").update).toContain("levelstatus");
     expect(draft.module.levelstatus).toBe(0);
-    const strip = (p: Json) => JSON.stringify(p.steps.filter((s: Json) => s.table !== "levels"));
-    expect(strip(draft)).toBe(strip(p2()));
+    expect(live.steps.find((s: Json) => s.table === "levels").values.levelstatus).toBe(1);
+    expect(live.module.levelstatus).toBe(1);
+    const strip = (p: Json) => JSON.stringify(p.steps.filter((s: Json) => s.table !== "levels" && s.table !== "grades"));
+    expect(strip(draft)).toBe(strip(live));
     // lessons are not switched off themselves: the level is what keeps them from learners
     expect(draft.steps.filter((s: Json) => s.table === "lessons" && s.kind === "upsert").every((s: Json) => s.values.lessonstatus === 1 && s.values.isdeleted === 0)).toBe(true);
-    expect(plan(sample(), NOW).steps.find((s: Json) => s.table === "levels").values.levelstatus).toBe(1);
-    expect(planContent(sample(), ID, { organisationid: ORG, now: NOW, draft: true }).steps.find((s: Json) => s.table === "levels").values.levelstatus).toBe(0);
-    expect(() => planContent(laterSample(), ID, { organisationid: ORG, now: NOW, draft: "yes" })).toThrow(ContentRefused);
+    expect(planContent(sample(), ID, { organisationid: ORG, now: NOW, levelSwitch: "live" }).steps.find((s: Json) => s.table === "levels").values.levelstatus).toBe(1);
+    for (const bad of ["yes", true, false, "Draft", 0]) {
+      expect(() => planContent(laterSample(), ID, { organisationid: ORG, now: NOW, levelSwitch: bad })).toThrow(ContentRefused);
+    }
+    expect(() => planContent(laterSample(), ID, { organisationid: ORG, now: NOW, renameLessons: "yes" })).toThrow(ContentRefused);
   });
 
   it("puts every lesson, question and join under its own derived id, by role", () => {
@@ -653,8 +662,8 @@ describe("planning a module after the first", () => {
 
   it("touches nothing of Module 1 or any other module: no write or hide of a Module 1 id, except the programme's own curriculum and grade rows", () => {
     const m1 = module1Ids();
-    for (const draft of [false, true]) {
-      const p = p2({}, { draft });
+    for (const levelSwitch of ["live", "draft"]) {
+      const p = p2({}, { levelSwitch });
       for (const id of moduleOwnIds(p)) expect(m1.has(id)).toBe(false);
       const touched = p.steps.filter((s: Json) => s.kind !== "translate").flatMap((s: Json) => (s.kind === "hide" ? s.ids : [s.id])).filter((id: string) => m1.has(id));
       expect(touched).toEqual([ID.curriculum, ID.grade]);
@@ -667,12 +676,12 @@ describe("planning a module after the first", () => {
     }
   });
 
-  it("renames the curriculum and the grade only: their other columns are not in the update list, so a draft module cannot publish the programme", () => {
+  it("renames the curriculum and the grade (and sets the grade's points) and no more: their other columns are not in the update list, so a draft module cannot publish the programme", () => {
     const p = p2();
     const c = p.steps.find((s: Json) => s.kind === "upsert" && s.table === "curriculums");
     const g = p.steps.find((s: Json) => s.kind === "upsert" && s.table === "grades");
     expect(c.update).toEqual(["curriculumname"]);
-    expect(g.update).toEqual(["gradename"]);
+    expect(g.update).toEqual(["gradename", "points"]);
     expect(c.values.curriculumname).toBe("en programme");
     expect(g.values.gradename).toBe("en programme");
     expect(statementOf(c).sql).toMatch(/ON DUPLICATE KEY UPDATE `curriculumname` = VALUES\(`curriculumname`\)$/);
@@ -795,6 +804,169 @@ describe("planning a module after the first", () => {
 /** Every id a plan writes, in order (a step's id, or the ids a hide names). */
 const idsOf = (p: Json): string[] => p.steps.flatMap((s: Json) => (s.kind === "hide" ? s.ids : [s.id]));
 
+describe("the level switch, the points and the lesson slots", () => {
+  const level = (levelid: string, over: Json = {}): Json => ({ levelid, levelstatus: 1, isdeleted: 0, points: 120, quiz_points: 20, ...over });
+  const lessonRow = (n: number, over: Json = {}): Json => ({ lessonid: moduleId(2, "lesson", n), lessonname: n === 1 ? "en later one" : "en later two", isdeleted: 0, total_points: 100, ...over });
+  const db = (levels: Json[], lessons: Json[] = []): Json => ({ levels, lessons });
+  const run = (content: Json, opts: Json = {}): Json => planContent(content, ID, { organisationid: ORG, now: NOW, ...opts });
+  const problemsOf = (fn: () => unknown): string[] => {
+    try {
+      fn();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ContentRefused);
+      return (e as { problems: string[] }).problems;
+    }
+    throw new Error("expected the plan to be refused");
+  };
+  const step = (p: Json, table: string): Json => p.steps.find((s: Json) => s.kind === "upsert" && s.table === table);
+  const NEW_LEVEL = (n: number) => `module ${n}'s level is not in the database yet; say whether learners see it: --draft (switched off, built but not shown) or --live (switched on)`;
+  const NO_DRAFT_1 = "--draft is refused for module 1: it is the delivered module, and a learner already reads it; switch a later module off, not this one";
+  const SLOT = (n: number, order: number) =>
+    `module ${n}, lesson slot ${order}: the lesson there now has another English name than the file's; give the new lesson a new order, or hide the old one first (--rename-lessons renames it in place)`;
+
+  describe("the switch is explicit", () => {
+    it("a level that is not in the database is refused without --draft or --live, with the reason, for Module 1 and for a later module", () => {
+      expect(problemsOf(() => run(laterSample(2), { existing: db([level(ID.level)]) }))).toEqual([NEW_LEVEL(2)]);
+      expect(problemsOf(() => run(laterSample(3), { existing: db([level(ID.level)]) }))).toEqual([NEW_LEVEL(3)]);
+      expect(problemsOf(() => run(sample(), { existing: db([]) }))).toEqual([NEW_LEVEL(1)]);
+      // either flag names it; and a dry run (nothing known of the database) is not refused for it
+      expect(() => run(laterSample(2), { existing: db([level(ID.level)]), levelSwitch: "draft" })).not.toThrow();
+      expect(() => run(laterSample(2), { existing: db([level(ID.level)]), levelSwitch: "live" })).not.toThrow();
+      expect(() => run(sample(), { existing: db([]), levelSwitch: "live" })).not.toThrow();
+      expect(() => run(laterSample(2))).not.toThrow();
+    });
+
+    it("an existing level keeps the switch it has when neither flag is given: the run does not write the column", () => {
+      for (const status of [0, 1]) {
+        const p = run(laterSample(2), { existing: db([level(ID.level), level(moduleId(2, "level"), { levelstatus: status, points: 220 })]) });
+        const l = step(p, "levels");
+        expect(l.update).toEqual(["levelname", "leveldescription", "levelorder", "points", "isdeleted"]);
+        expect(statementOf(l).sql).not.toContain("`levelstatus` = VALUES");
+        expect(l.values.levelstatus).toBe(status);
+        expect(p.module).toMatchObject({ levelstatus: status, levelIsNew: false });
+      }
+      // a switch that came back as the text of a number is still that number
+      expect(run(laterSample(2), { existing: db([level(ID.level), level(moduleId(2, "level"), { levelstatus: "0", points: 220 })]) }).module.levelstatus).toBe(0);
+    });
+
+    it("--draft and --live write the column, and say what they wrote", () => {
+      const existing = db([level(ID.level), level(moduleId(2, "level"), { levelstatus: 1, points: 220 })]);
+      const draft = run(laterSample(2), { existing, levelSwitch: "draft" });
+      const live = run(laterSample(2), { existing: db([level(ID.level), level(moduleId(2, "level"), { levelstatus: 0, points: 220 })]), levelSwitch: "live" });
+      expect(step(draft, "levels").update).toEqual(["levelname", "leveldescription", "levelstatus", "levelorder", "points", "isdeleted"]);
+      expect(step(draft, "levels").values.levelstatus).toBe(0);
+      expect(step(live, "levels").values.levelstatus).toBe(1);
+      expect(draft.module).toMatchObject({ levelstatus: 0, levelIsNew: false });
+      expect(live.module).toMatchObject({ levelstatus: 1, levelIsNew: false });
+      expect(run(laterSample(2), { existing: db([level(ID.level)]), levelSwitch: "draft" }).module).toMatchObject({ levelstatus: 0, levelIsNew: true });
+    });
+
+    it("--draft is refused for Module 1, with the reason, whatever the database holds", () => {
+      expect(problemsOf(() => run(sample(), { levelSwitch: "draft" }))).toEqual([NO_DRAFT_1]);
+      expect(problemsOf(() => run(sample(), { levelSwitch: "draft", existing: db([level(ID.level)]) }))).toEqual([NO_DRAFT_1]);
+      expect(problemsOf(() => run(sample(), { levelSwitch: "draft", existing: db([]) }))).toEqual([NO_DRAFT_1]);
+      expect(run(sample(), { levelSwitch: "live", existing: db([level(ID.level)]) }).module.levelstatus).toBe(1);
+    });
+  });
+
+  describe("the points follow central's rule over the live modules", () => {
+    it("Module 1 with one lesson: its level is the lesson's total_points plus the level quiz, and the grade is that level's", () => {
+      const p = run(sample());
+      expect(LESSON_TOTAL_POINTS + DEFAULT_QUIZ_POINTS).toBe(120);
+      expect(step(p, "levels").values).toMatchObject({ points: 120, quiz_points: 20 });
+      expect(step(p, "grades").values.points).toBe(120);
+      expect(step(p, "levels").update).toContain("points");
+      expect(step(p, "grades").update).toContain("points");
+      expect(p.module).toMatchObject({ levelpoints: 120, gradepoints: 120 });
+    });
+
+    it("Module 1 with all four lessons counts each of them", () => {
+      const c = sample();
+      c.lessons = LESSON_IDS.map((id: string, i: number) => ({
+        id,
+        order: i + 1,
+        name: bi(`lesson ${i + 1}`),
+        video: { ref: `REF-${i + 1}`, filename: `dcrs-m1-l${i + 1}.mp4` },
+        practice: [question(`DCRS-M1-P${i + 1}`, `p${i + 1}`)],
+        quiz: [],
+      }));
+      const p = run(c);
+      expect(p.module).toMatchObject({ levelpoints: 4 * 100 + 20, gradepoints: 4 * 100 + 20 });
+    });
+
+    it("a later module's level counts its lessons, and the grade counts the modules that are switched on", () => {
+      const existing = db([level(ID.level)]);
+      const live = run(laterSample(2), { existing, levelSwitch: "live" });
+      const draft = run(laterSample(2), { existing, levelSwitch: "draft" });
+      expect(live.module).toMatchObject({ levelpoints: 220, gradepoints: 340 });
+      expect(step(live, "levels").values.points).toBe(220);
+      expect(step(live, "grades").values.points).toBe(340);
+      // a draft module is in its own level's points but not in the grade's: learners' progress is out of the live modules only
+      expect(draft.module).toMatchObject({ levelpoints: 220, gradepoints: 120 });
+      expect(step(draft, "levels").values.points).toBe(220);
+      expect(step(draft, "grades").values.points).toBe(120);
+      expect(step(live, "grades").update).toEqual(["gradename", "points"]);
+    });
+
+    it("another module that is switched off or deleted is not in the grade's points, one a person added that is live is", () => {
+      const own = level(moduleId(2, "level"), { points: 220 });
+      const base = (extra: Json[]) => run(laterSample(2), { existing: db([level(ID.level), own, ...extra]) }).module.gradepoints;
+      expect(base([])).toBe(340);
+      expect(base([level("x1", { levelstatus: 0, points: 999 })])).toBe(340);
+      expect(base([level("x2", { isdeleted: 1, points: 999 })])).toBe(340);
+      expect(base([level("x3", { points: 50 })])).toBe(390);
+      // Module 1's own level switched off (an admin did it) drops out too
+      expect(run(laterSample(2), { existing: db([level(ID.level, { levelstatus: 0 }), own]) }).module.gradepoints).toBe(220);
+      // the module's own row in the database is replaced by what this run writes, never added to it
+      expect(run(laterSample(2), { existing: db([level(ID.level), level(moduleId(2, "level"), { points: 5000 })]) }).module).toMatchObject({ levelpoints: 220, gradepoints: 340 });
+    });
+
+    it("a lesson the file no longer names is not in the level's points; the level quiz and a lesson's own total_points are the database's", () => {
+      const c = laterSample(2);
+      c.lessons.pop();
+      expect(run(c, { existing: db([level(ID.level)]), levelSwitch: "live" }).module).toMatchObject({ levelpoints: 120, gradepoints: 240 });
+      const own = level(moduleId(2, "level"), { quiz_points: 50, points: 0 });
+      expect(run(laterSample(2), { existing: db([level(ID.level), own]) }).module.levelpoints).toBe(250);
+      expect(run(laterSample(2), { existing: db([level(ID.level), own], [lessonRow(1, { total_points: 150 })]) }).module.levelpoints).toBe(150 + 100 + 50);
+    });
+  });
+
+  describe("a lesson slot cannot change meaning", () => {
+    it("is refused when a not-hidden lesson of the slot has another English name, naming the slot and every slot that does", () => {
+      const existing = db([level(ID.level), level(moduleId(2, "level"))], [lessonRow(1, { lessonname: "en something else" })]);
+      expect(problemsOf(() => run(laterSample(2), { existing }))).toEqual([SLOT(2, 1)]);
+      const both = db([level(ID.level), level(moduleId(2, "level"))], [lessonRow(1, { lessonname: "other" }), lessonRow(2, { lessonname: "another" })]);
+      expect(problemsOf(() => run(laterSample(2), { existing: both }))).toEqual([SLOT(2, 1), SLOT(2, 2)]);
+      // the reason names the slot, never the client's text
+      expect(JSON.stringify(problemsOf(() => run(laterSample(2), { existing })))).not.toMatch(/something else|en later/);
+    });
+
+    it("passes when the name is unchanged, when the old lesson is hidden, when the slot is empty, and when nothing is known of the database", () => {
+      const levels = [level(ID.level), level(moduleId(2, "level"))];
+      expect(() => run(laterSample(2), { existing: db(levels, [lessonRow(1), lessonRow(2)]) })).not.toThrow();
+      expect(() => run(laterSample(2), { existing: db(levels, [lessonRow(1, { lessonname: "en something else", isdeleted: 1 })]) })).not.toThrow();
+      expect(() => run(laterSample(2), { existing: db(levels, []) })).not.toThrow();
+      expect(() => run(laterSample(2))).not.toThrow();
+      // a slot the file does not name is not compared (it is hidden, not renamed)
+      const c = laterSample(2);
+      c.lessons.pop();
+      expect(() => run(c, { existing: db(levels, [lessonRow(2, { lessonname: "en something else" })]) })).not.toThrow();
+    });
+
+    it("--rename-lessons allows the rename in place, and the lesson then carries the file's name", () => {
+      const existing = db([level(ID.level), level(moduleId(2, "level"))], [lessonRow(1, { lessonname: "en something else" })]);
+      const p = run(laterSample(2), { existing, renameLessons: true });
+      expect(step(p, "lessons").values).toMatchObject({ lessonid: moduleId(2, "lesson", 1), lessonname: "en later one" });
+      expect(step(p, "lessons").update).toContain("lessonname");
+    });
+
+    it("does not apply to Module 1, whose lessons are identified by their fixed ids", () => {
+      const existing = db([level(ID.level)], [{ lessonid: ID.lesson1, lessonname: "something else", isdeleted: 0, total_points: 100 }]);
+      expect(() => run(sample(), { existing })).not.toThrow();
+    });
+  });
+});
+
 describe("refusing a content file", () => {
   it("refuses a question with no correct option, and one with two", () => {
     const none = sample();
@@ -896,6 +1068,14 @@ const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string; noTrans
     }),
     execute: jest.fn(async (sql: string, params: unknown[]): Promise<[Json, undefined]> => {
       if (/information_schema\.columns/.test(sql)) return [[{ n: opts.noTranslationsTable ? 1 : 2 }] as unknown as Json, undefined];
+      if (/^SELECT levelid, levelstatus, isdeleted, points, quiz_points FROM `levels` WHERE `gradeid` = \?$/.test(sql)) {
+        const rows = Object.values(store.levels ?? {}).filter((l: Json) => l.gradeid === params[0]);
+        return [rows.map((l: Json) => ({ levelid: l.levelid, levelstatus: l.levelstatus, isdeleted: l.isdeleted, points: l.points, quiz_points: l.quiz_points })) as unknown as Json, undefined];
+      }
+      if (/^SELECT lessonid, lessonname, isdeleted, total_points FROM `lessons` WHERE `lessonid` IN \(.*\)$/.test(sql)) {
+        const rows = (params as string[]).map((id) => store.lessons?.[id]).filter((l) => l !== undefined);
+        return [rows.map((l: Json) => ({ lessonid: l.lessonid, lessonname: l.lessonname, isdeleted: l.isdeleted, total_points: l.total_points })) as unknown as Json, undefined];
+      }
       if (/^SELECT curriculumname FROM curriculums WHERE curriculumid = \?$/.test(sql)) {
         const row = store.curriculums?.[params[0] as string];
         return [(row ? [{ curriculumname: row.curriculumname }] : []) as unknown as Json, undefined];
@@ -996,10 +1176,11 @@ const placeholderRows = (store: Store) => {
   const s = slotsOf(ID);
   put("organisations", { organisationid: ORG, contentlanguage: null });
   put("curriculums", { curriculumid: ID.curriculum, curriculumname: "placeholder", curriculumdescription: "DCRS curriculum", curriculumstatus: 1, isdeleted: 0 });
-  put("grades", { gradeid: ID.grade, gradename: "Cohort II", gradedescription: "DCRS grade", gradestatus: 1, isdeleted: 0 });
-  put("levels", { levelid: ID.level, levelname: "placeholder", levelstatus: 1, isdeleted: 0 });
+  put("grades", { gradeid: ID.grade, gradename: "Cohort II", gradedescription: "DCRS grade", gradestatus: 1, isdeleted: 0, points: 100 });
+  // the seed's own placeholder level: switched on, 100 points, a level quiz of 20
+  put("levels", { levelid: ID.level, gradeid: ID.grade, levelname: "placeholder", levelstatus: 1, isdeleted: 0, points: 100, quiz_points: 20 });
   for (const l of s.lessons) {
-    put("lessons", { lessonid: l.id, lessonname: "placeholder", lessonorder: l.n, lessonstatus: 1, isdeleted: 0 });
+    put("lessons", { lessonid: l.id, lessonname: "placeholder", lessonorder: l.n, lessonstatus: 1, isdeleted: 0, total_points: 100 });
     put("documents", { documentid: l.doc, documentname: "old.mp4", documents3meta: "{}", isdeleted: 0 });
     put("lessonlearnings", { lessonlearningid: l.learning, lessonlearningname: "placeholder", lessonlearningstatus: 1 });
     put("lessonpractices", { lessonpracticeid: l.practice, lessonpracticename: "placeholder", lessonpracticestatus: 1 });
@@ -1192,12 +1373,16 @@ describe("applying a plan", () => {
   });
 });
 
+/** The plan the seed makes: the database is read first (`readExisting`), so the level's switch and the points follow what is there. */
+const planned = async (fake: Json, content: Json, opts: Json = {}, now: Date = NOW): Promise<Json> =>
+  planContent(content, ID, { organisationid: ORG, now, ...opts, existing: await readExisting(fake.conn, content, ID) });
+
 describe("applying a module after the first", () => {
-  /** A stand-in database that already holds Module 1, written by the new plan. */
+  /** A stand-in database that already holds Module 1 (switched on), written by the plan the seed makes. */
   const withModule1 = async (opts: Parameters<typeof fakeConn>[0] = {}) => {
     const fake = fakeConn(opts);
     placeholderRows(fake.store);
-    await applyPlan(fake.conn, plan());
+    await applyPlan(fake.conn, await planned(fake, sample(), { levelSwitch: "live" }));
     return fake;
   };
   /** Every row whose key is one of Module 1's ids, as the store holds it, for before/after comparisons. */
@@ -1208,7 +1393,8 @@ describe("applying a module after the first", () => {
       if (table === "contenttranslations") {
         for (const [k, row] of Object.entries(rows)) if (m1.has(row.rowid)) out[`${table}|${k}`] = row;
       } else {
-        for (const [id, row] of Object.entries(rows)) if (m1.has(id)) out[`${table}|${id}`] = row;
+        // the grade's points are the programme's total over its live levels, so a run of another module moves them (asserted where it matters)
+        for (const [id, row] of Object.entries(rows)) if (m1.has(id)) out[`${table}|${id}`] = table === "grades" ? { ...row, points: "<total>" } : row;
       }
     }
     return JSON.stringify(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
@@ -1221,7 +1407,7 @@ describe("applying a module after the first", () => {
     const fake = await withModule1();
     expect(fake.store.curriculums[ID.curriculum].curriculumname).toBe("en programme");
     const before = JSON.stringify(fake.store);
-    const again = await applyPlan(fake.conn, plan(sample(), new Date("2031-01-01T00:00:00Z")));
+    const again = await applyPlan(fake.conn, await planned(fake, sample(), {}, new Date("2031-01-01T00:00:00Z")));
     zero(again);
     expect(again.tables.curriculums).toEqual({ inserted: 0, updated: 0, unchanged: 1, hidden: 0 });
     expect(again.tables.grades).toEqual({ inserted: 0, updated: 0, unchanged: 1, hidden: 0 });
@@ -1237,7 +1423,7 @@ describe("applying a module after the first", () => {
     const key = `curriculums|${ID.curriculum}|curriculumname||km`;
     const handMade = { translationid: "22222222-2222-4222-8222-222222222222", organisationid: ORG, tablename: "curriculums", rowid: ID.curriculum, field: "curriculumname", subkey: "", language: "km", text: km("programme"), sourcehash: sourceHash("en programme"), lastupdated: "2026-10-29 08:00:00.000" };
     fake.store.contenttranslations = { [key]: { ...handMade } };
-    const run = await applyPlan(fake.conn, plan());
+    const run = await applyPlan(fake.conn, await planned(fake, sample(), {}));
     expect(fake.store.curriculums[ID.curriculum].curriculumname).toBe("en programme");
     expect(fake.store.levels[ID.level].levelname).toBe("en module");
     // the hand-made curriculum row is left exactly as it was: same id, same date
@@ -1246,23 +1432,25 @@ describe("applying a module after the first", () => {
     expect(run.tables.contenttranslations.inserted).toBe(29);
   });
 
-  it("writes Module 2 as a new level with its lessons and questions, and leaves every row of Module 1 exactly as it was", async () => {
+  it("writes Module 2 as a new level with its lessons and questions, and leaves every row of Module 1 exactly as it was (but the grade's points)", async () => {
     const fake = await withModule1();
     const before = module1Rows(fake.store);
     expect(before.length).toBeGreaterThan(1000);
-    await expect(preflight(fake.conn, plan(laterSample(2)))).resolves.toBeUndefined();
-    const run = await applyPlan(fake.conn, plan(laterSample(2)));
+    const p = await planned(fake, laterSample(2), { levelSwitch: "live" });
+    await expect(preflight(fake.conn, p)).resolves.toBeUndefined();
+    const run = await applyPlan(fake.conn, p);
     const level = fake.store.levels[moduleId(2, "level")];
-    expect(level).toMatchObject({ levelid: moduleId(2, "level"), gradeid: ID.grade, levelname: "en module 2", levelorder: 2, levelstatus: 1 });
+    expect(level).toMatchObject({ levelid: moduleId(2, "level"), gradeid: ID.grade, levelname: "en module 2", levelorder: 2, levelstatus: 1, points: 220 });
     expect(Object.keys(fake.store.levels).sort()).toEqual([ID.level, moduleId(2, "level")].sort());
     expect(Object.keys(fake.store.lessons).filter((id) => !module1Ids().has(id)).sort()).toEqual([moduleId(2, "lesson", 1), moduleId(2, "lesson", 2)].sort());
     expect(fake.store.lessons[moduleId(2, "lesson", 1)]).toMatchObject({ levelid: moduleId(2, "level"), lessonname: "en later one", isdeleted: 0 });
     expect(run.tables.levels).toEqual({ inserted: 1, updated: 0, unchanged: 0, hidden: 0 });
     expect(run.tables.lessons.inserted).toBe(2);
     expect(run.tables.questions.inserted).toBe(4);
-    // the programme's rows are the same text, so they count as unchanged; nothing of Module 1 is hidden or changed
+    // the programme's rows are the same text, so only the grade's points move (Module 1's 120 plus Module 2's 220); nothing of Module 1 is hidden or changed
     expect(run.tables.curriculums).toEqual({ inserted: 0, updated: 0, unchanged: 1, hidden: 0 });
-    expect(run.tables.grades).toEqual({ inserted: 0, updated: 0, unchanged: 1, hidden: 0 });
+    expect(run.tables.grades).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
+    expect(fake.store.grades[ID.grade].points).toBe(340);
     expect(module1Rows(fake.store)).toBe(before);
     expect(fake.store.lessons[ID.lesson1].isdeleted).toBe(0);
     expect(fake.store.lessons[ID.lesson2].isdeleted).toBe(1); // hidden by Module 1's own run, as before, and not touched now
@@ -1270,29 +1458,45 @@ describe("applying a module after the first", () => {
 
   it("Module 2 run again changes nothing", async () => {
     const fake = await withModule1();
-    await applyPlan(fake.conn, plan(laterSample(2)));
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
     const before = JSON.stringify(fake.store);
-    const again = await applyPlan(fake.conn, plan(laterSample(2), new Date("2031-01-01T00:00:00Z")));
+    const again = await applyPlan(fake.conn, await planned(fake, laterSample(2), {}, new Date("2031-01-01T00:00:00Z")));
     zero(again);
     expect(again.tables.contenttranslations.unchanged).toBe(translations(plan(laterSample(2))).length);
     expect(JSON.stringify(fake.store)).toBe(before);
     expect(fake.log.filter((l: string) => l === "rollback")).toEqual([]);
+    // and again with the switch named: the same as it is
+    const named = await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
+    zero(named);
+    expect(JSON.stringify(fake.store)).toBe(before);
   });
 
-  it("--draft writes the level switched off, and a run without it switches the module on, changing the level row and nothing else", async () => {
+  it("--draft writes the level switched off, and --live switches the module on, changing the level row and the grade's points and nothing else", async () => {
     const fake = await withModule1();
     const before = module1Rows(fake.store);
-    await applyPlan(fake.conn, planContent(laterSample(2), ID, { organisationid: ORG, now: NOW, draft: true }));
-    expect(fake.store.levels[moduleId(2, "level")]).toMatchObject({ levelstatus: 0, levelorder: 2 });
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "draft" }));
+    expect(fake.store.levels[moduleId(2, "level")]).toMatchObject({ levelstatus: 0, levelorder: 2, points: 220 });
     expect(fake.store.levels[ID.level].levelstatus).toBe(1);
     expect(fake.store.curriculums[ID.curriculum].curriculumstatus).toBe(1);
-    const again = await applyPlan(fake.conn, planContent(laterSample(2), ID, { organisationid: ORG, now: NOW, draft: true }));
+    // a draft module does not move the grade's points: learners' progress is out of the live modules only
+    expect(fake.store.grades[ID.grade].points).toBe(120);
+    const again = await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "draft" }));
     zero(again);
-    const on = await applyPlan(fake.conn, plan(laterSample(2)));
+    // a run with no flag leaves it where it is
+    const kept = await applyPlan(fake.conn, await planned(fake, laterSample(2), {}));
+    zero(kept);
+    expect(fake.store.levels[moduleId(2, "level")].levelstatus).toBe(0);
+    const on = await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
     expect(fake.store.levels[moduleId(2, "level")].levelstatus).toBe(1);
+    expect(fake.store.grades[ID.grade].points).toBe(340);
     expect(on.tables.levels).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
-    for (const [table, c] of Object.entries(on.tables) as [string, Json][]) if (table !== "levels") expect(c).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
+    expect(on.tables.grades).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
+    for (const [table, c] of Object.entries(on.tables) as [string, Json][]) if (table !== "levels" && table !== "grades") expect(c).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
     expect(module1Rows(fake.store)).toBe(before);
+    // and back to a draft: the grade's points fall by the module's again
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "draft" }));
+    expect(fake.store.levels[moduleId(2, "level")].levelstatus).toBe(0);
+    expect(fake.store.grades[ID.grade].points).toBe(120);
   });
 
   it("a draft module leaves a curriculum that is switched off switched off: it only renames", async () => {
@@ -1300,17 +1504,17 @@ describe("applying a module after the first", () => {
     fake.store.curriculums[ID.curriculum].curriculumstatus = 0;
     fake.store.curriculums[ID.curriculum].isdeleted = 1;
     fake.store.curriculums[ID.curriculum].curriculumdescription = "kept";
-    await applyPlan(fake.conn, planContent(laterSample(2), ID, { organisationid: ORG, now: NOW, draft: true }));
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "draft" }));
     expect(fake.store.curriculums[ID.curriculum]).toMatchObject({ curriculumstatus: 0, isdeleted: 1, curriculumdescription: "kept", curriculumname: "en programme" });
   });
 
   it("a Module 2 file with a lesson dropped hides only that Module 2 lesson, and it comes back when named again", async () => {
     const fake = await withModule1();
-    await applyPlan(fake.conn, plan(laterSample(2)));
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
     const before = module1Rows(fake.store);
     const c = laterSample(2);
     c.lessons.pop();
-    const run = await applyPlan(fake.conn, plan(c));
+    const run = await applyPlan(fake.conn, await planned(fake, c, {}));
     expect(run.tables.lessons.hidden).toBe(1);
     expect(run.tables.documents.hidden).toBe(1);
     expect(run.tables.questions.hidden).toBe(1);
@@ -1318,19 +1522,24 @@ describe("applying a module after the first", () => {
     expect(fake.store.lessons[moduleId(2, "lesson", 1)].isdeleted).toBe(0);
     expect(fake.store.questions[moduleId(2, "q", "practice", 2, 1)].isdeleted).toBe(1);
     expect(fake.store.questions[moduleId(2, "q", "practice", 1, 1)].isdeleted).toBe(0);
+    // the hidden lesson no longer counts in the level's points (one lesson of 100 and the quiz of 20), nor in the grade's
+    expect(fake.store.levels[moduleId(2, "level")].points).toBe(120);
+    expect(fake.store.grades[ID.grade].points).toBe(240);
     expect(module1Rows(fake.store)).toBe(before);
-    await applyPlan(fake.conn, plan(laterSample(2)));
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), {}));
     expect(fake.store.lessons[moduleId(2, "lesson", 2)].isdeleted).toBe(0);
     expect(fake.store.questions[moduleId(2, "q", "practice", 2, 1)].isdeleted).toBe(0);
+    expect(fake.store.levels[moduleId(2, "level")].points).toBe(220);
+    expect(fake.store.grades[ID.grade].points).toBe(340);
   });
 
   it("a Module 1 file run after Module 2 hides only Module 1's lessons: Module 2's stay", async () => {
     const fake = await withModule1();
-    await applyPlan(fake.conn, plan(laterSample(2)));
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
     const m2 = JSON.stringify(Object.fromEntries(Object.entries(fake.store.lessons).filter(([id]) => !module1Ids().has(id))));
     const c = sample();
     c.lessons[0].practice = [];
-    await applyPlan(fake.conn, plan(c));
+    await applyPlan(fake.conn, await planned(fake, c, {}));
     expect(JSON.stringify(Object.fromEntries(Object.entries(fake.store.lessons).filter(([id]) => !module1Ids().has(id))))).toBe(m2);
     expect(fake.store.questions[moduleId(2, "q", "practice", 1, 1)].isdeleted).toBe(0);
     expect(fake.store.questions[ID.q3].isdeleted).toBe(1); // Module 1's own question that file no longer uses
@@ -1339,7 +1548,7 @@ describe("applying a module after the first", () => {
   it("a Module 2 file with another programme name renames the curriculum and the grade, and nothing else of Module 1 changes", async () => {
     const fake = await withModule1();
     const before = JSON.parse(module1Rows(fake.store)) as [string, Json][];
-    const run = await applyPlan(fake.conn, plan(laterSample(2, { programme: bi("corrected programme") }), new Date("2026-11-03T00:00:00Z")));
+    const run = await applyPlan(fake.conn, await planned(fake, laterSample(2, { programme: bi("corrected programme") }), { levelSwitch: "draft" }, new Date("2026-11-03T00:00:00Z")));
     expect(fake.store.curriculums[ID.curriculum].curriculumname).toBe("en corrected programme");
     expect(fake.store.grades[ID.grade].gradename).toBe("en corrected programme");
     expect(run.tables.curriculums).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
@@ -1352,6 +1561,7 @@ describe("applying a module after the first", () => {
     const after = JSON.parse(module1Rows(fake.store)) as [string, Json][];
     const changed = after.filter(([k, v], i) => JSON.stringify(v) !== JSON.stringify(before[i][1])).map(([k]) => k.split("|").slice(0, 2).join("|"));
     expect(changed.sort()).toEqual([`contenttranslations|curriculums`, `contenttranslations|grades`, `curriculums|${ID.curriculum}`, `grades|${ID.grade}`].sort());
+    expect(fake.store.grades[ID.grade].points).toBe(120); // a draft Module 2 adds nothing to the grade
   });
 
   it("is refused when the database has no curriculum or no grade to attach to, naming which, and writes nothing", async () => {
@@ -1417,23 +1627,97 @@ describe("applying a module after the first", () => {
     const fake = await withModule1(opts);
     opts.failOnTable = "lessonquizquestions"; // Module 1 is in; the failure starts now
     const before = JSON.stringify(fake.store);
-    await expect(applyPlan(fake.conn, plan(laterSample(2)))).rejects.toThrow("boom");
+    await expect(applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }))).rejects.toThrow("boom");
     expect(JSON.stringify(fake.store)).toBe(before);
+  });
+
+  it("Module 1 run over a database in the shape UAT is in (the level at 100 points, the grade at 100) writes the points central's rule gives, 120, and then nothing", async () => {
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    // the readiness programme as UAT holds it: Module 1 written by the earlier importer (one lesson, the level and the grade at 100 points), switched on
+    await applyPlan(fake.conn, plan());
+    fake.store.levels[ID.level].points = 100;
+    fake.store.grades[ID.grade].points = 100;
+    const levelBefore = JSON.stringify({ ...fake.store.levels[ID.level], points: "-" });
+    const run = await applyPlan(fake.conn, await planned(fake, sample(), {}));
+    expect(fake.store.levels[ID.level].points).toBe(120);
+    expect(fake.store.grades[ID.grade].points).toBe(120);
+    expect(JSON.stringify({ ...fake.store.levels[ID.level], points: "-" })).toBe(levelBefore);
+    expect(run.tables.levels).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
+    expect(run.tables.grades).toEqual({ inserted: 0, updated: 1, unchanged: 0, hidden: 0 });
+    for (const [table, c] of Object.entries(run.tables) as [string, Json][]) if (table !== "levels" && table !== "grades") expect(c).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
+    zero(await applyPlan(fake.conn, await planned(fake, sample(), {})));
+  });
+
+  it("the seed's order refuses a new Module 2 level without --draft or --live, before anything is written, and a Module 2 file naming a switch is written", async () => {
+    const fake = await withModule1();
+    const before = JSON.stringify(fake.store);
+    await expect(planned(fake, laterSample(2), {})).rejects.toThrow(/module 2's level is not in the database yet/);
+    expect(JSON.stringify(fake.store)).toBe(before);
+    await expect(planned(fake, sample(), { levelSwitch: "draft" })).rejects.toThrow(/--draft is refused for module 1/);
+    await expect(applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "draft" }))).resolves.toBeDefined();
+  });
+
+  it("a Module 2 lesson slot that would take another name is refused against the database, and --rename-lessons renames it and its Khmer text", async () => {
+    const fake = await withModule1();
+    await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
+    const renamed = laterSample(2);
+    renamed.lessons[0].name = bi("a different lesson");
+    const before = JSON.stringify(fake.store);
+    await expect(planned(fake, renamed, {})).rejects.toThrow(/module 2, lesson slot 1: the lesson there now has another English name/);
+    expect(JSON.stringify(fake.store)).toBe(before);
+    // an unchanged file passes
+    zero(await applyPlan(fake.conn, await planned(fake, laterSample(2), {})));
+    // hide the old lesson first (drop it from the file), then a new lesson may take the slot
+    const dropped = laterSample(2);
+    dropped.lessons.shift();
+    await applyPlan(fake.conn, await planned(fake, dropped, {}));
+    expect(fake.store.lessons[moduleId(2, "lesson", 1)].isdeleted).toBe(1);
+    await expect(applyPlan(fake.conn, await planned(fake, renamed, {}))).resolves.toBeDefined();
+    expect(fake.store.lessons[moduleId(2, "lesson", 1)]).toMatchObject({ lessonname: "en a different lesson", isdeleted: 0 });
+    // and with the flag, a live slot is renamed in place
+    const again = laterSample(2);
+    again.lessons[0].name = bi("a third lesson");
+    await expect(planned(fake, again, {})).rejects.toThrow(/lesson slot 1/);
+    await applyPlan(fake.conn, await planned(fake, again, { renameLessons: true }));
+    expect(fake.store.lessons[moduleId(2, "lesson", 1)].lessonname).toBe("en a third lesson");
+    expect(fake.store.contenttranslations[`lessons|${moduleId(2, "lesson", 1)}|lessonname||km`]).toMatchObject({ text: km("a third lesson"), sourcehash: sourceHash("en a third lesson") });
   });
 });
 
 // ---- the command line ----------------------------------------------------------------------------
 
 describe("the command line", () => {
-  it("reads --content and --dry-run, and refuses anything else", () => {
-    expect(parseArgs([])).toEqual({ content: null, dryRun: false, draft: false, help: false });
-    expect(parseArgs(["--content", "/x"])).toEqual({ content: "/x", dryRun: false, draft: false, help: false });
-    expect(parseArgs(["--content", "/x", "--dry-run"])).toEqual({ content: "/x", dryRun: true, draft: false, help: false });
-    expect(parseArgs(["--content", "/x", "--draft"])).toEqual({ content: "/x", dryRun: false, draft: true, help: false });
-    expect(parseArgs(["--draft", "--content", "/x", "--dry-run"])).toEqual({ content: "/x", dryRun: true, draft: true, help: false });
-    for (const bad of [["--wat"], ["--content"], ["--content", "--dry-run"], ["--dry-run"], ["--draft"], ["--draft", "--dry-run"]]) {
+  const args = (over: Json = {}) => ({ content: null, dryRun: false, draft: false, live: false, renameLessons: false, help: false, ...over });
+  it("reads --content, --draft, --live, --rename-lessons and --dry-run, and refuses anything else", () => {
+    expect(parseArgs([])).toEqual(args());
+    expect(parseArgs(["--content", "/x"])).toEqual(args({ content: "/x" }));
+    expect(parseArgs(["--content", "/x", "--dry-run"])).toEqual(args({ content: "/x", dryRun: true }));
+    expect(parseArgs(["--content", "/x", "--draft"])).toEqual(args({ content: "/x", draft: true }));
+    expect(parseArgs(["--content", "/x", "--live"])).toEqual(args({ content: "/x", live: true }));
+    expect(parseArgs(["--live", "--content", "/x", "--rename-lessons"])).toEqual(args({ content: "/x", live: true, renameLessons: true }));
+    expect(parseArgs(["--draft", "--content", "/x", "--dry-run"])).toEqual(args({ content: "/x", dryRun: true, draft: true }));
+    for (const bad of [["--wat"], ["--content"], ["--content", "--dry-run"], ["--dry-run"], ["--draft"], ["--live"], ["--rename-lessons"], ["--draft", "--dry-run"], ["--live", "--dry-run"]]) {
       expect(() => parseArgs(bad)).toThrow(ContentRefused);
     }
+  });
+
+  it("refuses --draft and --live together, with the reason", () => {
+    for (const both of [["--content", "/x", "--draft", "--live"], ["--live", "--content", "/x", "--draft"]]) {
+      let problems: string[] = [];
+      try {
+        parseArgs(both);
+      } catch (e) {
+        problems = (e as { problems: string[] }).problems;
+      }
+      expect(problems).toEqual(["--draft and --live cannot be used together: a module's level is either switched off or switched on"]);
+    }
+  });
+
+  it("maps the flags to the plan's level switch", () => {
+    expect(levelSwitchOf(args())).toBeNull();
+    expect(levelSwitchOf(args({ draft: true }))).toBe("draft");
+    expect(levelSwitchOf(args({ live: true }))).toBe("live");
   });
 
   it("refuses --lang in every form: it is retired", () => {
@@ -1463,7 +1747,7 @@ describe("the command line", () => {
   const exitSpy = () => jest.spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`exit ${code}`); }) as never);
 
   it("without --content there is no content and nothing to refuse", () => {
-    expect(prepare([], ID)).toEqual({ args: { content: null, dryRun: false, draft: false, help: false }, content: null });
+    expect(prepare([], ID)).toEqual({ args: args(), content: null });
   });
 
   it("loads a good folder, and exits 1 with the reasons for a missing file, bad JSON or a refused file", () => {
@@ -1487,7 +1771,7 @@ describe("the command line", () => {
     }
   });
 
-  it("--help prints the help line, which says what --draft does, and exits 0", () => {
+  it("--help prints the help line, which says what --draft and --live do, and exits 0", () => {
     const out: string[] = [];
     const log = jest.spyOn(console, "log").mockImplementation((m: string) => void out.push(m));
     const exit = exitSpy();
@@ -1498,8 +1782,30 @@ describe("the command line", () => {
       log.mockRestore();
     }
     expect(out).toHaveLength(1);
-    expect(out[0]).toMatch(/--draft writes the module's level switched off, levelstatus 0: built but not shown to learners; without it the level is on, levelstatus 1/);
+    expect(out[0]).toContain("usage: seed:dcrs -- --content <dir> [--draft | --live] [--rename-lessons] [--dry-run]");
+    expect(out[0]).toContain("--draft writes the module's level switched off, levelstatus 0: built but not shown to learners; --live writes it switched on, levelstatus 1; not both.");
+    expect(out[0]).toContain("With neither, a level already in the database keeps its switch and a new level is refused. --draft is refused for module 1.");
+    expect(out[0]).toContain("--rename-lessons lets a later module's lesson slot take another name");
     expect(out[0]).toBe(USAGE);
+  });
+
+  it("exits 1 with the reason for --draft on a Module 1 file and for --draft with --live, before anything is read from a database", () => {
+    const err = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = exitSpy();
+    try {
+      withFolder({ "content.json": JSON.stringify(sample()) }, (dir) => expect(() => prepare(["--content", dir, "--draft"], ID)).toThrow("exit 1"));
+      expect(err.mock.calls.pop()?.[0]).toMatch(/^Refusing to run: --draft is refused for module 1: it is the delivered module, and a learner already reads it; switch a later module off, not this one\. Nothing was written\.$/);
+      withFolder({ "content.json": JSON.stringify(laterSample(2)) }, (dir) => expect(() => prepare(["--content", dir, "--draft", "--live"], ID)).toThrow("exit 1"));
+      expect(err.mock.calls.pop()?.[0]).toBe("Refusing to run: --draft and --live cannot be used together: a module's level is either switched off or switched on. Nothing was written.");
+      // a later module with either flag is fine
+      withFolder({ "content.json": JSON.stringify(laterSample(2)) }, (dir) => {
+        expect(prepare(["--content", dir, "--draft"], ID).args).toEqual(args({ content: dir, draft: true }));
+        expect(prepare(["--content", dir, "--live"], ID).args).toEqual(args({ content: dir, live: true }));
+      });
+    } finally {
+      exit.mockRestore();
+      err.mockRestore();
+    }
   });
 
   it("refuses a content.json in the old shape, naming the new shape, before anything is written", () => {
@@ -1515,18 +1821,22 @@ describe("the command line", () => {
     }
   });
 
-  it("a dry run of a later module says its level's order and whether --draft switched it off, with ids and counts only", () => {
+  it("a dry run of a later module says its level's order, the switch the flags ask for and its points, with ids and counts only", () => {
     const out: string[] = [];
     const log = jest.spyOn(console, "log").mockImplementation((m: string) => void out.push(m));
     try {
-      printDryRun(laterSample(3), ID, { draft: true });
+      printDryRun(laterSample(3), ID, { levelSwitch: "draft" });
+      printDryRun(laterSample(3), ID, { levelSwitch: "live" });
       printDryRun(laterSample(3), ID);
     } finally {
       log.mockRestore();
     }
     const text = out.join("\n");
-    expect(text).toContain("module 3: its level is order 3, switched off (levelstatus 0, --draft)");
-    expect(text).toContain("module 3: its level is order 3, on (levelstatus 1)");
+    expect(text).toContain("module 3: its level is order 3, switched off (levelstatus 0, --draft): built, not shown to learners");
+    expect(text).toContain("module 3: its level is order 3, on (levelstatus 1, --live)");
+    expect(text).toContain("module 3: its level is order 3, left as it is if it exists (neither --draft nor --live; a new level would be refused)");
+    expect(text).toContain("points: the level 220; the grade 220 counting only this level (a real run adds the other live levels)");
+    expect(text).toContain("points: the level 220; the grade 0 counting only this level (a real run adds the other live levels)");
     expect(text).toContain("media: copy synthetic.mp4 to <media folder>/dcrs-m3-l1.mp4");
     expect(text).not.toMatch(/en later|\u1780|c0000000/);
   });
@@ -1546,7 +1856,7 @@ describe("the command line", () => {
     expect(text).toContain("translate grades 1");
     expect(text).toContain("upsert questions 1");
     expect(text).toContain("hide   lessons 3");
-    expect(text).toContain("module 1: its level is order 1, on (levelstatus 1)");
+    expect(text).toContain("module 1: its level is order 1, left as it is if it exists (neither --draft nor --live; a new level would be refused)");
     expect(text).toContain("media: copy lesson_final.mp4 to <media folder>/dcrs-m1-l1.mp4");
     expect(text).not.toMatch(/en p1|\u1780/);
   });

@@ -22,8 +22,12 @@
  * A module after the first attaches to the curriculum and the grade Module 1 made: `preflight` refuses the run, naming which is
  * missing, when the plan's `requires` rows are not in the database. `curriculumNameLengths` is how the seed says, without
  * printing the client's text, whether the run changes the curriculum's name.
+ *
+ * `readExisting` is what the seed reads, read-only, BEFORE it plans (and before its placeholder pass): the grade's levels (whether
+ * each is switched on, its points) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
+ * require one for a new level, compute the grade's points over the live levels, and refuse a lesson slot that would change meaning.
  */
-const { statementOf, ContentRefused } = require("./dcrs-content-plan");
+const { statementOf, slotsOf, ContentRefused } = require("./dcrs-content-plan");
 
 const blank = () => ({ inserted: 0, updated: 0, unchanged: 0, hidden: 0 });
 
@@ -41,6 +45,21 @@ async function organisationLanguage(conn, plan, lock) {
     ]);
   }
   return language ?? null;
+}
+
+/**
+ * What the plan needs to know of the database (see planContent's `existing`): every level of the grade, and the module's lesson slots
+ * that exist. Read-only; nothing is written. A grade that is not there yet simply has no levels.
+ */
+async function readExisting(conn, content, ID) {
+  const slots = slotsOf(ID, content.module.number);
+  const [levels] = await conn.execute("SELECT levelid, levelstatus, isdeleted, points, quiz_points FROM `levels` WHERE `gradeid` = ?", [ID.grade]);
+  const lessonids = slots.lessons.map((l) => l.id);
+  const [lessons] = await conn.execute(
+    `SELECT lessonid, lessonname, isdeleted, total_points FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
+    lessonids,
+  );
+  return { levels, lessons };
 }
 
 /** Read-only checks before anything of the content is written; throws ContentRefused with the reason. */
@@ -189,4 +208,4 @@ function formatReport(report) {
   ].join("\n");
 }
 
-module.exports = { applyPlan, verifyPlan, preflight, formatReport, curriculumNameLengths, formatCurriculumName };
+module.exports = { applyPlan, verifyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName };

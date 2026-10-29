@@ -37,8 +37,18 @@
  *    `isdeleted` with their documents, and their learning items, practices, quizzes and join rows get status 0; the module's
  *    own question ids the file no longer uses are marked `isdeleted`. Naming a lesson again in a later file un-hides it.
  *    Nothing outside the module's level is touched: another module's lessons are never hidden by this one's file.
- *  - the level is written with `levelstatus` 1, or 0 when the plan is asked for a draft (`{ draft: true }`, the seed's
- *    `--draft`): a switched-off level is built but not shown to learners.
+ *  - THE LEVEL SWITCH IS EXPLICIT. `levelSwitch` is "draft" (the seed's `--draft`: the level is written with `levelstatus` 0, built
+ *    but not shown to learners), "live" (`--live`: `levelstatus` 1) or null (neither flag). With null an EXISTING level keeps the
+ *    `levelstatus` it has (the run does not write the column), and a NEW level (the first run of a module) is refused: say which. `draft`
+ *    is refused for Module 1, which is the delivered module.
+ *  - POINTS follow central's own rule (`updateLevelPoints`, src/business/level.business.ts): a level's `points` is the sum of the
+ *    `total_points` of its lessons that are not hidden plus its `quiz_points`; the grade's `points` is the sum of the `points` of its
+ *    levels that are switched on and not deleted. The plan computes both for what it writes; the levels it does not write (the other
+ *    modules, and any a person added) come in as `existing`, which the seed reads from the database before it plans. So the
+ *    learner's progress (`points * 100 / grade.points`) is out of the live modules only: a draft module does not move it.
+ *  - A MODULE 2+ LESSON SLOT CANNOT CHANGE MEANING. A later module's lesson is identified by its `order`; a run is refused when an
+ *    existing, not-hidden lesson in a slot has another English name than the file's lesson for that slot, unless `renameLessons`
+ *    (`--rename-lessons`) says the rename is meant. Hide the old lesson first, or give the new lesson a new order.
  *
  * Where the ids come from.
  *  - MODULE 1 keeps every id it ever had: the seed's fixed ids (the level, the four lessons, their documents, learning
@@ -57,6 +67,7 @@
  *  - The curriculum and the grade are never created by a module beyond Module 1's fixed ids: a Module 2+ file attaches to the
  *    existing ones (`plan.requires`, checked by the applier's preflight), writes only their names, and is refused when they are
  *    absent. A run whose programme differs from the curriculum's current name renames it; that is how the name is corrected.
+ *    A later module writes the names and the points of the curriculum and the grade, and nothing else of them.
  *
  * Two languages, one meaning each (bilingual content design, section 6.4, decision 2). The ENGLISH text
  * goes into the base columns of the rows above, because the readiness programme's organisation has the base
@@ -74,8 +85,8 @@
  * Placeholders. The seed's own pass leaves descriptions like "DCRS lesson" and a grade called "Cohort II" that a learner
  * would see. Content mode blanks every description the file does not provide (curriculum, grade, level, lesson, learning item,
  * practice, quiz: the empty string) in the rows it writes in full, and names the curriculum and the grade, whose names the
- * navigation shows, after the programme. A later module writes only the names of the curriculum and the grade, and never
- * touches their status or their other columns: a draft module must not publish the programme.
+ * navigation shows, after the programme. A later module writes only the names of the curriculum and the grade (and the grade's
+ * points), and never touches their status or their other columns: a draft module must not publish the programme.
  */
 
 const { createHash } = require("crypto");
@@ -97,6 +108,10 @@ const MAX_OPTIONS = 8;
 const MAX_LESSONS_LATER_MODULE = 12;
 // The namespace of the version-5 ids of Module 2 and later. Fixed for good: changing it renames every id of every later module.
 const MODULE_ID_NAMESPACE = "5d7c3c0e-2b6a-4f0e-9a41-6e0c1f8d2a73";
+// What a lesson and a level's quiz are worth when the plan writes them new (the lesson rows below carry total_points 100).
+const LESSON_TOTAL_POINTS = 100;
+const DEFAULT_QUIZ_POINTS = 20;
+const LEVEL_SWITCHES = ["draft", "live"];
 
 const OLD_SHAPE =
   'content.json is in the old shape (it has "curriculum" or "level"); a file now has "programme": { "en", "km" } (required) and ' +
@@ -379,8 +394,12 @@ const optionRow = (i, text, correct) => ({
  * The plan for a validated content file.
  *
  * `ID` is the seed's id map; `organisationid` owns the rows a fresh insert would create and the
- * translation rows; `now` (a Date) is the time the translation rows are stamped with; `draft` writes the module's level
- * switched off (`levelstatus` 0: built, not shown to learners) instead of on.
+ * translation rows; `now` (a Date) is the time the translation rows are stamped with; `levelSwitch` is "draft" (the module's level
+ * written switched off, `levelstatus` 0: built, not shown to learners), "live" (switched on) or null (neither: an existing level keeps
+ * its switch, a new level is refused); `renameLessons` allows a later module's lesson slot to take another name.
+ * `existing` is what the database holds that the plan needs to know, or null when it is not known (a dry run):
+ * `{ levels: [{ levelid, levelstatus, isdeleted, points, quiz_points }] }` for every level of the grade, and
+ * `lessons: [{ lessonid, lessonname, isdeleted, total_points }]` for the module's lesson slots that exist (`readExisting` in dcrs-content-apply.js).
  * Returns `{ baseLanguage, translationLanguage, organisationid, module, curriculumName, requires, steps, media, owned }`. A step is one of
  *   `{ kind: "upsert", table, pk, id, values, update }`  (INSERT ... ON DUPLICATE KEY UPDATE `update` columns)
  *   `{ kind: "translate", table: "contenttranslations", pk, id, values, update, touch }`  (the same, and `touch`
@@ -390,16 +409,29 @@ const optionRow = (i, text, correct) => ({
  * own placeholder pass normally creates them first), and never overwrite one that is.
  * `owned` lists the seed rows that must belong to `organisationid` (or to nobody yet) for the translations to be its own.
  * `requires` lists the rows that must already be in the database (the curriculum and the grade, for a module after the first).
- * `module` is `{ number, levelid, levelorder, levelstatus }`.
+ * `module` is `{ number, levelid, levelorder, levelstatus, levelpoints, gradepoints, levelIsNew }`; `levelstatus` is null when it is not
+ * known (a dry run with neither flag), `levelIsNew` null when `existing` is null.
  */
-function planContent(content, ID, { organisationid, now, draft = false } = {}) {
+function planContent(content, ID, { organisationid, now, levelSwitch = null, renameLessons = false, existing = null } = {}) {
   validateContent(content, ID);
   if (!isText(organisationid)) throw new ContentRefused(["organisationid is required to plan"]);
-  if (typeof draft !== "boolean") throw new ContentRefused(["draft must be true or false"]);
+  if (levelSwitch !== null && !LEVEL_SWITCHES.includes(levelSwitch)) throw new ContentRefused(['levelSwitch must be "draft", "live" or null']);
+  if (typeof renameLessons !== "boolean") throw new ContentRefused(["renameLessons must be true or false"]);
   const stamp = utcDatetime(now);
   const moduleNumber = content.module.number;
   const later = moduleNumber !== 1;
   const slots = slotsOf(ID, moduleNumber);
+  // The reasons a run is refused for what the database holds or what the flags say; every one is listed.
+  const problems = [];
+  if (levelSwitch === "draft" && !later) {
+    problems.push("--draft is refused for module 1: it is the delivered module, and a learner already reads it; switch a later module off, not this one");
+  }
+  const ownLevel = existing === null ? null : existing.levels.find((l) => l.levelid === slots.level) ?? null;
+  if (existing !== null && ownLevel === null && levelSwitch === null) {
+    problems.push(
+      `module ${moduleNumber}'s level is not in the database yet; say whether learners see it: --draft (switched off, built but not shown) or --live (switched on)`,
+    );
+  }
   if (later) {
     // No id of a later module may equal one of Module 1's fixed ids (the seed's whole id map, and Module 1's slots).
     const taken = new Set([...Object.values(ID), ...idsOfSlots(slotsOf(ID, 1))]);
@@ -423,6 +455,31 @@ function planContent(content, ID, { organisationid, now, draft = false } = {}) {
   const named = new Map(content.lessons.map((l) => [slotOfLesson(l).id, l]));
   const live = slots.lessons.filter((s) => named.has(s.id)).sort((a, b) => named.get(a.id).order - named.get(b.id).order);
   const hidden = slots.lessons.filter((s) => !named.has(s.id));
+
+  // A later module's lesson slot must not change meaning under a re-run: an existing, not-hidden lesson of the slot keeps its name unless the rename is asked for.
+  if (later && existing !== null && !renameLessons) {
+    for (const lesson of content.lessons) {
+      const row = existing.lessons.find((l) => l.lessonid === slotOfLesson(lesson).id);
+      if (row && !Number(row.isdeleted) && row.lessonname !== lesson.name.en) {
+        problems.push(
+          `module ${moduleNumber}, lesson slot ${lesson.order}: the lesson there now has another English name than the file's; give the new lesson a new order, or hide the old one first (--rename-lessons renames it in place)`,
+        );
+      }
+    }
+  }
+  if (problems.length > 0) throw new ContentRefused(problems);
+
+  // The switch, and the points by central's rule. An existing level keeps its switch when neither flag is given (and then the run does not write the column).
+  const levelstatus = levelSwitch === "draft" ? 0 : levelSwitch === "live" ? 1 : ownLevel !== null ? Number(ownLevel.levelstatus) : null;
+  // A lesson that is already there keeps the total_points it has (the run does not write that column); a new one is written with LESSON_TOTAL_POINTS.
+  const lessonPoints = (slot) => {
+    const row = existing === null ? undefined : existing.lessons.find((l) => l.lessonid === slot.id);
+    return row ? Number(row.total_points ?? 0) : LESSON_TOTAL_POINTS;
+  };
+  const levelpoints = live.reduce((sum, slot) => sum + lessonPoints(slot), 0) + (ownLevel !== null ? Number(ownLevel.quiz_points ?? 0) : DEFAULT_QUIZ_POINTS);
+  const siblings = existing === null ? [] : existing.levels.filter((l) => l.levelid !== slots.level);
+  const gradepoints =
+    siblings.filter((l) => Number(l.levelstatus) === 1 && !Number(l.isdeleted)).reduce((sum, l) => sum + Number(l.points ?? 0), 0) + (levelstatus === 0 ? 0 : levelpoints);
 
   // The curriculum is the programme. A later module only renames it (and never changes its status, its description or its owner).
   upsert(
@@ -453,13 +510,12 @@ function planContent(content, ID, { organisationid, now, draft = false } = {}) {
       gradeorder: 1,
       isdeleted: 0,
       passing_points: 80,
-      points: 100,
+      points: gradepoints,
     },
-    later ? ["gradename"] : ["gradename", "gradedescription", "gradestatus", "isdeleted"],
+    later ? ["gradename", "points"] : ["gradename", "gradedescription", "gradestatus", "isdeleted", "points"],
   );
   translate("grades", ID.grade, "gradename", "", content.programme, true);
   // Each module is a level under that grade, in module order.
-  const levelstatus = draft ? 0 : 1;
   upsert(
     "levels",
     "levelid",
@@ -469,13 +525,20 @@ function planContent(content, ID, { organisationid, now, draft = false } = {}) {
       levelname: t(content.module.name),
       leveldescription: "",
       isdeleted: 0,
-      levelstatus,
+      levelstatus: levelstatus ?? 1,
       levelorder: moduleNumber,
       passing_points: 80,
-      quiz_points: 20,
-      points: 100,
+      quiz_points: DEFAULT_QUIZ_POINTS,
+      points: levelpoints,
     },
-    later ? ["levelname", "leveldescription", "levelstatus", "levelorder", "isdeleted"] : ["levelname", "leveldescription", "levelstatus", "isdeleted"],
+    [
+      "levelname",
+      "leveldescription",
+      ...(levelSwitch !== null ? ["levelstatus"] : []),
+      ...(later ? ["levelorder"] : []),
+      "points",
+      "isdeleted",
+    ],
   );
   translate("levels", slots.level, "levelname", "", content.module.name);
 
@@ -509,7 +572,7 @@ function planContent(content, ID, { organisationid, now, draft = false } = {}) {
         lessonorder: lesson.order,
         lessonstatus: 1,
         isdeleted: 0,
-        total_points: 100,
+        total_points: LESSON_TOTAL_POINTS,
         passing_points: 80,
         learning_points: 20,
         quizzes_points: 40,
@@ -706,7 +769,7 @@ function planContent(content, ID, { organisationid, now, draft = false } = {}) {
     baseLanguage: BASE_LANGUAGE,
     translationLanguage: TRANSLATION_LANGUAGE,
     organisationid,
-    module: { number: moduleNumber, levelid: slots.level, levelorder: moduleNumber, levelstatus },
+    module: { number: moduleNumber, levelid: slots.level, levelorder: moduleNumber, levelstatus, levelpoints, gradepoints, levelIsNew: existing === null ? null : ownLevel === null },
     curriculumid: ID.curriculum,
     curriculumName: t(content.programme),
     requires,
@@ -754,6 +817,8 @@ module.exports = {
   ANSWER_BEARING_FIELDS,
   FILENAME,
   MODULE_ID_NAMESPACE,
+  LESSON_TOTAL_POINTS,
+  DEFAULT_QUIZ_POINTS,
   MAX_LESSONS_LATER_MODULE,
   OLD_SHAPE,
   ContentRefused,
