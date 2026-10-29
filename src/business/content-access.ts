@@ -40,9 +40,10 @@ import { isGiven } from "./school-identity";
  *    school is itself that organisation's.
  * A token with no organisation or school claim has nothing in scope.
  *
- * A LEARNER is not shown a level that is switched off (`levelstatus` false: built, not yet shown to learners; the readiness import's
- * `--draft`): everything that hangs from such a level answers for a learner as content that does not exist, so the lists that leave
- * it out and the routes that open it by id agree. School staff are not held to this: they keep to the curriculum rule above.
+ * A level that is switched off (`levelstatus` false: built, not yet shown to learners; the readiness import's `--draft`) is absent for
+ * EVERY token on this server, a learner's, a teacher's or an admin's: everything that hangs from such a level answers as content that
+ * does not exist (the 404 of a missing id), so the lists that leave it out and the routes that open it by id agree. A draft module is
+ * previewed in the admin on central, not here.
  *
  * What a piece of content's curriculum is:
  *   lesson -> level -> grade -> curriculum
@@ -333,8 +334,8 @@ export async function canAccessContent(user: Token | undefined, kind: ContentKin
   if (!caller) {
     return false;
   }
-  // a learner is not shown content under a level that is switched off; staff are held to the curriculum rule only
-  const own = await curriculumIdsOf(kind, id, { liveLevelsOnly: callerKindOf(user) === "learner" });
+  // content under a level that is switched off is absent for every token (learner, teacher, admin): previewing a draft module is done on central
+  const own = await curriculumIdsOf(kind, id, { liveLevelsOnly: true });
   if (own.length === 0) {
     return false;
   }
