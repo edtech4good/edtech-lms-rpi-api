@@ -38,21 +38,36 @@
  *
  * Idempotent: fixed UUIDs plus INSERT IGNORE.
  *
- * Content mode: `npm run seed:dcrs -- --content <dir> [--dry-run]`
+ * Content mode: `npm run seed:dcrs -- --content <dir> [--draft | --live] [--rename-lessons] [--dry-run]`
  * replaces the placeholder text with the real programme content from
  * `<dir>/content.json` (schema and rules in scripts/lib/dcrs-content-plan.js; the central
- * repo's scripts/dcrs-content-from-xlsx.js writes it). Everything above still runs first,
- * then the file's rows are upserted over the same fixed ids and what the file does not
- * name is hidden, reversibly. A file that cannot be written as it stands is refused,
- * exit 1, before anything is written. The folder is only read. Re-running changes
- * nothing. Without `--content` this script behaves exactly as described above.
+ * repo's scripts/dcrs-content-from-xlsx.js writes it). A file is ONE MODULE of the programme: the curriculum is
+ * the programme (named by the file's `programme`), the grade is its one track (same name), and the module is a
+ * level under that grade, in module order. Everything above still runs first, then the file's rows are upserted:
+ * Module 1 over the fixed ids it always had, Module 2 and later over ids derived from their role paths (version-5
+ * UUIDs; the same in both APIs). What the file does not name is hidden, reversibly, within the module's own level
+ * only. A file that cannot be written as it stands is refused, exit 1, before anything is written. The folder is
+ * only read. Re-running changes nothing. Without `--content` this script behaves exactly as described above.
+ *  - The level switch is explicit. `--draft` writes the module's level switched off (levelstatus 0: built, not shown to
+ *    learners); `--live` writes it switched on (levelstatus 1); both together are refused. With neither flag a level that
+ *    is already in the database keeps its switch (the run does not write the column), and a NEW level (the first run of a
+ *    module) is refused, with the reason. `--draft` is refused for Module 1, the delivered module. Run a draft module again
+ *    with `--live` to switch it on.
+ *  - Points follow central's rule: a level's points are its not-hidden lessons' total_points, plus its quiz_points only when the
+ *    level has an active level-quiz question (a learner can earn them only through that quiz; this import writes none), and the
+ *    grade's points are the sum over its levels that are switched on, so a draft module does not move a learner's progress.
+ *  - `--rename-lessons`: a Module 2+ lesson is identified by its `order`; a run whose lesson in a slot has another English
+ *    name than the one already there (hidden or not) is refused unless this flag says the rename is meant.
+ *  - A Module 2+ file attaches to the curriculum and the grade that exist and is refused when they are absent
+ *    (seed Module 1 first). It renames the curriculum and the grade when its `programme` differs from their
+ *    current name; the run prints the old and the new name's length, never the name.
  *  - The English text goes into the base columns and the Khmer text into `contenttranslations`
  *    rows (language km, keyed by the row, the field and, for options, the option id, each with
  *    the hash of the English it translates). The organisation's `contentlanguage` is set to
  *    `en` when it has none; any other language stops the run before anything is written.
  *    `--lang` is retired and refused. The database must have the translations migration.
  *  - `--dry-run` validates and prints the plan, with no database connection.
- * The lesson video is not uploaded: its document row names `dcrs-m1-l1.mp4` and the
+ * The lesson video is not uploaded: its document row names the file the content gives (`dcrs-m1-l1.mp4`, `dcrs-m2-l1.mp4`, ...) and the
  * script prints the copy to make into the media folder.
  */
 const path = require("path");
@@ -62,8 +77,8 @@ const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
 const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
 const { planContent } = require("./lib/dcrs-content-plan");
-const { applyPlan, preflight, formatReport } = require("./lib/dcrs-content-apply");
-const { prepare, refuse, printDryRun } = require("./lib/dcrs-content-cli");
+const { applyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName } = require("./lib/dcrs-content-apply");
+const { prepare, refuse, printDryRun, levelSwitchOf, describeSwitch } = require("./lib/dcrs-content-cli");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -245,7 +260,7 @@ async function main() {
   // Content mode (`--content <dir>`): arguments and content.json are checked first; a refusal exits 1 with nothing written.
   const { args, content } = prepare(process.argv.slice(2), ID);
   if (args.dryRun) {
-    printDryRun(content, ID);
+    printDryRun(content, ID, { levelSwitch: levelSwitchOf(args), renameLessons: args.renameLessons });
     return;
   }
   if (process.env.ALLOW_DEMO_SEED !== "true") {
@@ -277,8 +292,19 @@ async function main() {
 
     // Content mode: the plan is a pure function of the file, and the database must be fit for it (the translations migration, the
     // organisation's base language, the rows' owner) before the placeholder pass or the content writes anything.
-    const contentPlan = content ? planContent(content, ID, { organisationid, now: new Date() }) : null;
-    if (contentPlan) await preflight(conn, contentPlan).catch(refuse);
+    // What the plan must know of the database (the grade's levels, the module's lesson slots) is read before the placeholder pass writes anything.
+    let contentPlan = null;
+    if (content) {
+      try {
+        const existing = await readExisting(conn, content, ID);
+        contentPlan = planContent(content, ID, { organisationid, now: new Date(), levelSwitch: levelSwitchOf(args), renameLessons: args.renameLessons, existing });
+      } catch (err) {
+        refuse(err);
+      }
+      await preflight(conn, contentPlan).catch(refuse);
+    }
+    // The curriculum's name before the placeholder pass can make it, by length only (the names are the client's text).
+    const nameNote = contentPlan ? await curriculumNameLengths(conn, contentPlan) : null;
 
     await q(`INSERT IGNORE INTO countries (countryid, countryname, isdeleted) VALUES (?,?,0)`,
       [ID.country, "Cambodia"]);
@@ -432,6 +458,9 @@ async function main() {
     if (contentReport) {
       console.log(`DCRS content applied from ${path.basename(path.resolve(args.content))}/content.json (base ${contentPlan.baseLanguage}, translations ${contentPlan.translationLanguage}):`);
       console.log(formatReport(contentReport));
+      console.log(`  module ${contentPlan.module.number}: level order ${contentPlan.module.levelorder}, ${describeSwitch(contentPlan.module.levelstatus, levelSwitchOf(args))}`);
+      console.log(`  points: the level ${contentPlan.module.levelpoints}, the grade ${contentPlan.module.gradepoints} (its levels that are switched on)`);
+      console.log(formatCurriculumName(nameNote));
       for (const m of contentPlan.media) console.log(`  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`);
     } else {
       console.log("  Lesson videos will not play: no media is seeded.");

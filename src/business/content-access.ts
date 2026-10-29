@@ -40,6 +40,11 @@ import { isGiven } from "./school-identity";
  *    school is itself that organisation's.
  * A token with no organisation or school claim has nothing in scope.
  *
+ * A level that is switched off (`levelstatus` false: built, not yet shown to learners; the readiness import's `--draft`) is absent for
+ * EVERY token on this server, a learner's, a teacher's or an admin's: everything that hangs from such a level answers as content that
+ * does not exist (the 404 of a missing id), so the lists that leave it out and the routes that open it by id agree. A draft module is
+ * previewed in the admin on central, not here.
+ *
  * What a piece of content's curriculum is:
  *   lesson -> level -> grade -> curriculum
  *   practice, quiz, learning, plan -> lesson -> ...
@@ -110,16 +115,25 @@ const curriculumOfGrade = async (gradeid: string | null): Promise<string[]> => {
   return id ? [id] : [];
 };
 
-const curriculumOfLevel = async (levelid: string | null): Promise<string[]> => {
+/** How far a lookup reaches: with `liveLevelsOnly`, content under a level that is switched off belongs to no curriculum (it is absent). */
+export interface Reach {
+  liveLevelsOnly?: boolean;
+}
+
+/** A switch column as the database hands it back: TINYINT(1) is true or 1. */
+const isOn = (value: unknown): boolean => value === true || value === 1 || value === "1";
+
+const curriculumOfLevel = async (levelid: string | null, reach: Reach = {}): Promise<string[]> => {
   if (!levelid) return [];
-  const level = await levels.findOne({ where: { levelid }, attributes: ["levelid", "gradeid"], raw: true });
+  const level = await levels.findOne({ where: { levelid }, attributes: ["levelid", "gradeid", "levelstatus"], raw: true });
+  if (reach.liveLevelsOnly && !isOn(level ? (level as unknown as Row).levelstatus : undefined)) return [];
   return curriculumOfGrade(field(level, "gradeid"));
 };
 
-const curriculumOfLesson = async (lessonid: string | null): Promise<string[]> => {
+const curriculumOfLesson = async (lessonid: string | null, reach: Reach = {}): Promise<string[]> => {
   if (!lessonid) return [];
   const lesson = await lessons.findOne({ where: { lessonid }, attributes: ["lessonid", "levelid"], raw: true });
-  return curriculumOfLevel(field(lesson, "levelid"));
+  return curriculumOfLevel(field(lesson, "levelid"), reach);
 };
 
 const curriculumOfBaseline = async (curriculumbaselineid: string | null): Promise<string[]> => {
@@ -137,7 +151,7 @@ const curriculumOfBaseline = async (curriculumbaselineid: string | null): Promis
  * The curricula a piece of content belongs to: one for everything but a document (which can be used by
  * lessons of several curricula), none when the id names nothing.
  */
-export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<string[]> {
+export async function curriculumIdsOf(kind: ContentKind, id: unknown, reach: Reach = {}): Promise<string[]> {
   if (!usable(id)) {
     return [];
   }
@@ -150,24 +164,24 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
     case "grade":
       return curriculumOfGrade(id);
     case "level":
-      return curriculumOfLevel(id);
+      return curriculumOfLevel(id, reach);
     case "lesson":
-      return curriculumOfLesson(id);
+      return curriculumOfLesson(id, reach);
     case "lessonlearning": {
       const row = await lessonlearnings.findOne({ where: { lessonlearningid: id }, attributes: ["lessonlearningid", "lessonid"], raw: true });
-      return curriculumOfLesson(field(row, "lessonid"));
+      return curriculumOfLesson(field(row, "lessonid"), reach);
     }
     case "lessonplan": {
       const row = await lessonplans.findOne({ where: { lessonplanid: id }, attributes: ["lessonplanid", "lessonid"], raw: true });
-      return curriculumOfLesson(field(row, "lessonid"));
+      return curriculumOfLesson(field(row, "lessonid"), reach);
     }
     case "lessonpractice": {
       const row = await lessonpractices.findOne({ where: { lessonpracticeid: id }, attributes: ["lessonpracticeid", "lessonid"], raw: true });
-      return curriculumOfLesson(field(row, "lessonid"));
+      return curriculumOfLesson(field(row, "lessonid"), reach);
     }
     case "lessonquiz": {
       const row = await lessonquizzes.findOne({ where: { lessonquizid: id }, attributes: ["lessonquizid", "lessonid"], raw: true });
-      return curriculumOfLesson(field(row, "lessonid"));
+      return curriculumOfLesson(field(row, "lessonid"), reach);
     }
     case "baseline":
       return curriculumOfBaseline(id);
@@ -177,7 +191,7 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
         attributes: ["lessonpracticequestionid", "lessonpracticeid"],
         raw: true,
       });
-      return curriculumIdsOf("lessonpractice", field(row, "lessonpracticeid"));
+      return curriculumIdsOf("lessonpractice", field(row, "lessonpracticeid"), reach);
     }
     case "lessonquizquestion": {
       const row = await lessonquizquestions.findOne({
@@ -185,7 +199,7 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
         attributes: ["lessonquizquestionid", "lessonquizid"],
         raw: true,
       });
-      return curriculumIdsOf("lessonquiz", field(row, "lessonquizid"));
+      return curriculumIdsOf("lessonquiz", field(row, "lessonquizid"), reach);
     }
     case "levelquizquestion": {
       const row = await levelquizquestions.findOne({
@@ -193,7 +207,7 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
         attributes: ["levelquizquestionid", "levelid"],
         raw: true,
       });
-      return curriculumOfLevel(field(row, "levelid"));
+      return curriculumOfLevel(field(row, "levelid"), reach);
     }
     case "baselinequestion": {
       const row = await baselinequestion.findOne({
@@ -214,7 +228,7 @@ export async function curriculumIdsOf(kind: ContentKind, id: unknown): Promise<s
       const lessonids = [...new Set([...learnings, ...plans].map((r) => field(r, "lessonid")).filter((x): x is string => x !== null))];
       const out = new Set<string>();
       for (const lessonid of lessonids) {
-        for (const curriculumid of await curriculumOfLesson(lessonid)) {
+        for (const curriculumid of await curriculumOfLesson(lessonid, reach)) {
           out.add(curriculumid);
         }
       }
@@ -320,7 +334,8 @@ export async function canAccessContent(user: Token | undefined, kind: ContentKin
   if (!caller) {
     return false;
   }
-  const own = await curriculumIdsOf(kind, id);
+  // content under a level that is switched off is absent for every token (learner, teacher, admin): previewing a draft module is done on central
+  const own = await curriculumIdsOf(kind, id, { liveLevelsOnly: true });
   if (own.length === 0) {
     return false;
   }
@@ -359,12 +374,12 @@ export async function gradeIdsInScope(user: Token | undefined): Promise<string[]
   return rows.map((r) => field(r, "gradeid")).filter((x): x is string => x !== null);
 }
 
-/** The ids of the levels of the grades in the caller's scope. */
+/** The ids of the levels of the grades in the caller's scope that are switched on (a level that is switched off is not listed). */
 export async function levelIdsInScope(user: Token | undefined): Promise<string[]> {
   const gradeids = await gradeIdsInScope(user);
   if (gradeids.length === 0) {
     return [];
   }
-  const rows = await levels.findAll({ where: { gradeid: { [Op.in]: gradeids } }, attributes: ["levelid"], raw: true });
+  const rows = await levels.findAll({ where: { gradeid: { [Op.in]: gradeids }, levelstatus: true }, attributes: ["levelid"], raw: true });
   return rows.map((r) => field(r, "levelid")).filter((x): x is string => x !== null);
 }

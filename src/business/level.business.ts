@@ -160,6 +160,7 @@ export class LevelBusiness {
     let allowed = await gradeIdsInScope(user);
     const where: WhereOptions<levelsAttributes> = {
       isdeleted: false,
+      levelstatus: true, // a level that is switched off is not listed
       levelname: {
         [Op.like]: `%${levelname.trim()}%`
       }
