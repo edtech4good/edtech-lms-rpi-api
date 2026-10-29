@@ -18,6 +18,10 @@
  * the seed rows the translations hang from belong to that organisation (or to nobody yet). Inside the transaction
  * `applyPlan` then sets `contentlanguage` to `en` when it is unset (a different language stops the run), writes the
  * plan, and checks every translation row by its key, text and hash.
+ *
+ * A module after the first attaches to the curriculum and the grade Module 1 made: `preflight` refuses the run, naming which is
+ * missing, when the plan's `requires` rows are not in the database. `curriculumNameLengths` is how the seed says, without
+ * printing the client's text, whether the run changes the curriculum's name.
  */
 const { statementOf, ContentRefused } = require("./dcrs-content-plan");
 
@@ -48,6 +52,17 @@ async function preflight(conn, plan) {
     throw new ContentRefused(["this database has no contenttranslations table or no organisations.contentlanguage column; run the migrations first"]);
   }
   await organisationLanguage(conn, plan, false);
+  // A module after the first attaches to the curriculum and the grade that are already there; it never creates them.
+  const missing = [];
+  for (const { what, table, pk, ids } of plan.requires ?? []) {
+    const [[row]] = await conn.execute(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")})`, ids);
+    if (Number(row.n) !== ids.length) missing.push(what);
+  }
+  if (missing.length > 0) {
+    throw new ContentRefused([
+      `this file is module ${plan.module.number}, which attaches to the programme's existing ${missing.join(" and ")}, and this database has no such row; seed Module 1 first`,
+    ]);
+  }
   for (const { table, pk, ids } of plan.owned) {
     const [[row]] = await conn.execute(
       `SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")}) AND \`organisationid\` IS NOT NULL AND \`organisationid\` <> ?`,
@@ -55,6 +70,27 @@ async function preflight(conn, plan) {
     );
     if (Number(row.n) !== 0) throw new ContentRefused([`${row.n} ${table} row(s) of this seed belong to another organisation, so their translations cannot be this organisation's`]);
   }
+}
+
+/**
+ * The curriculum's name before this run and after it, as lengths in characters (the names are the client's text, so the text is never
+ * returned): `{ before: number | null, after: number, same: boolean }`, `before` null when the curriculum is not in the database yet. Read-only.
+ */
+async function curriculumNameLengths(conn, plan) {
+  const [rows] = await conn.execute("SELECT curriculumname FROM curriculums WHERE curriculumid = ?", [plan.curriculumid]);
+  const length = (text) => [...String(text)].length;
+  return {
+    before: rows.length === 0 ? null : length(rows[0].curriculumname),
+    after: length(plan.curriculumName),
+    same: rows.length > 0 && rows[0].curriculumname === plan.curriculumName,
+  };
+}
+
+/** One line saying what the run does to the curriculum's name, by length only. */
+function formatCurriculumName({ before, after, same }) {
+  if (before === null) return `  curriculum name: new, ${after} characters`;
+  if (same) return `  curriculum name: unchanged, ${after} characters`;
+  return `  curriculum name: renamed, ${before} characters before, ${after} after`;
 }
 
 /** Runs `plan`. Returns `{ tables: { table: {inserted, updated, unchanged, hidden} } }`; rolls back and throws on any failure. */
@@ -153,4 +189,4 @@ function formatReport(report) {
   ].join("\n");
 }
 
-module.exports = { applyPlan, verifyPlan, preflight, formatReport };
+module.exports = { applyPlan, verifyPlan, preflight, formatReport, curriculumNameLengths, formatCurriculumName };

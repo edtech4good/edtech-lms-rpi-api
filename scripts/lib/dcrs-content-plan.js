@@ -1,20 +1,24 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 /**
  * The pure half of `seed:dcrs -- --content <dir>`: turns a `content.json` into a plan
- * of row writes for the fixed DCRS ids, and refuses a content file that cannot be
- * written as it stands. Nothing here touches a database or a file.
+ * of row writes, and refuses a content file that cannot be written as it stands. Nothing
+ * here touches a database or a file.
  *
  * This file is a verbatim twin: edtech-lms-api/scripts/lib/dcrs-content-plan.js and
- * edtech-lms-rpi-api/scripts/lib/dcrs-content-plan.js must stay byte-identical (a spec
- * in each repo pins the hash; change both, then both hashes).
+ * edtech-lms-rpi-api/scripts/lib/dcrs-content-plan.js must stay byte-identical (a spec in each
+ * repo pins the hash; change both, then both hashes).
+ *
+ * The shape of what is written (product decision of 29 Oct 2026). The CURRICULUM is the programme: what a learner
+ * enrols in, what is published and certified. The GRADE is the programme's one track (it keeps the programme's name for
+ * now). Each MODULE is a LEVEL under that grade, in module order. So a file is one module of the programme:
  *
  * content.json
  * ```
- * { "programme":  { "en": "...", "km": "..." },                      // optional: the programme's name, one line each
- *   "curriculum": { "name": { "en": "...", "km": "..." } },
- *   "level":      { "name": { "en": "...", "km": "..." } },          // optional
+ * { "programme": { "en": "...", "km": "..." },                       // required: the curriculum's and the grade's name, one line each
+ *   "module":    { "number": 1, "name": { "en": "...", "km": "..." } },  // the level's name; the number is the level's order
  *   "lessons": [ {
- *     "id": "<one of the four fixed DCRS lesson ids>", "order": 1,
+ *     "id": "<one of the four fixed DCRS lesson ids>",               // Module 1 only; a later module's lessons have no id
+ *     "order": 1,                                                    // later modules: 1 to 12, each once, and it names the lesson's place
  *     "name":  { "en": "...", "km": "..." },
  *     "video": { "ref": "...", "filename": "dcrs-m1-l1.mp4", "source": "..." },   // source optional
  *     "practice": [ QUESTION, ... ], "quiz": [ QUESTION, ... ] } ] }
@@ -22,26 +26,42 @@
  *              "options": [ { "text": { "en", "km" }, "correct": true | false }, ... ],
  *              "feedback": { "correctmessage": { "en", "km" }, "incorrectmessage": { "en", "km" } } /* optional, each message optional *\/ }
  * ```
+ * The first shape of this file had `curriculum` and `level` (both the module title) and an optional `programme`; it is refused,
+ * with a message that names the shape above.
  *
  * What the plan does, in order (parents before the rows that hang from them):
- *  - upserts the curriculum (name), the level (name, when given), and for every lesson
- *    NAMED in the file: the lesson, its video document, learning item, practice and
- *    quiz, then the questions and the join rows that put them in the practice and the quiz;
- *  - hides what the file does not name, reversibly: the other lessons are marked
- *    `isdeleted` with their documents, and their learning items, practices, quizzes and
- *    join rows get status 0; seed questions the file no longer uses are marked `isdeleted`.
- *    Naming a lesson again in a later file un-hides it (the upsert sets the flags back).
+ *  - upserts the curriculum's name and the grade's name (both the programme's), the module's level (its name, its order = the
+ *    module number, its status), and for every lesson NAMED in the file: the lesson, its video document, learning item,
+ *    practice and quiz, then the questions and the join rows that put them in the practice and the quiz;
+ *  - hides what the file does not name, reversibly, within THIS module's level only: the module's other lessons are marked
+ *    `isdeleted` with their documents, and their learning items, practices, quizzes and join rows get status 0; the module's
+ *    own question ids the file no longer uses are marked `isdeleted`. Naming a lesson again in a later file un-hides it.
+ *    Nothing outside the module's level is touched: another module's lessons are never hidden by this one's file.
+ *  - the level is written with `levelstatus` 1, or 0 when the plan is asked for a draft (`{ draft: true }`, the seed's
+ *    `--draft`): a switched-off level is built but not shown to learners.
  *
- * Where the ids come from. Questions take the seed's seven fixed question ids in order
- * (the practice questions of the first named lesson, then its quiz questions, then the next
- * lesson's), so a file may carry at most seven questions in all. A lesson has room for four
- * practice and four quiz questions: its own seed join-row ids first, then ids reserved for
- * this mode (the c0000000-0000-4000-8000-0000000000xx namespace from 0x32 up).
+ * Where the ids come from.
+ *  - MODULE 1 keeps every id it ever had: the seed's fixed ids (the level, the four lessons, their documents, learning
+ *    items, practices and quizzes, the seven question ids, the join rows, then the c0000000-0000-4000-8000-0000000000xx
+ *    namespace from 0x32 up). Questions take the seven fixed question ids in order (the practice questions of the first named
+ *    lesson, then its quiz questions, then the next lesson's), so the file may carry at most seven questions in all; a lesson
+ *    has room for four practice and four quiz questions. Re-running Module 1 against a database it already wrote changes nothing.
+ *  - MODULE 2 AND LATER derive every id from MODULE_ID_NAMESPACE and a role path as an RFC 4122 version-5 UUID (`uuidV5`,
+ *    `moduleId`): `dcrs/m2/level`, `dcrs/m2/lesson/1`, `dcrs/m2/doc/1`, `dcrs/m2/learning/1`, `dcrs/m2/practice/1`,
+ *    `dcrs/m2/quiz/1`, `dcrs/m2/join/practice/1/3`, `dcrs/m2/q/quiz/1/2`, and for a translation row
+ *    `dcrs/m2/tr/<table>/<row id>/<field>/<subkey>`. Central and the student API seeded from the same file hold the same ids; no
+ *    id of one module can equal one of another, or one of Module 1's fixed ids (planContent asserts it). A module has room for
+ *    12 lessons (a lesson's `order`, 1 to 12, is its slot: dropping the lesson of order 3 from a later file hides lesson 3),
+ *    each with up to four practice and four quiz questions. The curriculum's and the grade's translation rows are the
+ *    programme's, not the module's: they keep the id Module 1 gives them whichever module writes them.
+ *  - The curriculum and the grade are never created by a module beyond Module 1's fixed ids: a Module 2+ file attaches to the
+ *    existing ones (`plan.requires`, checked by the applier's preflight), writes only their names, and is refused when they are
+ *    absent. A run whose programme differs from the curriculum's current name renames it; that is how the name is corrected.
  *
  * Two languages, one meaning each (bilingual content design, section 6.4, decision 2). The ENGLISH text
  * goes into the base columns of the rows above, because the readiness programme's organisation has the base
  * language `en` (`organisations.contentlanguage`). The KHMER text goes into `contenttranslations`, one row per
- * text, language `km`: the lesson, curriculum and level names (and the learning item, practice and quiz that
+ * text, language `km`: the lesson, curriculum, grade and level names (and the learning item, practice and quiz that
  * carry the lesson's name), the question text, its heading text, every option text keyed by the option's id
  * (`<question id>-opt-N`), and the feedback messages when the file has them. Each row records `sourcehash`, the
  * sha-256 of the exact English UTF-8 text it translates, so a later edit of the English makes it stale (and the
@@ -52,11 +72,10 @@
  * The organisation's `contentlanguage` is set to `en` when it has none; one that has another language is refused.
  *
  * Placeholders. The seed's own pass leaves descriptions like "DCRS lesson" and a grade called "Cohort II" that a learner
- * would see. Content mode blanks every description the file does not provide (curriculum, level, lesson, learning item,
- * practice, quiz: the empty string) and names the grade, whose name the navigation shows, after the programme the file
- * gives (`programme`, English in the base column, Khmer as its km translation); a file without a `programme` names it after
- * the module title instead (the curriculum's name, with its km translation). A description is only blanked in the rows this
- * mode writes.
+ * would see. Content mode blanks every description the file does not provide (curriculum, grade, level, lesson, learning item,
+ * practice, quiz: the empty string) in the rows it writes in full, and names the curriculum and the grade, whose names the
+ * navigation shows, after the programme. A later module writes only the names of the curriculum and the grade, and never
+ * touches their status or their other columns: a draft module must not publish the programme.
  */
 
 const { createHash } = require("crypto");
@@ -74,6 +93,14 @@ const IDENT = /^DCRS-[A-Za-z0-9-]+$/;
 const MAX_QUESTIONS_PER_SET = 4;
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 8;
+// A module after the first has room for this many lessons (Module 1 has its four fixed ones).
+const MAX_LESSONS_LATER_MODULE = 12;
+// The namespace of the version-5 ids of Module 2 and later. Fixed for good: changing it renames every id of every later module.
+const MODULE_ID_NAMESPACE = "5d7c3c0e-2b6a-4f0e-9a41-6e0c1f8d2a73";
+
+const OLD_SHAPE =
+  'content.json is in the old shape (it has "curriculum" or "level"); a file now has "programme": { "en", "km" } (required) and ' +
+  '"module": { "number": N, "name": { "en", "km" } } instead, and a module is one level of the programme';
 
 /** Thrown when a content file cannot be written as it stands; `problems` lists every reason. */
 class ContentRefused extends Error {
@@ -101,6 +128,19 @@ function translationId(tablename, rowid, field, subkey, language) {
   const h = createHash("sha256").update([tablename, rowid, field, subkey, language].join("\u0000"), "utf8").digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
+
+/** An RFC 4122 version-5 (name-based, SHA-1) UUID of `name` in `namespace` (a UUID string). */
+function uuidV5(namespace, name) {
+  const digest = createHash("sha1").update(Buffer.from(namespace.replace(/-/g, ""), "hex")).update(name, "utf8").digest();
+  const b = Buffer.from(digest.subarray(0, 16));
+  b[6] = (b[6] & 0x0f) | 0x50;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
+}
+
+/** The id of the row with this role path in module `n` (n >= 2): `moduleId(2, "lesson", 1)` is the id of `dcrs/m2/lesson/1`. */
+const moduleId = (n, ...path) => uuidV5(MODULE_ID_NAMESPACE, ["dcrs", `m${n}`, ...path].join("/"));
 
 /** A moment as the `YYYY-MM-DD HH:MM:SS.mmm` text of a UTC DATETIME(3). */
 function utcDatetime(moment) {
@@ -135,10 +175,28 @@ const LESSON_IDS = [
 const hex12 = (n) => n.toString(16).padStart(12, "0");
 
 /**
- * The fixed slots of the seed, from its id map: per lesson the rows that hang from it and
- * the join-row ids it may use; one pool of question ids.
+ * The slots of module `moduleNumber`: its level, per lesson the rows that hang from it and the join-row ids it may use, and
+ * the question ids. Module 1 (the default) takes them from the seed's id map and shares one pool of question ids; a later module
+ * derives every id from a role path (`pooled: false`), and each lesson slot then carries its own question ids.
  */
-function slotsOf(ID) {
+function slotsOf(ID, moduleNumber = 1) {
+  if (moduleNumber !== 1) {
+    const id = (...path) => moduleId(moduleNumber, ...path);
+    const upTo = (n) => Array.from({ length: n }, (_, i) => i + 1);
+    const lessons = upTo(MAX_LESSONS_LATER_MODULE).map((n) => ({
+      n,
+      id: id("lesson", n),
+      doc: id("doc", n),
+      learning: id("learning", n),
+      practice: id("practice", n),
+      quiz: id("quiz", n),
+      practiceJoins: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("join", "practice", n, j)),
+      quizJoins: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("join", "quiz", n, j)),
+      practiceQuestions: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("q", "practice", n, j)),
+      quizQuestions: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("q", "quiz", n, j)),
+    }));
+    return { moduleNumber, pooled: false, level: id("level"), lessons, questions: lessons.flatMap((l) => [...l.practiceQuestions, ...l.quizQuestions]) };
+  }
   let extra = 0x32;
   const nextExtra = () => `c0000000-0000-4000-8000-${hex12(extra++)}`;
   const existingQuizJoins = [
@@ -164,7 +222,14 @@ function slotsOf(ID) {
     };
   });
   const questions = [ID.q1, ID.q2, ID.q3, ID.q4, ID.q5, ID.q6, ID.q7];
-  return { lessons, questions };
+  return { moduleNumber: 1, pooled: true, level: ID.level, lessons, questions };
+}
+
+/** Every id a slot set holds (the level, and each lesson's rows, joins and questions). */
+function idsOfSlots(slots) {
+  const all = [slots.level, ...slots.questions];
+  for (const l of slots.lessons) all.push(l.id, l.doc, l.learning, l.practice, l.quiz, ...l.practiceJoins, ...l.quizJoins);
+  return all;
 }
 
 /**
@@ -173,13 +238,15 @@ function slotsOf(ID) {
  */
 function validateContent(content, ID) {
   const problems = [];
-  const slots = slotsOf(ID);
   const bilingual = (v, where) => {
     if (!isObject(v) || !isText(v.en) || !isText(v.km)) problems.push(`${where} needs a non-empty "en" and "km"`);
     else if (Buffer.byteLength(v.km, "utf8") > TRANSLATION_TEXT_MAX_BYTES) problems.push(`${where}.km is too long to store as a translation`);
   };
   if (!isObject(content)) throw new ContentRefused(["content.json is not an object"]);
-  if (content.programme !== undefined) {
+  if (content.curriculum !== undefined || content.level !== undefined) throw new ContentRefused([OLD_SHAPE]);
+  if (content.programme === undefined) {
+    problems.push('programme is missing; it is required, as "programme": { "en": "...", "km": "..." } (the curriculum and the grade are named after it)');
+  } else {
     bilingual(content.programme, "programme");
     // a programme's name is one line: the header that shows it has no room for a break
     for (const lang of ["en", "km"]) {
@@ -188,19 +255,24 @@ function validateContent(content, ID) {
       }
     }
   }
-  if (!isObject(content.curriculum)) problems.push("curriculum is missing");
-  else bilingual(content.curriculum.name, "curriculum.name");
-  if (content.level !== undefined) {
-    if (!isObject(content.level)) problems.push("level is not an object");
-    else bilingual(content.level.name, "level.name");
+  let moduleNumber = null;
+  if (!isObject(content.module)) problems.push('module is missing; it is required, as "module": { "number": N, "name": { "en": "...", "km": "..." } }');
+  else {
+    if (!Number.isSafeInteger(content.module.number) || content.module.number < 1) problems.push("module.number must be a whole number from 1");
+    else moduleNumber = content.module.number;
+    bilingual(content.module.name, "module.name");
   }
   if (!Array.isArray(content.lessons) || content.lessons.length === 0) {
     problems.push("lessons must be a non-empty list");
     throw new ContentRefused(problems);
   }
 
+  // Module 1 is a fixed set of ids (and is what a file whose number is unusable is checked as); a later module's lessons are its 12 slots by order.
+  const later = moduleNumber !== null && moduleNumber !== 1;
+  const slots = slotsOf(ID, moduleNumber ?? 1);
   const fixedLessonIds = new Set(slots.lessons.map((l) => l.id));
   const seenLessons = new Set();
+  const seenOrders = new Set();
   const seenIdents = new Set();
   const seenFiles = new Set();
   let questionCount = 0;
@@ -210,10 +282,18 @@ function validateContent(content, ID) {
       problems.push(`${at} is not an object`);
       return;
     }
-    if (typeof lesson.id !== "string" || !fixedLessonIds.has(lesson.id)) problems.push(`${at}.id is not a DCRS fixed lesson id`);
-    else if (seenLessons.has(lesson.id)) problems.push(`${at}.id is named twice`);
-    else seenLessons.add(lesson.id);
-    if (!Number.isInteger(lesson.order) || lesson.order < 1) problems.push(`${at}.order must be a whole number from 1`);
+    if (later) {
+      if (lesson.id !== undefined) problems.push(`${at}.id must not be given for module ${moduleNumber}: its lessons are identified by their order`);
+      if (!Number.isInteger(lesson.order) || lesson.order < 1 || lesson.order > MAX_LESSONS_LATER_MODULE) {
+        problems.push(`${at}.order must be a whole number from 1 to ${MAX_LESSONS_LATER_MODULE} (it is also the lesson's slot in the module)`);
+      } else if (seenOrders.has(lesson.order)) problems.push(`${at}.order ${lesson.order} is used by another lesson`);
+      else seenOrders.add(lesson.order);
+    } else {
+      if (typeof lesson.id !== "string" || !fixedLessonIds.has(lesson.id)) problems.push(`${at}.id is not a DCRS fixed lesson id`);
+      else if (seenLessons.has(lesson.id)) problems.push(`${at}.id is named twice`);
+      else seenLessons.add(lesson.id);
+      if (!Number.isInteger(lesson.order) || lesson.order < 1) problems.push(`${at}.order must be a whole number from 1`);
+    }
     bilingual(lesson.name, `${at}.name`);
     if (!isObject(lesson.video) || !isText(lesson.video.ref)) problems.push(`${at}.video.ref is missing`);
     else if (typeof lesson.video.filename !== "string" || !FILENAME.test(lesson.video.filename)) {
@@ -270,7 +350,8 @@ function validateContent(content, ID) {
       });
     }
   });
-  if (questionCount > slots.questions.length) {
+  // Module 1 draws its questions from the seed's seven fixed ids; a later module has a place for every question of every lesson.
+  if (!later && questionCount > slots.questions.length) {
     problems.push(`the file names ${questionCount} questions; the seed has ${slots.questions.length} fixed question ids`);
   }
   if (problems.length > 0) throw new ContentRefused(problems);
@@ -298,8 +379,9 @@ const optionRow = (i, text, correct) => ({
  * The plan for a validated content file.
  *
  * `ID` is the seed's id map; `organisationid` owns the rows a fresh insert would create and the
- * translation rows; `now` (a Date) is the time the translation rows are stamped with.
- * Returns `{ baseLanguage, translationLanguage, organisationid, steps, media, owned }`. A step is one of
+ * translation rows; `now` (a Date) is the time the translation rows are stamped with; `draft` writes the module's level
+ * switched off (`levelstatus` 0: built, not shown to learners) instead of on.
+ * Returns `{ baseLanguage, translationLanguage, organisationid, module, curriculumName, requires, steps, media, owned }`. A step is one of
  *   `{ kind: "upsert", table, pk, id, values, update }`  (INSERT ... ON DUPLICATE KEY UPDATE `update` columns)
  *   `{ kind: "translate", table: "contenttranslations", pk, id, values, update, touch }`  (the same, and `touch`
  *      (`lastupdated`) is only moved when a column of `update` changes)
@@ -307,44 +389,58 @@ const optionRow = (i, text, correct) => ({
  * Insert values outside `update` only matter for a row that is not there yet (the seed's
  * own placeholder pass normally creates them first), and never overwrite one that is.
  * `owned` lists the seed rows that must belong to `organisationid` (or to nobody yet) for the translations to be its own.
+ * `requires` lists the rows that must already be in the database (the curriculum and the grade, for a module after the first).
+ * `module` is `{ number, levelid, levelorder, levelstatus }`.
  */
-function planContent(content, ID, { organisationid, now } = {}) {
+function planContent(content, ID, { organisationid, now, draft = false } = {}) {
   validateContent(content, ID);
   if (!isText(organisationid)) throw new ContentRefused(["organisationid is required to plan"]);
+  if (typeof draft !== "boolean") throw new ContentRefused(["draft must be true or false"]);
   const stamp = utcDatetime(now);
-  const slots = slotsOf(ID);
+  const moduleNumber = content.module.number;
+  const later = moduleNumber !== 1;
+  const slots = slotsOf(ID, moduleNumber);
+  if (later) {
+    // No id of a later module may equal one of Module 1's fixed ids (the seed's whole id map, and Module 1's slots).
+    const taken = new Set([...Object.values(ID), ...idsOfSlots(slotsOf(ID, 1))]);
+    const clash = idsOfSlots(slots).filter((id) => taken.has(id));
+    if (clash.length > 0 || new Set(idsOfSlots(slots)).size !== idsOfSlots(slots).length) {
+      throw new Error(`module ${moduleNumber}: its derived ids are not distinct from Module 1's fixed ids`);
+    }
+  }
   const t = (text) => text.en;
   const translations = [];
-  const translate = (tablename, rowid, field, subkey, text) =>
-    translations.push({ tablename, rowid, field, subkey, en: text.en, km: text.km });
+  const translate = (tablename, rowid, field, subkey, text, programmeRow = false) =>
+    translations.push({ tablename, rowid, field, subkey, en: text.en, km: text.km, programmeRow });
   const steps = [];
   const upsert = (table, pk, values, update) => steps.push({ kind: "upsert", table, pk, id: values[pk], values, update });
   const hide = (table, pk, ids, set) => {
     if (ids.length > 0) steps.push({ kind: "hide", table, pk, ids: [...new Set(ids)], set });
   };
 
-  const named = new Map(content.lessons.map((l) => [l.id, l]));
+  // The slot of a named lesson: Module 1's by its fixed id, a later module's by its order.
+  const slotOfLesson = (lesson) => (later ? slots.lessons[lesson.order - 1] : slots.lessons.find((s) => s.id === lesson.id));
+  const named = new Map(content.lessons.map((l) => [slotOfLesson(l).id, l]));
   const live = slots.lessons.filter((s) => named.has(s.id)).sort((a, b) => named.get(a.id).order - named.get(b.id).order);
   const hidden = slots.lessons.filter((s) => !named.has(s.id));
 
+  // The curriculum is the programme. A later module only renames it (and never changes its status, its description or its owner).
   upsert(
     "curriculums",
     "curriculumid",
     {
       curriculumid: ID.curriculum,
-      curriculumname: t(content.curriculum.name),
+      curriculumname: t(content.programme),
       curriculumstatus: 1,
       curriculumdescription: "",
       isdeleted: 0,
       subjectid: ID.subject,
       organisationid,
     },
-    ["curriculumname", "curriculumdescription", "curriculumstatus", "isdeleted"],
+    later ? ["curriculumname"] : ["curriculumname", "curriculumdescription", "curriculumstatus", "isdeleted"],
   );
-  translate("curriculums", ID.curriculum, "curriculumname", "", content.curriculum.name);
-  // The grade's name is shown in the learner's navigation and cannot be empty: it is the programme the file gives, or, when the file
-  // has none, the module title (the curriculum's name).
-  const gradeName = content.programme ?? content.curriculum.name;
+  translate("curriculums", ID.curriculum, "curriculumname", "", content.programme, true);
+  // The grade is the programme's one track and keeps its name; the navigation shows it and it cannot be empty.
   upsert(
     "grades",
     "gradeid",
@@ -352,45 +448,46 @@ function planContent(content, ID, { organisationid, now } = {}) {
       gradeid: ID.grade,
       curriculumid: ID.curriculum,
       gradestatus: 1,
-      gradename: t(gradeName),
+      gradename: t(content.programme),
       gradedescription: "",
       gradeorder: 1,
       isdeleted: 0,
       passing_points: 80,
       points: 100,
     },
-    ["gradename", "gradedescription", "gradestatus", "isdeleted"],
+    later ? ["gradename"] : ["gradename", "gradedescription", "gradestatus", "isdeleted"],
   );
-  translate("grades", ID.grade, "gradename", "", gradeName);
-  if (content.level) {
-    upsert(
-      "levels",
-      "levelid",
-      {
-        levelid: ID.level,
-        gradeid: ID.grade,
-        levelname: t(content.level.name),
-        leveldescription: "",
-        isdeleted: 0,
-        levelstatus: 1,
-        levelorder: 1,
-        passing_points: 80,
-        quiz_points: 20,
-        points: 100,
-      },
-      ["levelname", "leveldescription", "levelstatus", "isdeleted"],
-    );
-    translate("levels", ID.level, "levelname", "", content.level.name);
-  }
+  translate("grades", ID.grade, "gradename", "", content.programme, true);
+  // Each module is a level under that grade, in module order.
+  const levelstatus = draft ? 0 : 1;
+  upsert(
+    "levels",
+    "levelid",
+    {
+      levelid: slots.level,
+      gradeid: ID.grade,
+      levelname: t(content.module.name),
+      leveldescription: "",
+      isdeleted: 0,
+      levelstatus,
+      levelorder: moduleNumber,
+      passing_points: 80,
+      quiz_points: 20,
+      points: 100,
+    },
+    later ? ["levelname", "leveldescription", "levelstatus", "levelorder", "isdeleted"] : ["levelname", "leveldescription", "levelstatus", "isdeleted"],
+  );
+  translate("levels", slots.level, "levelname", "", content.module.name);
 
-  // Which question id each question takes: in order through the live lessons, practice before quiz.
+  // Which question id each question takes. Module 1: in order through the live lessons, practice before quiz, from the seed's seven.
+  // A later module: the id of its own role (this lesson's slot, this kind, this place).
   let nextQuestion = 0;
   const assigned = [];
   const placed = live.map((slot) => {
     const lesson = named.get(slot.id);
     const take = (list, kind) =>
       list.map((q, j) => {
-        const id = slots.questions[nextQuestion++];
+        const id = later ? (kind === "practice" ? slot.practiceQuestions : slot.quizQuestions)[j] : slots.questions[nextQuestion++];
         assigned.push(id);
         return { q, id, kind, join: (kind === "practice" ? slot.practiceJoins : slot.quizJoins)[j] };
       });
@@ -403,7 +500,7 @@ function planContent(content, ID, { organisationid, now } = {}) {
       "lessonid",
       {
         lessonid: slot.id,
-        levelid: ID.level,
+        levelid: slots.level,
         lessonname: t(lesson.name),
         lessondescription: "",
         practicecount: 1,
@@ -544,10 +641,14 @@ function planContent(content, ID, { organisationid, now } = {}) {
     );
   }
 
-  // The Khmer text, one row per text, after every row it hangs from.
+  // The Khmer text, one row per text, after every row it hangs from. The programme's rows (curriculum, grade) keep the id Module 1 gives
+  // them whichever module writes them; every other row of a later module takes a version-5 id from its role path.
   for (const x of translations) {
     const values = {
-      translationid: translationId(x.tablename, x.rowid, x.field, x.subkey, TRANSLATION_LANGUAGE),
+      translationid:
+        later && !x.programmeRow
+          ? moduleId(moduleNumber, "tr", x.tablename, x.rowid, x.field, x.subkey)
+          : translationId(x.tablename, x.rowid, x.field, x.subkey, TRANSLATION_LANGUAGE),
       organisationid,
       tablename: x.tablename,
       rowid: x.rowid,
@@ -561,7 +662,7 @@ function planContent(content, ID, { organisationid, now } = {}) {
     steps.push({ kind: "translate", table: "contenttranslations", pk: "translationid", id: values.translationid, values, update: ["text", "sourcehash"], touch: "lastupdated" });
   }
 
-  // Hidden, reversibly: what the file does not name.
+  // Hidden, reversibly: what the file does not name, in this module's own slots only.
   hide("lessons", "lessonid", hidden.map((s) => s.id), { isdeleted: 1 });
   hide("documents", "documentid", hidden.map((s) => s.doc), { isdeleted: 1 });
   hide("lessonlearnings", "lessonlearningid", hidden.map((s) => s.learning), { lessonlearningstatus: 0 });
@@ -594,7 +695,25 @@ function planContent(content, ID, { organisationid, now } = {}) {
     { table: "documents", pk: "documentid", ids: placed.map((p) => p.slot.doc) },
     { table: "questions", pk: "questionid", ids: assigned },
   ];
-  return { baseLanguage: BASE_LANGUAGE, translationLanguage: TRANSLATION_LANGUAGE, organisationid, steps, media, owned };
+  // A module after the first attaches to the curriculum and the grade that exist; it never creates them.
+  const requires = later
+    ? [
+        { what: "curriculum", table: "curriculums", pk: "curriculumid", ids: [ID.curriculum] },
+        { what: "grade", table: "grades", pk: "gradeid", ids: [ID.grade] },
+      ]
+    : [];
+  return {
+    baseLanguage: BASE_LANGUAGE,
+    translationLanguage: TRANSLATION_LANGUAGE,
+    organisationid,
+    module: { number: moduleNumber, levelid: slots.level, levelorder: moduleNumber, levelstatus },
+    curriculumid: ID.curriculum,
+    curriculumName: t(content.programme),
+    requires,
+    steps,
+    media,
+    owned,
+  };
 }
 
 /** The SQL and parameters of one step. Identifiers come from the plan, which only this file builds. */
@@ -634,11 +753,17 @@ module.exports = {
   TRANSLATION_LANGUAGE,
   ANSWER_BEARING_FIELDS,
   FILENAME,
+  MODULE_ID_NAMESPACE,
+  MAX_LESSONS_LATER_MODULE,
+  OLD_SHAPE,
   ContentRefused,
   validateContent,
   planContent,
   statementOf,
   slotsOf,
+  idsOfSlots,
+  uuidV5,
+  moduleId,
   sourceHash,
   translationId,
   questionTexts,

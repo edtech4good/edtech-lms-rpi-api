@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
 /**
  * The command-line half of `seed:dcrs -- --content <dir>`, shared by both seed scripts:
- * reads the arguments, loads and checks `<dir>/content.json`, and prints a dry run. The
- * folder is only read.
+ * reads the arguments (`--content <dir>`, `--draft`, `--dry-run`, `--help`), loads and checks
+ * `<dir>/content.json`, and prints a dry run. The folder is only read.
  *
  * Verbatim twin: edtech-lms-api/scripts/lib/dcrs-content-cli.js and
  * edtech-lms-rpi-api/scripts/lib/dcrs-content-cli.js stay byte-identical (a spec in each
@@ -15,19 +15,28 @@ const { ContentRefused, LESSON_IDS, validateContent, planContent } = require("./
 const LANG_RETIRED =
   "--lang is retired: the English text is the base text of every row and the Khmer text is stored as translations (bilingual content design, section 6.4), so there is no language to choose";
 
-/** `--content <dir>` and `--dry-run`; `--lang` (retired) and anything else are refused. */
+/** The help line: what the options are, and what `--draft` does to the module's level. */
+const USAGE =
+  "usage: seed:dcrs -- --content <dir> [--draft] [--dry-run]  (--draft writes the module's level switched off, levelstatus 0: built but not shown to learners; " +
+  "without it the level is on, levelstatus 1)";
+
+/** `--content <dir>`, `--draft`, `--dry-run` and `--help`; `--lang` (retired) and anything else are refused. */
 function parseArgs(argv) {
-  const args = { content: null, dryRun: false };
+  const args = { content: null, dryRun: false, draft: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--content") args.content = argv[++i];
     else if (argv[i] === "--lang" || String(argv[i]).startsWith("--lang=")) throw new ContentRefused([LANG_RETIRED]);
     else if (argv[i] === "--dry-run") args.dryRun = true;
+    else if (argv[i] === "--draft") args.draft = true;
+    else if (argv[i] === "--help") args.help = true;
     else throw new ContentRefused([`unknown argument ${argv[i]}`]);
   }
+  if (args.help) return args;
   if (args.content !== null && (typeof args.content !== "string" || args.content === "" || args.content.startsWith("--"))) {
     throw new ContentRefused(["--content needs a folder"]);
   }
   if (args.content === null && args.dryRun) throw new ContentRefused(["--dry-run only applies with --content"]);
+  if (args.content === null && args.draft) throw new ContentRefused(["--draft only applies with --content"]);
   return args;
 }
 
@@ -55,6 +64,10 @@ function readContent(dir, ID) {
 function prepare(argv, ID) {
   try {
     const args = parseArgs(argv);
+    if (args.help) {
+      console.log(USAGE);
+      process.exit(0);
+    }
     for (const [i, id] of LESSON_IDS.entries()) {
       if (id !== ID[`lesson${i + 1}`]) throw new ContentRefused(["the lesson ids of the plan and of this seed disagree"]);
     }
@@ -74,9 +87,10 @@ function refuse(err) {
 }
 
 /** The plan as table names and counts; no content, no database. */
-function printDryRun(content, ID) {
-  const plan = planContent(content, ID, { organisationid: "dry-run", now: new Date(0) });
+function printDryRun(content, ID, { draft = false } = {}) {
+  const plan = planContent(content, ID, { organisationid: "dry-run", now: new Date(0), draft });
   console.log(`DCRS content plan (dry run, base language ${plan.baseLanguage}, translations ${plan.translationLanguage}): ${plan.steps.length} steps, no database used.`);
+  console.log(`  module ${plan.module.number}: its level is order ${plan.module.levelorder}, ${plan.module.levelstatus === 1 ? "on (levelstatus 1)" : "switched off (levelstatus 0, --draft)"}`);
   const translated = {};
   for (const step of plan.steps) {
     if (step.kind === "translate") translated[step.values.tablename] = (translated[step.values.tablename] ?? 0) + 1;
@@ -86,4 +100,4 @@ function printDryRun(content, ID) {
   for (const m of plan.media) console.log(`  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`);
 }
 
-module.exports = { parseArgs, readContent, prepare, refuse, printDryRun };
+module.exports = { USAGE, parseArgs, readContent, prepare, refuse, printDryRun };
