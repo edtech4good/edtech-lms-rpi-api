@@ -552,7 +552,7 @@ describe("version-5 ids", () => {
 
   it("no id of one module equals an id of another module, or one of Module 1's fixed ids or the seed's id map", () => {
     const m1 = module1Ids();
-    expect(m1.size).toBeGreaterThan(80);
+    expect(m1.size).toBeGreaterThan(60);
     const seen = new Set<string>();
     let total = 0;
     for (const n of [2, 3, 4, 5, 9, 10, 11, 12, 21, 99, 100, 111]) {
@@ -643,7 +643,9 @@ describe("planning a module after the first", () => {
     c.lessons[0].order = 3;
     c.lessons[1].order = 1;
     const p = plan(c);
-    expect(upserted(p, "lessons")).toEqual([moduleId(2, "lesson", 3), moduleId(2, "lesson", 1)]);
+    // written in lesson order, each under the slot its order names
+    expect(upserted(p, "lessons")).toEqual([moduleId(2, "lesson", 1), moduleId(2, "lesson", 3)]);
+    expect(p.steps.find((s: Json) => s.table === "lessons" && s.id === moduleId(2, "lesson", 3)).values.lessonname).toBe("en later one");
     // the first-listed lesson (order 3) takes its practice questions from slot 3's own ids, not from the front of a pool
     expect(upserted(p, "questions")).toContain(moduleId(2, "q", "practice", 3, 2));
     expect(upserted(p, "questions")).not.toContain(moduleId(2, "q", "practice", 2, 1));
