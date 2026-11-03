@@ -1199,6 +1199,67 @@ describe("teacher routes: only the learners of the token's school", () => {
     await bothStaffRefused(check, "get", path(ST_X1));
     return failures;
   };
+  // The teacher statistics routes answer for the learner named in the path.
+  const statsRouteChannels = (suffix: string, ownLearner: boolean) => async () => {
+    const { failures, check } = scenario();
+    const path = (id: string) => `/teacher/stats/student/${id}${suffix}`;
+    const ask = (channel: "plain" | "variantA" | "variantB", id: string, auth: Auth, other: string) =>
+      channel === "variantA" ? send("get", `${path(id)}?studentid=${other}`, auth)
+        : channel === "variantB" ? send("get", path(id), auth, { studentid: other })
+        : send("get", path(id), auth);
+    const absent = await send("get", path(NOWHERE), X_TEACHER);
+    check(`a learner that is not there -> ${absent.status} (wanted 400)`, absent.status === 400);
+    for (const channel of ["plain", "variantA", "variantB"] as const) {
+      if (ownLearner) {
+        // the caller's own learner in the path still answers, whatever else is carried
+        reset();
+        const mine = await ask(channel, ST_X1, X_TEACHER, ST_Y1);
+        check(`${channel}: X teacher, own learner (with a second learner id) -> ${mine.status} (wanted 200)`, mine.status === 200);
+        check(`${channel}: X teacher, own learner: the statistics were read for the learner in the path (${JSON.stringify(rawQueries.map((q) => q.replacements))})`, rawQueries.length === 1 && rawQueries[0].replacements[0] === ST_X1);
+        continue;
+      }
+      reset();
+      for (const [name, auth, id, own] of [
+        ["X teacher, Y's learner", X_TEACHER, ST_Y1, ST_X1],
+        ["X admin, Y's learner", X_ADMIN, ST_Y1, ST_X1],
+        ["X teacher, the legacy school's learner", X_TEACHER, ST_L1, ST_X1],
+        ["X teacher, a second legacy school's learner", X_TEACHER, ST_L2, ST_X1],
+        ["Y teacher, X's learner", Y_TEACHER, ST_X1, ST_Y1],
+        ["X teacher, a learner of Y whose class is a class of X", X_TEACHER, ST_R, ST_X1],
+      ] as Array<[string, Auth, string, string]>) {
+        const r = await ask(channel, id, auth, own);
+        check(`${channel}: ${name} -> ${r.status} (wanted 400)`, r.status === 400);
+        check(`${channel}: ${name}: the whole answer is the one for a learner that is not there`, text(r.body) === text(absent.body));
+      }
+      check(`${channel}: no statistics were read for a learner of another school (${JSON.stringify(rawQueries.map((q) => q.replacements))})`, rawQueries.length === 0);
+    }
+    return failures;
+  };
+
+  // The handler asks the question itself: called with no interceptor in front of it, a learner of another school is refused
+  // the way an unknown learner is.
+  const statsHandler = (method: "getstudentstats" | "getstudentpracticestats" | "getstudentquizstats" | "getstudentlevelstats") => async () => {
+    const controller = app.get(TeacherController);
+    const xTeacher = staff(SU_TX, SchoolRole.TEACHER, SCH_X, ORG_X) as never;
+    const refusal = async (id: string, user = xTeacher) => {
+      try {
+        await controller[method](id, user);
+        return "answered";
+      } catch (e) {
+        return JSON.stringify({ name: (e as Error).name, status: (e as { getStatus?: () => number }).getStatus?.(), message: (e as Error).message, fields: (e as { fields?: unknown }).fields });
+      }
+    };
+    reset();
+    const absent = await refusal(NOWHERE);
+    expect(absent).not.toBe("answered");
+    expect(await refusal(ST_Y1)).toBe(absent);
+    expect(await refusal(ST_L1)).toBe(absent);
+    expect(await refusal(ST_L2)).toBe(absent);
+    expect(await refusal(ST_X1, staff(SU_TY, SchoolRole.TEACHER, SCH_Y, ORG_Y) as never)).toBe(absent);
+    expect(rawQueries).toEqual([]);
+    expect(await refusal(ST_X1)).toBe("answered");
+    expect(rawQueries.map((q) => q.replacements[0])).toEqual([ST_X1]);
+  };
   it("GET /teacher/stats/student/:studentid answers for a learner of the token's school only, and a learner of another school is an unknown learner", async () => {
     expect(await statsRoute("")()).toEqual([]);
   });
@@ -1210,6 +1271,22 @@ describe("teacher routes: only the learners of the token's school", () => {
   });
   it("GET /teacher/stats/student/:studentid/level answers for a learner of the token's school only, and a learner of another school is an unknown learner", async () => {
     expect(await statsRoute("/level")()).toEqual([]);
+  });
+
+  it("teacher stats: a learner of another school or organisation is an unknown learner on all four routes", async () => {
+    for (const suffix of ["", "/practice", "/quiz", "/level"]) {
+      expect({ suffix, failures: await statsRouteChannels(suffix, false)() }).toEqual({ suffix, failures: [] });
+    }
+  });
+  it("teacher stats: the caller's own learner answers on all four routes", async () => {
+    for (const suffix of ["", "/practice", "/quiz", "/level"]) {
+      expect({ suffix, failures: await statsRouteChannels(suffix, true)() }).toEqual({ suffix, failures: [] });
+    }
+  });
+  it("teacher stats handlers check the learner in the path themselves (all four)", async () => {
+    for (const method of ["getstudentstats", "getstudentpracticestats", "getstudentquizstats", "getstudentlevelstats"] as const) {
+      await statsHandler(method)();
+    }
   });
 
   it("GET /teacher/standard/all lists only the classes of the token's school", () =>
