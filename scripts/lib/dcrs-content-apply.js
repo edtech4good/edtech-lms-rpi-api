@@ -24,10 +24,14 @@
  * printing the client's text, whether the run changes the curriculum's name.
  *
  * `readExisting` is what the seed reads, read-only, BEFORE it plans (and before its placeholder pass): the grade's levels (whether
- * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
- * require one for a new level, compute the grade's points over the live levels, and refuse a lesson slot that would change meaning.
+ * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are (their pass marks and counts
+ * too), so that the plan can keep an existing level's switch, require one for a new level, compute the grade's points over the live levels,
+ * and refuse a lesson slot that would change meaning or a file that would leave an existing lesson impossible to complete.
+ *
+ * These checks run against rows, so they run only in a real run: the dry run (`--dry-run`) opens no database connection and cannot make
+ * them. They are made at the start of the real run, before any content write, and a refusal there writes nothing.
  */
-const { statementOf, slotsOf, ContentRefused } = require("./dcrs-content-plan");
+const { statementOf, slotsOf, lessonSlotsOf, questionIdsOf, isSeedPlaceholder, ContentRefused } = require("./dcrs-content-plan");
 
 const blank = () => ({ inserted: 0, updated: 0, unchanged: 0, hidden: 0 });
 
@@ -51,7 +55,7 @@ async function organisationLanguage(conn, plan, lock) {
  * What the plan needs to know of the database (see planContent's `existing`): every level of the grade, and the module's lesson slots
  * that exist. Read-only; nothing is written. A grade that is not there yet simply has no levels.
  */
-async function readExisting(conn, content, ID) {
+async function readExisting(conn, content, ID, placeholders = []) {
   const slots = slotsOf(ID, content.module.number);
   // `levelquizrows`: the level's active level-quiz questions (the same "active" the student API reports as level_has_quiz); its quiz_points count only when there is one.
   const [levels] = await conn.execute(
@@ -60,12 +64,48 @@ async function readExisting(conn, content, ID) {
       "FROM `levels` l WHERE l.`gradeid` = ?",
     [ID.grade],
   );
-  const lessonids = slots.lessons.map((l) => l.id);
+  const lessonids = lessonSlotsOf(slots).map((l) => l.id);
   const [lessons] = await conn.execute(
-    `SELECT lessonid, lessonname, isdeleted, total_points FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
+    "SELECT lessonid, lessonname, isdeleted, total_points, passing_points, learning_points, quizzes_points, practices_points, practicecount, quizcount " +
+      `FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
     lessonids,
   );
-  return { levels, lessons };
+  // The module's question slots that exist: which sets (practice, quiz) hold each by an active join row, and its stored options (what a
+  // learner's answers were given against). The plan refuses a file that would change either of them.
+  const questionids = questionIdsOf(slots);
+  const marks = questionids.map(() => "?").join(", ");
+  const [questionRows] = await conn.execute(`SELECT questionid, questionidentifier, questionoptions FROM \`questions\` WHERE \`questionid\` IN (${marks})`, questionids);
+  const [practiceJoins] = await conn.execute(
+    `SELECT DISTINCT questionid FROM \`lessonpracticequestions\` WHERE \`lessonpracticequestionstatus\` = 1 AND \`questionid\` IN (${marks})`,
+    questionids,
+  );
+  const [quizJoins] = await conn.execute(
+    `SELECT DISTINCT questionid FROM \`lessonquizquestions\` WHERE \`lessonquizquestionstatus\` = 1 AND \`questionid\` IN (${marks})`,
+    questionids,
+  );
+  const inPractice = new Set(practiceJoins.map((r) => r.questionid));
+  const inQuiz = new Set(quizJoins.map((r) => r.questionid));
+  const optionsOf = (raw) => {
+    try {
+      const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(value) ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  // `placeholders` is what the seed's own placeholder pass writes for each question ({ questionid, ident, options: [{ text, correct }] }).
+  // `placeholder` marks a stored question that is still exactly that (see isSeedPlaceholder): it has no meaning yet to keep.
+  const seeded = new Map(placeholders.map((p) => [p.questionid, p]));
+  const questions = questionRows.map((r) => {
+    const options = optionsOf(r.questionoptions);
+    return {
+      questionid: r.questionid,
+      roles: [...(inPractice.has(r.questionid) ? ["practice"] : []), ...(inQuiz.has(r.questionid) ? ["quiz"] : [])],
+      options,
+      placeholder: isSeedPlaceholder({ ident: r.questionidentifier, options }, seeded.get(r.questionid)),
+    };
+  });
+  return { levels, lessons, questions };
 }
 
 /** Read-only checks before anything of the content is written; throws ContentRefused with the reason. */
@@ -77,17 +117,30 @@ async function preflight(conn, plan) {
     throw new ContentRefused(["this database has no contenttranslations table or no organisations.contentlanguage column; run the migrations first"]);
   }
   await organisationLanguage(conn, plan, false);
-  // A module after the first attaches to the curriculum and the grade that are already there; it never creates them.
+  // A module after the first attaches to the curriculum and the grade that are already there; it never creates them. A lesson whose video is kept needs the document row it keeps.
   const missing = [];
-  for (const { what, table, pk, ids } of plan.requires ?? []) {
+  const missingVideos = [];
+  const deletedVideos = [];
+  for (const { what, kept, table, pk, ids } of plan.requires ?? []) {
     const [[row]] = await conn.execute(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")})`, ids);
-    if (Number(row.n) !== ids.length) missing.push(what);
+    if (Number(row.n) !== ids.length) (kept ? missingVideos : missing).push(what);
+    else if (kept) {
+      // The row stays as it is, so a deleted one stays deleted: the lesson would show a video that is gone.
+      const [[gone]] = await conn.execute(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")}) AND \`isdeleted\` <> 0`, ids);
+      if (Number(gone.n) !== 0) deletedVideos.push(what);
+    }
   }
+  const refusals = [];
   if (missing.length > 0) {
-    throw new ContentRefused([
-      `this file is module ${plan.module.number}, which attaches to the programme's existing ${missing.join(" and ")}, and this database has no such row; seed Module 1 first`,
-    ]);
+    refusals.push(`this file is module ${plan.module.number}, which attaches to the programme's existing ${missing.join(" and ")}, and this database has no such row; seed Module 1 first`);
   }
+  if (missingVideos.length > 0) {
+    refusals.push(`${missingVideos.join(" and ")} is kept as it is, and this database has no such document row; there is nothing to keep (name a video file for the lesson instead)`);
+  }
+  if (deletedVideos.length > 0) {
+    refusals.push(`${deletedVideos.join(" and ")} is kept as it is, and that document row is marked deleted (isdeleted 1); a kept video is never un-deleted by this import`);
+  }
+  if (refusals.length > 0) throw new ContentRefused(refusals);
   for (const { table, pk, ids } of plan.owned) {
     const [[row]] = await conn.execute(
       `SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")}) AND \`organisationid\` IS NOT NULL AND \`organisationid\` <> ?`,
@@ -155,6 +208,9 @@ async function applyPlan(conn, plan) {
   return { tables };
 }
 
+/** The switch columns (isdeleted / status) a step's row is written with, as `[column, value]`. */
+const switchesOf = (step) => step.update.filter((c) => /^(isdeleted|\w+status)$/.test(c)).map((c) => [c, step.values[c]]);
+
 /**
  * Every row the plan upserts is there, and every row of it that exists and should be hidden is hidden:
  * counted, not assumed. (A join-row slot the plan hides may never have been created; that is not a failure.)
@@ -174,7 +230,8 @@ async function verifyPlan(conn, plan) {
       if (Number(row.n) !== 1) throw new Error(`content check failed: the ${v.language} translation of ${v.tablename}.${v.field} is not there as the plan wrote it`);
       continue;
     }
-    const key = `${step.kind}:${step.table}:${step.pk}`;
+    // Rows of one table are counted together only when they are meant to carry the same switch values (a practice set written switched off sits beside one switched on).
+    const key = `${step.kind}:${step.table}:${step.pk}:${step.kind === "upsert" ? JSON.stringify(switchesOf(step)) : ""}`;
     const entry = byTable.get(key) ?? { step, ids: [] };
     entry.ids.push(...(step.kind === "upsert" ? [step.id] : step.ids));
     byTable.set(key, entry);
@@ -196,7 +253,7 @@ async function verifyPlan(conn, plan) {
       if (done !== there) throw new Error(`content check failed: ${step.table} has ${there - done} of ${there} rows the plan hid still showing`);
     } else {
       // A live row: each of the step's own switch columns (isdeleted / status) is the value the plan wrote.
-      const switches = step.update.filter((c) => /^(isdeleted|\w+status)$/.test(c)).map((c) => [c, step.values[c]]);
+      const switches = switchesOf(step);
       const n = await count(step.table, step.pk, ids, switches);
       if (n !== ids.length) throw new Error(`content check failed: ${step.table} has ${n} of the ${ids.length} rows the plan wrote`);
     }
