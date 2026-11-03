@@ -27,7 +27,7 @@
  * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
  * require one for a new level, compute the grade's points over the live levels, and refuse a lesson slot that would change meaning.
  */
-const { statementOf, slotsOf, lessonSlotsOf, ContentRefused } = require("./dcrs-content-plan");
+const { statementOf, slotsOf, lessonSlotsOf, questionIdsOf, ContentRefused } = require("./dcrs-content-plan");
 
 const blank = () => ({ inserted: 0, updated: 0, unchanged: 0, hidden: 0 });
 
@@ -65,8 +65,39 @@ async function readExisting(conn, content, ID) {
     `SELECT lessonid, lessonname, isdeleted, total_points FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
     lessonids,
   );
-  return { levels, lessons };
+  // The module's question slots that exist: which sets (practice, quiz) hold each by an active join row, and its stored options (what a
+  // learner's answers were given against). The plan refuses a file that would change either of them.
+  const questionids = questionIdsOf(slots);
+  const marks = questionids.map(() => "?").join(", ");
+  const [questionRows] = await conn.execute(`SELECT questionid, questionoptions FROM \`questions\` WHERE \`questionid\` IN (${marks})`, questionids);
+  const [practiceJoins] = await conn.execute(
+    `SELECT DISTINCT questionid FROM \`lessonpracticequestions\` WHERE \`lessonpracticequestionstatus\` = 1 AND \`questionid\` IN (${marks})`,
+    questionids,
+  );
+  const [quizJoins] = await conn.execute(
+    `SELECT DISTINCT questionid FROM \`lessonquizquestions\` WHERE \`lessonquizquestionstatus\` = 1 AND \`questionid\` IN (${marks})`,
+    questionids,
+  );
+  const inPractice = new Set(practiceJoins.map((r) => r.questionid));
+  const inQuiz = new Set(quizJoins.map((r) => r.questionid));
+  const optionsOf = (raw) => {
+    try {
+      const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(value) ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const questions = questionRows.map((r) => ({
+    questionid: r.questionid,
+    roles: [...(inPractice.has(r.questionid) ? ["practice"] : []), ...(inQuiz.has(r.questionid) ? ["quiz"] : [])],
+    options: optionsOf(r.questionoptions),
+  }));
+  return { levels, lessons, questions };
 }
+
+/** The document ids of the lessons whose video the plan keeps (their rows are not written, so nothing else may write them either). */
+const keptDocumentIds = (plan) => (plan.requires ?? []).filter((r) => r.kept).flatMap((r) => r.ids);
 
 /** Read-only checks before anything of the content is written; throws ContentRefused with the reason. */
 async function preflight(conn, plan) {
@@ -80,9 +111,15 @@ async function preflight(conn, plan) {
   // A module after the first attaches to the curriculum and the grade that are already there; it never creates them. A lesson whose video is kept needs the document row it keeps.
   const missing = [];
   const missingVideos = [];
+  const deletedVideos = [];
   for (const { what, kept, table, pk, ids } of plan.requires ?? []) {
     const [[row]] = await conn.execute(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")})`, ids);
     if (Number(row.n) !== ids.length) (kept ? missingVideos : missing).push(what);
+    else if (kept) {
+      // The row stays as it is, so a deleted one stays deleted: the lesson would show a video that is gone.
+      const [[gone]] = await conn.execute(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")}) AND \`isdeleted\` <> 0`, ids);
+      if (Number(gone.n) !== 0) deletedVideos.push(what);
+    }
   }
   const refusals = [];
   if (missing.length > 0) {
@@ -90,6 +127,9 @@ async function preflight(conn, plan) {
   }
   if (missingVideos.length > 0) {
     refusals.push(`${missingVideos.join(" and ")} is kept as it is, and this database has no such document row; there is nothing to keep (name a video file for the lesson instead)`);
+  }
+  if (deletedVideos.length > 0) {
+    refusals.push(`${deletedVideos.join(" and ")} is kept as it is, and that document row is marked deleted (isdeleted 1); a kept video is never un-deleted by this import`);
   }
   if (refusals.length > 0) throw new ContentRefused(refusals);
   for (const { table, pk, ids } of plan.owned) {
@@ -222,4 +262,4 @@ function formatReport(report) {
   ].join("\n");
 }
 
-module.exports = { applyPlan, verifyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName };
+module.exports = { applyPlan, verifyPlan, preflight, readExisting, keptDocumentIds, formatReport, curriculumNameLengths, formatCurriculumName };

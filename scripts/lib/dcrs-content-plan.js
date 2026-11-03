@@ -55,6 +55,10 @@
  *    levels that are switched on and not deleted. The plan computes both for what it writes; the levels it does not write (the other
  *    modules, and any a person added) come in as `existing`, which the seed reads from the database before it plans. So the
  *    learner's progress (`points * 100 / grade.points`) is out of the live modules only: a draft module does not move it.
+ *  - A NEW LESSON'S PASS MARK is `lessonPassingPoints`: 80, or the points a learner can reach when that is less (a lesson with no practice
+ *    or no quiz has fewer to earn: 60, and with neither 20). It is written once, with the lesson; a lesson already there keeps its columns.
+ *  - AN EXISTING QUESTION KEEPS ITS MEANING. A question id that is in the database is refused, before any write, when the file would move
+ *    it between practice and quiz, change its number of options or move its correct option (`existing.questions`); its text may change.
  *  - A MODULE 2+ LESSON SLOT CANNOT CHANGE MEANING. A later module's lesson is identified by its `order`; a run is refused when an
  *    existing lesson in a slot, hidden or not, has another English name than the file's lesson for that slot, unless `renameLessons`
  *    (`--rename-lessons`) says the rename is meant. A hidden slot is not free: reviving it would hand a different lesson the old
@@ -128,6 +132,11 @@ const MODULE_ID_NAMESPACE = "5d7c3c0e-2b6a-4f0e-9a41-6e0c1f8d2a73";
 // What a lesson and a level's quiz are worth when the plan writes them new (the lesson rows below carry total_points 100).
 const LESSON_TOTAL_POINTS = 100;
 const DEFAULT_QUIZ_POINTS = 20;
+// What a lesson's three steps are worth when it is written new, and the pass mark of a lesson that has all three.
+const LESSON_LEARNING_POINTS = 20;
+const LESSON_QUIZ_POINTS = 40;
+const LESSON_PRACTICE_POINTS = 40;
+const LESSON_PASS_POINTS = 80;
 const LEVEL_SWITCHES = ["draft", "live"];
 
 const OLD_SHAPE =
@@ -194,6 +203,19 @@ function questionTexts(templatetypeid, questionid, q) {
     ...FEEDBACK_KEYS.filter((k) => q.feedback && q.feedback[k]).map((k) => ({ field: "feedback", subkey: k, en: q.feedback[k].en, km: q.feedback[k].km })),
   ];
   return all.filter((t) => !isAnswerBearing(templatetypeid, t.field));
+}
+
+/**
+ * The pass mark a NEW lesson is written with: the lesson's passing_points is 80 (LESSON_PASS_POINTS), or less when the lesson cannot
+ * give 80. A lesson with no practice has no practice points to earn, a lesson with no quiz no quiz points, so the points a learner can
+ * reach are the learning step's 20 plus 40 for each set that has a question: both 100, one 60, neither 20. The pass mark is the lesser
+ * of 80 and that, or a lesson with no practice could never be completed. total_points stays 100 (the level and grade rules count it).
+ * The value is written once: the update list of the lesson step does not carry the points columns, so a lesson already in the database
+ * keeps the pass mark it has, even when a later file gives it a practice.
+ */
+function lessonPassingPoints(lesson) {
+  const reachable = LESSON_LEARNING_POINTS + (lesson.quiz.length > 0 ? LESSON_QUIZ_POINTS : 0) + (lesson.practice.length > 0 ? LESSON_PRACTICE_POINTS : 0);
+  return Math.min(LESSON_PASS_POINTS, reachable);
 }
 
 /** The four lesson ids of the seed, in lesson order (the seed's id map must agree: a spec checks). */
@@ -454,7 +476,9 @@ const optionRow = (i, text, correct) => ({
  * `existing` is what the database holds that the plan needs to know, or null when it is not known (a dry run):
  * `{ levels: [{ levelid, levelstatus, isdeleted, points, quiz_points, levelquizrows }] }` for every level of the grade (`levelquizrows`: how
  * many active level-quiz questions it has), and
- * `lessons: [{ lessonid, lessonname, isdeleted, total_points }]` for the module's lesson slots that exist (`readExisting` in dcrs-content-apply.js).
+ * `lessons: [{ lessonid, lessonname, isdeleted, total_points }]` for the module's lesson slots that exist, and
+ * `questions: [{ questionid, roles, options }]` for the module's question slots that exist (`roles`: "practice" and/or "quiz", the sets with an
+ * active join row for it; `options`: its stored option rows, or null when they cannot be read) (`readExisting` in dcrs-content-apply.js).
  * Returns `{ baseLanguage, translationLanguage, organisationid, module, curriculumName, requires, steps, media, owned }`. A step is one of
  *   `{ kind: "upsert", table, pk, id, values, update }`  (INSERT ... ON DUPLICATE KEY UPDATE `update` columns)
  *   `{ kind: "translate", table: "contenttranslations", pk, id, values, update, touch }`  (the same, and `touch`
@@ -626,6 +650,34 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     return { slot, lesson, practice: take(lesson.practice, "practice"), quiz: take(lesson.quiz, "quiz") };
   });
 
+  // A question that is already in the database keeps its meaning: the id is what a learner's answers hang from. So a file is refused, before
+  // anything is written, when it would put an existing question in the other set (practice or quiz), give it another number of options, or
+  // move its correct option. Text-only changes pass. This reads every question the file names, whatever the id is derived from.
+  if (existing !== null) {
+    const rows = new Map((existing.questions ?? []).map((r) => [r.questionid, r]));
+    const changes = [];
+    for (const { lesson, practice, quiz } of placed) {
+      for (const [kind, list] of [["practice", practice], ["quiz", quiz]]) {
+        list.forEach(({ q, id }, j) => {
+          const row = rows.get(id);
+          if (!row) return;
+          const at = `lesson ${lesson.order} (row ${lesson.order + 1} of the sheet), ${kind} question ${j + 1}`;
+          if (Array.isArray(row.roles) && row.roles.length > 0 && !row.roles.includes(kind)) {
+            changes.push(`${at}: the question with this id is a ${row.roles.join(" and ")} question in the database, and the file puts it in the ${kind}; a question cannot move between sets`);
+          }
+          if (Array.isArray(row.options)) {
+            if (row.options.length !== q.options.length) {
+              changes.push(`${at}: it has ${row.options.length} options in the database and ${q.options.length} in the file; the number of options of an existing question cannot change`);
+            } else if (row.options.findIndex((o) => Boolean(Number(o.questionoptioniscorrect))) !== q.options.findIndex((o) => o.correct)) {
+              changes.push(`${at}: the file marks another option correct than the database does; the correct option of an existing question cannot move`);
+            }
+          }
+        });
+      }
+    }
+    if (changes.length > 0) throw new ContentRefused(changes);
+  }
+
   for (const { slot, lesson } of placed) {
     upsert(
       "lessons",
@@ -642,10 +694,10 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
         lessonstatus: 1,
         isdeleted: 0,
         total_points: LESSON_TOTAL_POINTS,
-        passing_points: 80,
-        learning_points: 20,
-        quizzes_points: 40,
-        practices_points: 40,
+        passing_points: lessonPassingPoints(lesson),
+        learning_points: LESSON_LEARNING_POINTS,
+        quizzes_points: LESSON_QUIZ_POINTS,
+        practices_points: LESSON_PRACTICE_POINTS,
       },
       ["lessonname", "lessondescription", "lessonorder", "lessonstatus", "isdeleted"],
     );
@@ -899,6 +951,7 @@ module.exports = {
   MODULE_ID_NAMESPACE,
   LESSON_TOTAL_POINTS,
   DEFAULT_QUIZ_POINTS,
+  lessonPassingPoints,
   MAX_LESSONS_LATER_MODULE,
   OLD_SHAPE,
   ContentRefused,

@@ -25,6 +25,7 @@ const {
   MAX_LESSONS_LATER_MODULE,
   LESSON_TOTAL_POINTS,
   DEFAULT_QUIZ_POINTS,
+  lessonPassingPoints,
   OLD_SHAPE,
   validateContent,
   planContent,
@@ -38,7 +39,7 @@ const {
   questionTexts,
   isAnswerBearing,
 } = require("../../scripts/lib/dcrs-content-plan");
-const { applyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName } = require("../../scripts/lib/dcrs-content-apply");
+const { applyPlan, preflight, readExisting, keptDocumentIds, formatReport, curriculumNameLengths, formatCurriculumName } = require("../../scripts/lib/dcrs-content-apply");
 const { USAGE, parseArgs, levelSwitchOf, prepare, printDryRun } = require("../../scripts/lib/dcrs-content-cli");
 /* eslint-enable @typescript-eslint/no-var-requires */
 import {
@@ -1127,6 +1128,16 @@ const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string; noTrans
         const rows = (params as string[]).map((id) => store.lessons?.[id]).filter((l) => l !== undefined);
         return [rows.map((l: Json) => ({ lessonid: l.lessonid, lessonname: l.lessonname, isdeleted: l.isdeleted, total_points: l.total_points })) as unknown as Json, undefined];
       }
+      if (/^SELECT questionid, questionoptions FROM `questions` WHERE `questionid` IN \(.*\)$/.test(sql)) {
+        const rows = (params as string[]).map((id) => store.questions?.[id]).filter((q) => q !== undefined);
+        return [rows.map((q: Json) => ({ questionid: q.questionid, questionoptions: q.questionoptions })) as unknown as Json, undefined];
+      }
+      const joined = /^SELECT DISTINCT questionid FROM `(lessonpracticequestions|lessonquizquestions)` WHERE `(\w+)` = 1 AND `questionid` IN \(.*\)$/.exec(sql);
+      if (joined) {
+        const status = joined[2];
+        const rows = Object.values(store[joined[1]] ?? {}).filter((j: Json) => Number(j[status]) === 1 && (params as string[]).includes(j.questionid));
+        return [[...new Set(rows.map((j: Json) => j.questionid))].map((questionid) => ({ questionid })) as unknown as Json, undefined];
+      }
       if (/^SELECT curriculumname FROM curriculums WHERE curriculumid = \?$/.test(sql)) {
         const row = store.curriculums?.[params[0] as string];
         return [(row ? [{ curriculumname: row.curriculumname }] : []) as unknown as Json, undefined];
@@ -1206,6 +1217,8 @@ const fakeConn = (opts: { ignoreUpdates?: boolean; failOnTable?: string; noTrans
         void pk;
         return [{ affectedRows: n }, undefined];
       }
+      const gone = /^SELECT COUNT\(\*\) AS n FROM `(\w+)` WHERE `(\w+)` IN \((.*?)\) AND `isdeleted` <> 0$/.exec(sql);
+      if (gone) return [[{ n: (params as string[]).filter((id) => Number(store[gone[1]]?.[id]?.isdeleted) !== 0).length }] as unknown as Json, undefined];
       const cnt = /^SELECT COUNT\(\*\) AS n FROM `(\w+)` WHERE `(\w+)` IN \((.*?)\)((?: AND `\w+` = \?)*)$/.exec(sql);
       if (cnt) {
         const [, table, , marks, conds] = cnt;
@@ -1589,11 +1602,11 @@ describe("applying a module after the first", () => {
     await applyPlan(fake.conn, await planned(fake, laterSample(2), { levelSwitch: "live" }));
     const m2 = JSON.stringify(Object.fromEntries(Object.entries(fake.store.lessons).filter(([id]) => !module1Ids().has(id))));
     const c = sample();
-    c.lessons[0].practice = [];
+    c.lessons[0].quiz = c.lessons[0].quiz.slice(0, 1); // the second quiz question is dropped (a question may not move between sets, so the others stay put)
     await applyPlan(fake.conn, await planned(fake, c, {}));
     expect(JSON.stringify(Object.fromEntries(Object.entries(fake.store.lessons).filter(([id]) => !module1Ids().has(id))))).toBe(m2);
     expect(fake.store.questions[moduleId(2, "q", "practice", 1, 1)].isdeleted).toBe(0);
-    expect(fake.store.questions[ID.q3].isdeleted).toBe(1); // Module 1's own question that file no longer uses
+    expect(fake.store.questions[ID.q4].isdeleted).toBe(1); // Module 1's own question that file no longer uses
   });
 
   it("a Module 2 file with another programme name renames the curriculum and the grade, and nothing else of Module 1 changes", async () => {
@@ -2227,6 +2240,149 @@ describe("a Module 1 of several lessons", () => {
       expect(fake.store.questions[m1("q", "quiz", 3, 1)].isdeleted).toBe(1);
       expect(fake.store.questions[m1("q", "quiz", 2, 1)].isdeleted).toBe(0);
       expect(fake.store.levels[ID.level].points).toBe(200);
+    });
+  });
+
+  describe("a new lesson's pass mark", () => {
+    const lessonRow = (p: Json, id: string): Json => p.steps.find((s: Json) => s.kind === "upsert" && s.table === "lessons" && s.id === id);
+
+    it("is 80 when the lesson has a practice and a quiz, 60 when it lacks one of them, 20 when it lacks both; its total stays 100", () => {
+      const c = multi(5);
+      c.lessons[2].practice = []; // lesson 3: no practice
+      c.lessons[3].quiz = []; // lesson 4: no quiz
+      c.lessons[4].practice = [];
+      c.lessons[4].quiz = []; // lesson 5: neither
+      const p = plan(c);
+      expect([ID.lesson1, m1("lesson", 2), m1("lesson", 3), m1("lesson", 4), m1("lesson", 5)].map((id) => lessonRow(p, id).values.passing_points)).toEqual([80, 80, 60, 60, 20]);
+      for (const id of [ID.lesson1, m1("lesson", 3), m1("lesson", 5)]) {
+        expect(lessonRow(p, id).values).toMatchObject({ total_points: 100, learning_points: 20, quizzes_points: 40, practices_points: 40, lessonpasspercentage: 80 });
+      }
+      // the level and the grade still count 100 for each lesson
+      expect(p.module).toMatchObject({ levelpoints: 500, gradepoints: 500 });
+      expect([lessonPassingPoints({ practice: [1], quiz: [1] }), lessonPassingPoints({ practice: [], quiz: [1] }), lessonPassingPoints({ practice: [1], quiz: [] }), lessonPassingPoints({ practice: [], quiz: [] })]).toEqual([80, 60, 60, 20]);
+    });
+
+    it("is written once: the lesson step does not update the points columns, so a lesson that gains a practice later keeps the 60 it was written with", async () => {
+      const fake = fakeConn();
+      placeholderRows(fake.store);
+      const c = multi(3);
+      c.lessons[2].practice = [];
+      const first = await planned(fake, c, { levelSwitch: "live" });
+      for (const column of ["passing_points", "total_points", "learning_points", "quizzes_points", "practices_points"]) expect(lessonRow(first, m1("lesson", 3)).update).not.toContain(column);
+      await applyPlan(fake.conn, first);
+      expect(fake.store.lessons[m1("lesson", 3)]).toMatchObject({ passing_points: 60, total_points: 100 });
+      c.lessons[2].practice = [question("DCRS-M1-L3-P1", "l3p1")];
+      const second = await planned(fake, c);
+      expect(lessonRow(second, m1("lesson", 3)).values.passing_points).toBe(80); // what the file would write new
+      await applyPlan(fake.conn, second);
+      expect(fake.store.lessons[m1("lesson", 3)].passing_points).toBe(60); // what the database keeps
+    });
+  });
+
+  describe("a question that is already in the database keeps its meaning", () => {
+    /** A stand-in database that holds Module 1 as `content` wrote it (sample(): practice q1 q2, quiz q3 q4). */
+    const holding = async (content: Json = multi(2)) => {
+      const fake = fakeConn();
+      placeholderRows(fake.store);
+      await applyPlan(fake.conn, await planned(fake, content, { levelSwitch: "live" }));
+      return fake;
+    };
+    const refused = async (fake: Json, content: Json): Promise<string> => {
+      try {
+        await planned(fake, content);
+      } catch (e) {
+        expect(e).toBeInstanceOf(ContentRefused);
+        return (e as { problems: string[] }).problems.join(" | ");
+      }
+      throw new Error("expected the plan to be refused");
+    };
+
+    it("refuses a question that would move between practice and quiz, naming the lesson, its row and the question", async () => {
+      const fake = await holding();
+      const c = multi(2);
+      // three practice questions and one quiz question: the third practice question takes an id that is a quiz question's
+      c.lessons[0].practice.push(question("DCRS-M1-P3", "p3", 4, 2));
+      c.lessons[0].quiz = [question("DCRS-M1-Q1", "q1", 4, 2)];
+      const message = await refused(fake, c);
+      expect(message).toContain("lesson 1 (row 2 of the sheet), practice question 3: the question with this id is a quiz question in the database, and the file puts it in the practice");
+      const before = JSON.stringify(fake.store);
+      await expect(planned(fake, c)).rejects.toThrow(ContentRefused);
+      expect(JSON.stringify(fake.store)).toBe(before); // planning writes nothing
+    });
+
+    it("refuses a question whose number of options would change, or whose correct option would move, naming each", async () => {
+      const fake = await holding();
+      const fewer = multi(2);
+      fewer.lessons[0].practice[0] = question("DCRS-M1-P1", "p1", 3, 0);
+      expect(await refused(fake, fewer)).toBe(
+        "lesson 1 (row 2 of the sheet), practice question 1: it has 4 options in the database and 3 in the file; the number of options of an existing question cannot change",
+      );
+      const moved = multi(2);
+      moved.lessons[0].quiz[0] = question("DCRS-M1-Q1", "q1", 4, 3); // was correct at 2
+      expect(await refused(fake, moved)).toBe(
+        "lesson 1 (row 2 of the sheet), quiz question 1: the file marks another option correct than the database does; the correct option of an existing question cannot move",
+      );
+      const both = multi(2);
+      both.lessons[0].practice[0] = question("DCRS-M1-P1", "p1", 5, 0);
+      both.lessons[0].practice[1] = question("DCRS-M1-P2", "p2", 4, 1);
+      expect((await refused(fake, both)).split(" | ")).toHaveLength(2);
+    });
+
+    it("accepts a change of text only: the stem, an option's wording, the lesson's titles, Khmer included", async () => {
+      const fake = await holding();
+      const c = multi(2);
+      c.lessons[0].name = bi("a new title");
+      c.lessons[0].practice[0].text = { en: "a new stem", km: km("new stem") };
+      c.lessons[0].quiz[1].options[0].text = { en: "reworded", km: km("reworded") };
+      const p = await planned(fake, c);
+      const run = await applyPlan(fake.conn, p);
+      expect(run.tables.questions.updated).toBe(2);
+      expect(JSON.parse(fake.store.questions[ID.q1].questionoptions)).toHaveLength(4);
+      expect(fake.store.questions[ID.q1].questiontext).toBe("a new stem");
+    });
+
+    it("applies to a lesson's derived ids as well: a later lesson's existing question cannot change its options either", async () => {
+      const fake = await holding(multi(3));
+      const c = multi(3);
+      c.lessons[1].practice[0] = question("DCRS-M1-L2-P1", "l2p1", 4, 1); // its correct option moves from 0 to 1
+      expect(await refused(fake, c)).toBe("lesson 2 (row 3 of the sheet), practice question 1: the file marks another option correct than the database does; the correct option of an existing question cannot move");
+      // a derived id is its role, so it never changes set, but a question the lesson did not have is new and free
+      const grown = multi(3);
+      grown.lessons[1].practice.push(question("DCRS-M1-L2-P2", "l2p2", 6, 5));
+      await expect(planned(fake, grown)).resolves.toBeDefined();
+    });
+
+    it("leaves a question the database does not hold, a dry run, and a database row whose options cannot be read, to the file", async () => {
+      const fresh = fakeConn();
+      placeholderRows(fresh.store);
+      await expect(planned(fresh, multi(2), { levelSwitch: "live" })).resolves.toBeDefined();
+      expect(() => plan(multi(2))).not.toThrow(); // existing = null: nothing to compare
+      const fake = await holding();
+      fake.store.questions[ID.q1].questionoptions = "not json";
+      const c = multi(2);
+      c.lessons[0].practice[0] = question("DCRS-M1-P1", "p1", 3, 0);
+      await expect(planned(fake, c)).resolves.toBeDefined();
+    });
+  });
+
+  describe("a kept video's document row", () => {
+    it("is refused when it is marked deleted, writes nothing, and is accepted when it is live", async () => {
+      const fake = fakeConn();
+      placeholderRows(fake.store);
+      await applyPlan(fake.conn, await planned(fake, sample(), { levelSwitch: "live" }));
+      const p = await planned(fake, multi(2, true));
+      await expect(preflight(fake.conn, p)).resolves.toBeUndefined();
+      fake.store.documents[ID.doc1].isdeleted = 1;
+      await expect(preflight(fake.conn, p)).rejects.toThrow(/lesson 1's video document is kept as it is, and that document row is marked deleted \(isdeleted 1\); a kept video is never un-deleted by this import/);
+      const before = JSON.stringify(fake.store);
+      await expect(preflight(fake.conn, p)).rejects.toThrow(ContentRefused);
+      expect(JSON.stringify(fake.store)).toBe(before);
+    });
+
+    it("is named by keptDocumentIds, so the seed does not fill its owner; a lesson that is not kept is not named", () => {
+      expect(keptDocumentIds(plan(multi(3, true)))).toEqual([ID.doc1]);
+      expect(keptDocumentIds(plan(multi(3)))).toEqual([]);
+      expect(keptDocumentIds({})).toEqual([]);
     });
   });
 
