@@ -17,10 +17,11 @@
  * { "programme": { "en": "...", "km": "..." },                       // required: the curriculum's and the grade's name, one line each
  *   "module":    { "number": 1, "name": { "en": "...", "km": "..." } },  // the level's name; the number is the level's order
  *   "lessons": [ {
- *     "id": "<one of the four fixed DCRS lesson ids>",               // Module 1 only; a later module's lessons have no id
- *     "order": 1,                                                    // later modules: 1 to 12, each once, and it names the lesson's place
+ *     "id": "<one of the four fixed DCRS lesson ids>",               // Module 1's fixed lessons only; every other lesson has no id
+ *     "order": 1,                                                    // 1 to 12, each once; it names a lesson's place (and, with no id, its slot)
  *     "name":  { "en": "...", "km": "..." },
  *     "video": { "ref": "...", "filename": "dcrs-m1-l1.mp4", "source": "..." },   // source optional
+ *     //  or, to leave the lesson's existing video document alone:  { "ref": "...", "keep": true }   (no filename, no source)
  *     "practice": [ QUESTION, ... ], "quiz": [ QUESTION, ... ] } ] }
  * QUESTION = { "ident": "DCRS-M1-P1", "text": { "en", "km" }, "title": { "en", "km" } /* optional, not stored *\/,
  *              "options": [ { "text": { "en", "km" }, "correct": true | false }, ... ],
@@ -33,6 +34,12 @@
  *  - upserts the curriculum's name and the grade's name (both the programme's), the module's level (its name, its order = the
  *    module number, its status), and for every lesson NAMED in the file: the lesson, its video document, learning item,
  *    practice and quiz, then the questions and the join rows that put them in the practice and the quiz;
+ *  - a lesson with no practice question (or no quiz question) still gets its practice (quiz) row, written switched off (status 0): the
+ *    learner app lists every switched-on practice as a step and opens it, and a set with no question never finishes. The status is
+ *    in the update list, so naming a question later switches the set on.
+ *  - a lesson whose video is `keep: true` has NO documents step at all: its document row (the file it names, its meta) is not written,
+ *    and no file is to be copied. The row must already be there: `plan.requires` lists it and the applier's preflight refuses a
+ *    database without it. The lesson's learning item still points at that document.
  *  - hides what the file does not name, reversibly, within THIS module's level only: the module's other lessons are marked
  *    `isdeleted` with their documents, and their learning items, practices, quizzes and join rows get status 0; the module's
  *    own question ids the file no longer uses are marked `isdeleted`. Naming a lesson again in a later file un-hides it.
@@ -57,8 +64,15 @@
  *  - MODULE 1 keeps every id it ever had: the seed's fixed ids (the level, the four lessons, their documents, learning
  *    items, practices and quizzes, the seven question ids, the join rows, then the c0000000-0000-4000-8000-0000000000xx
  *    namespace from 0x32 up). Questions take the seven fixed question ids in order (the practice questions of the first named
- *    lesson, then its quiz questions, then the next lesson's), so the file may carry at most seven questions in all; a lesson
- *    has room for four practice and four quiz questions. Re-running Module 1 against a database it already wrote changes nothing.
+ *    lesson, then its quiz questions, then the next lesson's), so the lessons that name a fixed lesson id may carry at most seven
+ *    questions in all; a lesson has room for four practice and four quiz questions. Re-running Module 1 against a database it already
+ *    wrote changes nothing.
+ *  - MODULE 1'S LESSONS 2 TO 12 (a Module 1 lesson with no `id`) are derived like a later module's, from role paths of module 1
+ *    (`dcrs/m1/lesson/2`, `dcrs/m1/q/quiz/2/1`, ...; `slots.extraLessons`), each with its own four practice and four quiz question
+ *    ids, so a Module 1 of six lessons keeps lesson 1 on its fixed ids and gives the rest ids of their own. The seed's fixed lessons
+ *    2 to 4 stay as the hidden placeholders they are (the seed made them, a learner may hold progress on them, so no new lesson is
+ *    handed their rows): naming one of them by its `id` still works as before, and a file that names none of them hides them. A
+ *    derived lesson is identified by its `order` (2 to 12; order 1 is the fixed lesson 1), exactly like a later module's.
  *  - MODULE 2 AND LATER derive every id from MODULE_ID_NAMESPACE and a role path as an RFC 4122 version-5 UUID (`uuidV5`,
  *    `moduleId`): `dcrs/m2/level`, `dcrs/m2/lesson/1`, `dcrs/m2/doc/1`, `dcrs/m2/learning/1`, `dcrs/m2/practice/1`,
  *    `dcrs/m2/quiz/1`, `dcrs/m2/join/practice/1/3`, `dcrs/m2/q/quiz/1/2`, and for a translation row
@@ -194,26 +208,15 @@ const hex12 = (n) => n.toString(16).padStart(12, "0");
 
 /**
  * The slots of module `moduleNumber`: its level, per lesson the rows that hang from it and the join-row ids it may use, and
- * the question ids. Module 1 (the default) takes them from the seed's id map and shares one pool of question ids; a later module
- * derives every id from a role path (`pooled: false`), and each lesson slot then carries its own question ids.
+ * the question ids. Module 1 (the default) takes its four fixed lessons from the seed's id map and shares one pool of question ids
+ * among them; its further lessons (`extraLessons`, lesson 2 on) and every lesson of a later module derive every id from a role path,
+ * and each such slot carries its own question ids (`derived: true`).
  */
 function slotsOf(ID, moduleNumber = 1) {
   if (moduleNumber !== 1) {
     const id = (...path) => moduleId(moduleNumber, ...path);
-    const upTo = (n) => Array.from({ length: n }, (_, i) => i + 1);
-    const lessons = upTo(MAX_LESSONS_LATER_MODULE).map((n) => ({
-      n,
-      id: id("lesson", n),
-      doc: id("doc", n),
-      learning: id("learning", n),
-      practice: id("practice", n),
-      quiz: id("quiz", n),
-      practiceJoins: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("join", "practice", n, j)),
-      quizJoins: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("join", "quiz", n, j)),
-      practiceQuestions: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("q", "practice", n, j)),
-      quizQuestions: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("q", "quiz", n, j)),
-    }));
-    return { moduleNumber, pooled: false, level: id("level"), lessons, questions: lessons.flatMap((l) => [...l.practiceQuestions, ...l.quizQuestions]) };
+    const lessons = derivedLessons(moduleNumber, 1);
+    return { moduleNumber, pooled: false, level: id("level"), lessons, extraLessons: [], questions: lessons.flatMap((l) => [...l.practiceQuestions, ...l.quizQuestions]) };
   }
   let extra = 0x32;
   const nextExtra = () => `c0000000-0000-4000-8000-${hex12(extra++)}`;
@@ -240,13 +243,42 @@ function slotsOf(ID, moduleNumber = 1) {
     };
   });
   const questions = [ID.q1, ID.q2, ID.q3, ID.q4, ID.q5, ID.q6, ID.q7];
-  return { moduleNumber: 1, pooled: true, level: ID.level, lessons, questions };
+  // Module 1's lessons after the fixed ones: derived from role paths of module 1, each slot with its own question ids (lesson 1 is the fixed one).
+  const extraLessons = derivedLessons(1, 2);
+  return { moduleNumber: 1, pooled: true, level: ID.level, lessons, extraLessons, questions };
 }
+
+/** The derived lesson slots of module `moduleNumber` from lesson `from` to MAX_LESSONS_LATER_MODULE: every id from a role path, every slot with its own question ids. */
+function derivedLessons(moduleNumber, from) {
+  const id = (...path) => moduleId(moduleNumber, ...path);
+  const upTo = (n) => Array.from({ length: n }, (_, i) => i + 1);
+  return upTo(MAX_LESSONS_LATER_MODULE)
+    .filter((n) => n >= from)
+    .map((n) => ({
+      n,
+      derived: true,
+      id: id("lesson", n),
+      doc: id("doc", n),
+      learning: id("learning", n),
+      practice: id("practice", n),
+      quiz: id("quiz", n),
+      practiceJoins: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("join", "practice", n, j)),
+      quizJoins: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("join", "quiz", n, j)),
+      practiceQuestions: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("q", "practice", n, j)),
+      quizQuestions: upTo(MAX_QUESTIONS_PER_SET).map((j) => id("q", "quiz", n, j)),
+    }));
+}
+
+/** Every lesson slot of a slot set: the module's own, and Module 1's derived ones after the fixed four. */
+const lessonSlotsOf = (slots) => [...slots.lessons, ...(slots.extraLessons ?? [])];
+
+/** Every question id of a slot set (Module 1's seven fixed ones, and the derived lessons' own). */
+const questionIdsOf = (slots) => [...slots.questions, ...(slots.extraLessons ?? []).flatMap((l) => [...l.practiceQuestions, ...l.quizQuestions])];
 
 /** Every id a slot set holds (the level, and each lesson's rows, joins and questions). */
 function idsOfSlots(slots) {
-  const all = [slots.level, ...slots.questions];
-  for (const l of slots.lessons) all.push(l.id, l.doc, l.learning, l.practice, l.quiz, ...l.practiceJoins, ...l.quizJoins);
+  const all = [slots.level, ...questionIdsOf(slots)];
+  for (const l of lessonSlotsOf(slots)) all.push(l.id, l.doc, l.learning, l.practice, l.quiz, ...l.practiceJoins, ...l.quizJoins);
   return all;
 }
 
@@ -285,15 +317,15 @@ function validateContent(content, ID) {
     throw new ContentRefused(problems);
   }
 
-  // Module 1 is a fixed set of ids (and is what a file whose number is unusable is checked as); a later module's lessons are its 12 slots by order.
+  // Module 1 is four fixed lessons (and is what a file whose number is unusable is checked as) and derived slots from lesson 2; a later module's lessons are its 12 slots by order.
   const later = moduleNumber !== null && moduleNumber !== 1;
   const slots = slotsOf(ID, moduleNumber ?? 1);
   const fixedLessonIds = new Set(slots.lessons.map((l) => l.id));
   const seenLessons = new Set();
   const seenOrders = new Set();
+  let pooledQuestions = 0; // the questions of the lessons that draw from Module 1's seven fixed question ids
   const seenIdents = new Set();
   const seenFiles = new Set();
-  let questionCount = 0;
   content.lessons.forEach((lesson, i) => {
     const at = `lessons[${i}]`;
     if (!isObject(lesson)) {
@@ -306,19 +338,38 @@ function validateContent(content, ID) {
         problems.push(`${at}.order must be a whole number from 1 to ${MAX_LESSONS_LATER_MODULE} (it is also the lesson's slot in the module)`);
       } else if (seenOrders.has(lesson.order)) problems.push(`${at}.order ${lesson.order} is used by another lesson`);
       else seenOrders.add(lesson.order);
+    } else if (lesson.id === undefined) {
+      // Module 1's lesson with no id: a derived slot, identified by its order. Lesson 1 is the fixed one and must name its id.
+      if (!Number.isInteger(lesson.order) || lesson.order < 2 || lesson.order > MAX_LESSONS_LATER_MODULE) {
+        problems.push(
+          `${at}.order must be a whole number from 2 to ${MAX_LESSONS_LATER_MODULE} for a Module 1 lesson with no id (it is also the lesson's slot; lesson 1 names the fixed id ${LESSON_IDS[0]})`,
+        );
+      } else if (seenOrders.has(lesson.order)) problems.push(`${at}.order ${lesson.order} is used by another lesson`);
+      else seenOrders.add(lesson.order);
     } else {
+      let namedTwice = false;
       if (typeof lesson.id !== "string" || !fixedLessonIds.has(lesson.id)) problems.push(`${at}.id is not a DCRS fixed lesson id`);
-      else if (seenLessons.has(lesson.id)) problems.push(`${at}.id is named twice`);
-      else seenLessons.add(lesson.id);
+      else if (seenLessons.has(lesson.id)) {
+        namedTwice = true;
+        problems.push(`${at}.id is named twice`);
+      } else seenLessons.add(lesson.id);
       if (!Number.isInteger(lesson.order) || lesson.order < 1) problems.push(`${at}.order must be a whole number from 1`);
+      else if (!namedTwice && seenOrders.has(lesson.order)) problems.push(`${at}.order ${lesson.order} is used by another lesson`);
+      else seenOrders.add(lesson.order);
     }
     bilingual(lesson.name, `${at}.name`);
     if (!isObject(lesson.video) || !isText(lesson.video.ref)) problems.push(`${at}.video.ref is missing`);
-    else if (typeof lesson.video.filename !== "string" || !FILENAME.test(lesson.video.filename)) {
+    else if (lesson.video.keep !== undefined && lesson.video.keep !== true) problems.push(`${at}.video.keep must be true when given`);
+    else if (lesson.video.keep === true) {
+      // The lesson's existing video document is left exactly as it is: there is no file name to write and no file to copy.
+      if (lesson.video.filename !== undefined || lesson.video.source !== undefined) {
+        problems.push(`${at}.video keeps the lesson's existing video, so it has no filename and no source`);
+      }
+    } else if (typeof lesson.video.filename !== "string" || !FILENAME.test(lesson.video.filename)) {
       problems.push(`${at}.video.filename must be a bare key like dcrs-m1-l1.mp4`);
     } else if (seenFiles.has(lesson.video.filename)) problems.push(`${at}.video.filename is used by another lesson`);
     else seenFiles.add(lesson.video.filename);
-    if (isObject(lesson.video) && lesson.video.source !== undefined && !isText(lesson.video.source)) {
+    if (isObject(lesson.video) && lesson.video.keep !== true && lesson.video.source !== undefined && !isText(lesson.video.source)) {
       problems.push(`${at}.video.source must be text when given`);
     }
 
@@ -331,7 +382,7 @@ function validateContent(content, ID) {
       if (list.length > MAX_QUESTIONS_PER_SET) {
         problems.push(`${at}.${kind} names ${list.length} questions; a lesson has room for ${MAX_QUESTIONS_PER_SET}`);
       }
-      questionCount += list.length;
+      if (!later && lesson.id !== undefined) pooledQuestions += list.length;
       list.forEach((q, j) => {
         const qat = `${at}.${kind}[${j}]`;
         if (!isObject(q)) {
@@ -368,9 +419,9 @@ function validateContent(content, ID) {
       });
     }
   });
-  // Module 1 draws its questions from the seed's seven fixed ids; a later module has a place for every question of every lesson.
-  if (!later && questionCount > slots.questions.length) {
-    problems.push(`the file names ${questionCount} questions; the seed has ${slots.questions.length} fixed question ids`);
+  // Module 1's fixed lessons draw their questions from the seed's seven fixed ids; every other lesson has a place for each of its own.
+  if (!later && pooledQuestions > slots.questions.length) {
+    problems.push(`the lessons that name a fixed lesson id have ${pooledQuestions} questions between them; the seed has ${slots.questions.length} fixed question ids`);
   }
   if (problems.length > 0) throw new ContentRefused(problems);
   return content;
@@ -437,11 +488,18 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     );
   }
   if (later) {
-    // No id of a later module may equal one of Module 1's fixed ids (the seed's whole id map, and Module 1's slots).
+    // No id of a later module may equal one of Module 1's ids (the seed's whole id map, and Module 1's slots, derived ones too).
     const taken = new Set([...Object.values(ID), ...idsOfSlots(slotsOf(ID, 1))]);
     const clash = idsOfSlots(slots).filter((id) => taken.has(id));
     if (clash.length > 0 || new Set(idsOfSlots(slots)).size !== idsOfSlots(slots).length) {
       throw new Error(`module ${moduleNumber}: its derived ids are not distinct from Module 1's fixed ids`);
+    }
+  } else {
+    // Module 1's derived lessons must not take an id the seed's id map already holds, and no id may be twice in the slots.
+    const fixed = new Set(Object.values(ID));
+    const derivedIds = lessonSlotsOf(slots).filter((l) => l.derived).flatMap((l) => idsOfSlots({ level: l.id, questions: [...l.practiceQuestions, ...l.quizQuestions], lessons: [l] }));
+    if (derivedIds.some((id) => fixed.has(id)) || new Set(idsOfSlots(slots)).size !== idsOfSlots(slots).length) {
+      throw new Error("module 1: its derived ids are not distinct from the seed's fixed ids");
     }
   }
   const t = (text) => text.en;
@@ -454,16 +512,21 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     if (ids.length > 0) steps.push({ kind: "hide", table, pk, ids: [...new Set(ids)], set });
   };
 
-  // The slot of a named lesson: Module 1's by its fixed id, a later module's by its order.
-  const slotOfLesson = (lesson) => (later ? slots.lessons[lesson.order - 1] : slots.lessons.find((s) => s.id === lesson.id));
+  // The slot of a named lesson: a Module 1 fixed lesson by its fixed id; every other lesson (a later module's, Module 1's from lesson 2) by its order.
+  const allSlots = lessonSlotsOf(slots);
+  const slotOfLesson = (lesson) =>
+    later || lesson.id === undefined ? slots.lessons.concat(slots.extraLessons).find((s) => s.derived && s.n === lesson.order) : slots.lessons.find((s) => s.id === lesson.id);
   const named = new Map(content.lessons.map((l) => [slotOfLesson(l).id, l]));
-  const live = slots.lessons.filter((s) => named.has(s.id)).sort((a, b) => named.get(a.id).order - named.get(b.id).order);
-  const hidden = slots.lessons.filter((s) => !named.has(s.id));
+  const live = allSlots.filter((s) => named.has(s.id)).sort((a, b) => named.get(a.id).order - named.get(b.id).order);
+  const hidden = allSlots.filter((s) => !named.has(s.id));
 
-  // A later module's lesson slot must not change meaning under a re-run: an existing lesson of the slot, hidden or not, keeps its name unless the rename is asked for.
-  if (later && existing !== null && !renameLessons) {
+  // A derived lesson slot must not change meaning under a re-run: an existing lesson of the slot, hidden or not, keeps its name unless the rename is asked for.
+  // (Module 1's fixed lesson 1 is not a derived slot: its text is meant to be edited by the file.)
+  if (existing !== null && !renameLessons) {
     for (const lesson of content.lessons) {
-      const row = existing.lessons.find((l) => l.lessonid === slotOfLesson(lesson).id);
+      const slot = slotOfLesson(lesson);
+      if (!slot.derived) continue;
+      const row = existing.lessons.find((l) => l.lessonid === slot.id);
       if (row && row.lessonname !== lesson.name.en) {
         problems.push(
           `module ${moduleNumber}, lesson slot ${lesson.order}: the lesson there now (hidden or not) has another English name than the file's; give the new lesson a new order (--rename-lessons renames it in place)`,
@@ -556,7 +619,7 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     const lesson = named.get(slot.id);
     const take = (list, kind) =>
       list.map((q, j) => {
-        const id = later ? (kind === "practice" ? slot.practiceQuestions : slot.quizQuestions)[j] : slots.questions[nextQuestion++];
+        const id = slot.derived ? (kind === "practice" ? slot.practiceQuestions : slot.quizQuestions)[j] : slots.questions[nextQuestion++];
         assigned.push(id);
         return { q, id, kind, join: (kind === "practice" ? slot.practiceJoins : slot.quizJoins)[j] };
       });
@@ -572,8 +635,8 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
         levelid: slots.level,
         lessonname: t(lesson.name),
         lessondescription: "",
-        practicecount: 1,
-        quizcount: 1,
+        practicecount: lesson.practice.length > 0 ? 1 : 0,
+        quizcount: lesson.quiz.length > 0 ? 1 : 0,
         lessonpasspercentage: 80,
         lessonorder: lesson.order,
         lessonstatus: 1,
@@ -587,20 +650,23 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
       ["lessonname", "lessondescription", "lessonorder", "lessonstatus", "isdeleted"],
     );
     translate("lessons", slot.id, "lessonname", "", lesson.name);
-    upsert(
-      "documents",
-      "documentid",
-      {
-        documentid: slot.doc,
-        documenttypeid: 2,
-        documentname: lesson.video.filename,
-        documents3meta: JSON.stringify({ seeded: true, media: "folder" }),
-        isdeleted: 0,
-        documenttags: JSON.stringify(["dcrs"]),
-        organisationid,
-      },
-      ["documentname", "documents3meta", "isdeleted"],
-    );
+    // A lesson whose video is kept has no documents step: the row it has (the file it names, its meta, its switch) is left exactly as it is.
+    if (lesson.video.keep !== true) {
+      upsert(
+        "documents",
+        "documentid",
+        {
+          documentid: slot.doc,
+          documenttypeid: 2,
+          documentname: lesson.video.filename,
+          documents3meta: JSON.stringify({ seeded: true, media: "folder" }),
+          isdeleted: 0,
+          documenttags: JSON.stringify(["dcrs"]),
+          organisationid,
+        },
+        ["documentname", "documents3meta", "isdeleted"],
+      );
+    }
     upsert(
       "lessonlearnings",
       "lessonlearningid",
@@ -624,7 +690,7 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
         lessonpracticeid: slot.practice,
         lessonid: slot.id,
         lessonpracticeorder: 1,
-        lessonpracticestatus: 1,
+        lessonpracticestatus: lesson.practice.length > 0 ? 1 : 0, // a set with no question is not shown: the app would list a step it cannot finish
         lessonpracticename: t(lesson.name),
         lessonpracticedescription: "",
         points: 40,
@@ -640,7 +706,7 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
         lessonid: slot.id,
         lessonquizorder: 1,
         lessonquizname: t(lesson.name),
-        lessonquizstatus: 1,
+        lessonquizstatus: lesson.quiz.length > 0 ? 1 : 0, // likewise
         lessonquizdescription: "",
         points: 40,
       },
@@ -742,35 +808,43 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
   hide(
     "lessonpracticequestions",
     "lessonpracticequestionid",
-    slots.lessons.flatMap((s) => s.practiceJoins).filter((id) => !usedPracticeJoins.has(id)),
+    allSlots.flatMap((s) => s.practiceJoins).filter((id) => !usedPracticeJoins.has(id)),
     { lessonpracticequestionstatus: 0 },
   );
   hide(
     "lessonquizquestions",
     "lessonquizquestionid",
-    slots.lessons.flatMap((s) => s.quizJoins).filter((id) => !usedQuizJoins.has(id)),
+    allSlots.flatMap((s) => s.quizJoins).filter((id) => !usedQuizJoins.has(id)),
     { lessonquizquestionstatus: 0 },
   );
-  hide("questions", "questionid", slots.questions.filter((id) => !assigned.includes(id)), { isdeleted: 1 });
+  hide("questions", "questionid", questionIdsOf(slots).filter((id) => !assigned.includes(id)), { isdeleted: 1 });
 
+  // One entry per lesson: a file to copy, or (keep) a video left alone, in which case there is nothing to copy.
   const media = placed.map(({ slot, lesson }) => ({
     lessonid: slot.id,
+    order: lesson.order,
     ref: lesson.video.ref,
-    source: lesson.video.source ?? null,
-    filename: lesson.video.filename,
+    keep: lesson.video.keep === true,
+    source: lesson.video.keep === true ? null : lesson.video.source ?? null,
+    filename: lesson.video.keep === true ? null : lesson.video.filename,
   }));
   const owned = [
     { table: "curriculums", pk: "curriculumid", ids: [ID.curriculum] },
-    { table: "documents", pk: "documentid", ids: placed.map((p) => p.slot.doc) },
+    { table: "documents", pk: "documentid", ids: placed.map((p) => p.slot.doc) }, // a kept video's row too: its owner is the organisation's or nobody's
     { table: "questions", pk: "questionid", ids: assigned },
   ];
-  // A module after the first attaches to the curriculum and the grade that exist; it never creates them.
-  const requires = later
-    ? [
-        { what: "curriculum", table: "curriculums", pk: "curriculumid", ids: [ID.curriculum] },
-        { what: "grade", table: "grades", pk: "gradeid", ids: [ID.grade] },
-      ]
-    : [];
+  // A module after the first attaches to the curriculum and the grade that exist; it never creates them. A kept video needs the document row it keeps.
+  const requires = [
+    ...(later
+      ? [
+          { what: "curriculum", table: "curriculums", pk: "curriculumid", ids: [ID.curriculum] },
+          { what: "grade", table: "grades", pk: "gradeid", ids: [ID.grade] },
+        ]
+      : []),
+    ...placed
+      .filter(({ lesson }) => lesson.video.keep === true)
+      .map(({ slot, lesson }) => ({ what: `lesson ${lesson.order}'s video document`, kept: true, table: "documents", pk: "documentid", ids: [slot.doc] })),
+  ];
   return {
     baseLanguage: BASE_LANGUAGE,
     translationLanguage: TRANSLATION_LANGUAGE,
@@ -832,6 +906,8 @@ module.exports = {
   planContent,
   statementOf,
   slotsOf,
+  lessonSlotsOf,
+  questionIdsOf,
   idsOfSlots,
   uuidV5,
   moduleId,

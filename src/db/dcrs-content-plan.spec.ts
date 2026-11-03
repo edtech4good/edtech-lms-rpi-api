@@ -56,6 +56,10 @@ const ORG = "a0000000-0000-4000-8000-0000000000aa";
 // the statements run in, changes it.
 const MODULE_1_STEP_IDS_DIGEST = "e9b16197ddd9dd01808faefd8237e0a74097a472ff999716f897082875e11d6d";
 const NOW = new Date("2026-10-28T09:30:15.123Z");
+// Module 1's derived lesson slots (lesson 2 on), which a Module 1 file hides when it does not name them, and their ids.
+const EXTRA_LESSONS: Json[] = slotsOf(ID, 1).extraLessons;
+const EXTRA_QUESTIONS: string[] = EXTRA_LESSONS.flatMap((l) => [...l.practiceQuestions, ...l.quizQuestions]);
+const EXTRA_IDS = new Set<string>([...EXTRA_QUESTIONS, ...EXTRA_LESSONS.flatMap((l) => idsOfSlots({ level: l.id, questions: [], lessons: [l] }))]);
 // consonant + subscript sign + consonant + dependent vowel, then a second run; never a real word
 const km = (tag: string) => `\u1780\u17d2\u1781\u17b6${tag}\u1782\u17d2\u1783\u17c1`;
 const bi = (tag: string) => ({ en: `en ${tag}`, km: km(tag) });
@@ -156,12 +160,13 @@ describe("planning a content file", () => {
     expect(upserted(p, "lessonpracticequestions")).toEqual([ID.pqLesson1, "c0000000-0000-4000-8000-000000000032"]);
     expect(upserted(p, "lessonquizquestions")).toEqual([ID.qqLesson1, "c0000000-0000-4000-8000-000000000035"]);
     const h = hidden(p);
-    expect(h.lessons).toEqual([ID.lesson2, ID.lesson3, ID.lesson4]);
-    expect(h.documents).toEqual([ID.doc2, ID.doc3, ID.doc4]);
-    expect(h.lessonlearnings).toEqual([ID.learning2, ID.learning3, ID.learning4]);
-    expect(h.lessonpractices).toEqual([ID.practice2, ID.practice3, ID.practice4]);
-    expect(h.lessonquizzes).toEqual([ID.quiz2, ID.quiz3, ID.quiz4]);
-    expect(h.questions).toEqual([ID.q5, ID.q6, ID.q7]);
+    // the seed's placeholder lessons 2 to 4, then the derived slots of lesson 2 on (which may not exist in the database; hiding them then changes nothing)
+    expect(h.lessons).toEqual([ID.lesson2, ID.lesson3, ID.lesson4, ...EXTRA_LESSONS.map((l) => l.id)]);
+    expect(h.documents).toEqual([ID.doc2, ID.doc3, ID.doc4, ...EXTRA_LESSONS.map((l) => l.doc)]);
+    expect(h.lessonlearnings).toEqual([ID.learning2, ID.learning3, ID.learning4, ...EXTRA_LESSONS.map((l) => l.learning)]);
+    expect(h.lessonpractices).toEqual([ID.practice2, ID.practice3, ID.practice4, ...EXTRA_LESSONS.map((l) => l.practice)]);
+    expect(h.lessonquizzes).toEqual([ID.quiz2, ID.quiz3, ID.quiz4, ...EXTRA_LESSONS.map((l) => l.quiz)]);
+    expect(h.questions).toEqual([ID.q5, ID.q6, ID.q7, ...EXTRA_QUESTIONS]);
     // every join slot of lesson 1 not used, and every slot of the hidden lessons
     expect(h.lessonpracticequestions).not.toContain(ID.pqLesson1);
     expect(h.lessonpracticequestions).toContain(ID.pqLesson2);
@@ -186,7 +191,7 @@ describe("planning a content file", () => {
     expect(doc.values.documentname).toBe("dcrs-m1-l1.mp4");
     expect(JSON.parse(doc.values.documents3meta)).toEqual({ seeded: true, media: "folder" });
     expect(doc.update).toEqual(["documentname", "documents3meta", "isdeleted"]);
-    expect(plan().media).toEqual([{ lessonid: ID.lesson1, ref: "REF-1", source: "lesson_final.mp4", filename: "dcrs-m1-l1.mp4" }]);
+    expect(plan().media).toEqual([{ lessonid: ID.lesson1, order: 1, ref: "REF-1", keep: false, source: "lesson_final.mp4", filename: "dcrs-m1-l1.mp4" }]);
   });
 
   it("builds each question as a single-answer text question with the one correct option marked", () => {
@@ -363,7 +368,7 @@ describe("planning a content file", () => {
     c.lessons[0].quiz = [];
     const p = plan(c);
     expect(upserted(p, "questions")).toEqual([ID.q1]);
-    expect(hidden(p).questions).toEqual([ID.q2, ID.q3, ID.q4, ID.q5, ID.q6, ID.q7]);
+    expect(hidden(p).questions).toEqual([ID.q2, ID.q3, ID.q4, ID.q5, ID.q6, ID.q7, ...EXTRA_QUESTIONS]);
     expect(hidden(p).lessonquizquestions).toContain(ID.qqLesson1);
     expect(hidden(p).lessonpracticequestions).not.toContain(ID.pqLesson1);
     expect(hidden(p).lessonpracticequestions).toContain("c0000000-0000-4000-8000-000000000032");
@@ -377,7 +382,7 @@ describe("planning a content file", () => {
     const lesson2 = p.steps.find((s: Json) => s.table === "lessons" && s.id === ID.lesson2);
     expect(lesson2.values).toMatchObject({ isdeleted: 0, lessonstatus: 1, lessonorder: 2 });
     expect(lesson2.update).toEqual(expect.arrayContaining(["isdeleted", "lessonstatus"]));
-    expect(hidden(p).lessons).toEqual([ID.lesson3, ID.lesson4]);
+    expect(hidden(p).lessons).toEqual([ID.lesson3, ID.lesson4, ...EXTRA_LESSONS.map((l) => l.id)]);
     expect(upserted(p, "lessonquizquestions")).toEqual([ID.qqLesson1, "c0000000-0000-4000-8000-000000000035", ID.qqLesson2Q2]);
     expect(upserted(p, "questions")).toEqual([ID.q1, ID.q2, ID.q3, ID.q4, ID.q5]);
   });
@@ -583,7 +588,8 @@ describe("planning a module after the first", () => {
   const p2 = (over: Json = {}, opts: Json = {}) => planContent(laterSample(2, over), ID, { organisationid: ORG, now: NOW, ...opts });
 
   it("pins Module 1's ids: the file Module 1 has always been written from gives exactly the same ids and statements in the same order", () => {
-    const ids = plan().steps.map((s: Json) => `${s.kind}:${s.table}:${s.kind === "hide" ? s.ids.join(",") : s.id}`);
+    // Module 1's derived lessons (2 on) came later: the hide steps name their slots too, and those are taken out here, so the digest still pins every fixed id.
+    const ids = plan().steps.map((s: Json) => `${s.kind}:${s.table}:${s.kind === "hide" ? s.ids.filter((id: string) => !EXTRA_IDS.has(id)).join(",") : s.id}`);
     // the digest of this list is the one the plan produced before modules existed (computed from the commit this change was made on top of)
     expect(createHash("sha256").update(ids.join("\n")).digest("hex")).toBe(MODULE_1_STEP_IDS_DIGEST);
   });
@@ -638,8 +644,8 @@ describe("planning a module after the first", () => {
     expect(lesson.values).toMatchObject({ levelid: moduleId(2, "level"), lessonorder: 2, lessonname: "en later two", isdeleted: 0, lessonstatus: 1 });
     expect(p.steps.find((s: Json) => s.table === "documents").values.documentname).toBe("dcrs-m2-l1.mp4");
     expect(p.media).toEqual([
-      { lessonid: moduleId(2, "lesson", 1), ref: "REF-L1", source: "synthetic.mp4", filename: "dcrs-m2-l1.mp4" },
-      { lessonid: moduleId(2, "lesson", 2), ref: "REF-L2", source: null, filename: "dcrs-m2-l2.mp4" },
+      { lessonid: moduleId(2, "lesson", 1), order: 1, ref: "REF-L1", keep: false, source: "synthetic.mp4", filename: "dcrs-m2-l1.mp4" },
+      { lessonid: moduleId(2, "lesson", 2), order: 2, ref: "REF-L2", keep: false, source: null, filename: "dcrs-m2-l2.mp4" },
     ]);
     // a question's options are keyed by its own id
     const q = p.steps.find((s: Json) => s.table === "questions" && s.id === moduleId(2, "q", "quiz", 1, 1));
@@ -773,7 +779,7 @@ describe("planning a module after the first", () => {
     const eight = sample();
     eight.lessons[0].practice = Array.from({ length: 4 }, (_, i) => question(`DCRS-M1-P${i + 1}`, `p${i}`));
     eight.lessons[0].quiz = Array.from({ length: 4 }, (_, i) => question(`DCRS-M1-Q${i + 1}`, `q${i}`));
-    expect(refusal(eight)).toEqual(["the file names 8 questions; the seed has 7 fixed question ids"]);
+    expect(refusal(eight)).toEqual(["the lessons that name a fixed lesson id have 8 questions between them; the seed has 7 fixed question ids"]);
   });
 
   it("refuses what a later module cannot hold: a lesson id, an order out of range or repeated, a fifth question", () => {
@@ -791,10 +797,13 @@ describe("planning a module after the first", () => {
     const five = laterSample(2);
     five.lessons[0].quiz = Array.from({ length: 5 }, (_, i) => question(`DCRS-M2-X${i}`, `x${i}`));
     expect(refusal(five)).toEqual(["lessons[0].quiz names 5 questions; a lesson has room for 4"]);
-    // Module 1 still needs one of its four fixed ids
+    // Module 1's lesson 1 still needs its fixed id (a Module 1 lesson with no id is a derived slot, from lesson 2)
     const noId = sample();
     delete noId.lessons[0].id;
-    expect(refusal(noId)).toEqual(["lessons[0].id is not a DCRS fixed lesson id"]);
+    expect(refusal(noId)).toEqual([`lessons[0].order must be a whole number from 2 to 12 for a Module 1 lesson with no id (it is also the lesson's slot; lesson 1 names the fixed id ${ID.lesson1})`]);
+    const badId = sample();
+    badId.lessons[0].id = "c0000000-0000-4000-8000-0000000000ff";
+    expect(refusal(badId)).toEqual(["lessons[0].id is not a DCRS fixed lesson id"]);
     // a file that names Module 1's lesson ids but says it is module 2 is a mismatch
     const mismatch = sample({ module: { number: 2, name: bi("m") } });
     expect(refusal(mismatch)).toEqual(["lessons[0].id must not be given for module 2: its lessons are identified by their order"]);
@@ -1027,7 +1036,7 @@ describe("refusing a content file", () => {
     const eight = sample();
     eight.lessons[0].practice = Array.from({ length: 4 }, (_, i) => question(`DCRS-M1-P${i + 1}`, `p${i}`));
     eight.lessons[0].quiz = Array.from({ length: 4 }, (_, i) => question(`DCRS-M1-Q${i + 1}`, `q${i}`));
-    expect(refusal(eight)).toEqual(["the file names 8 questions; the seed has 7 fixed question ids"]);
+    expect(refusal(eight)).toEqual(["the lessons that name a fixed lesson id have 8 questions between them; the seed has 7 fixed question ids"]);
   });
 
   it("refuses a question with too few options, a missing language, a bad file key and a repeated identifier", () => {
@@ -1063,7 +1072,11 @@ describe("statementOf", () => {
     expect(lesson.sql).toMatch(/ON DUPLICATE KEY UPDATE `lessonname` = VALUES\(`lessonname`\), `lessondescription` = VALUES\(`lessondescription`\), `lessonorder` = VALUES\(`lessonorder`\), `lessonstatus` = VALUES\(`lessonstatus`\), `isdeleted` = VALUES\(`isdeleted`\)$/);
     expect(lesson.sql.match(/\?/g)).toHaveLength(lesson.params.length);
     const hide = statementOf(p.steps.find((s: Json) => s.kind === "hide" && s.table === "lessons"));
-    expect(hide).toEqual({ sql: "UPDATE `lessons` SET `isdeleted` = ? WHERE `lessonid` IN (?, ?, ?)", params: [1, ID.lesson2, ID.lesson3, ID.lesson4] });
+    const rest = EXTRA_LESSONS.map((l) => l.id);
+    expect(hide).toEqual({
+      sql: `UPDATE \`lessons\` SET \`isdeleted\` = ? WHERE \`lessonid\` IN (${["?", "?", "?", ...rest.map(() => "?")].join(", ")})`,
+      params: [1, ID.lesson2, ID.lesson3, ID.lesson4, ...rest],
+    });
   });
 
   it("builds a translation upsert that keeps the row's id and moves lastupdated only when the text or the hash changes", () => {
@@ -1919,9 +1932,342 @@ describe("the command line", () => {
     expect(text).toContain("translate lessons 1");
     expect(text).toContain("translate grades 1");
     expect(text).toContain("upsert questions 1");
-    expect(text).toContain("hide   lessons 3");
+    expect(text).toContain("hide   lessons 14"); // the seed's three placeholder lessons and Module 1's eleven derived slots
     expect(text).toContain("module 1: its level is order 1, left as it is if it exists (neither --draft nor --live; a new level would be refused)");
     expect(text).toContain("media: copy lesson_final.mp4 to <media folder>/dcrs-m1-l1.mp4");
     expect(text).not.toMatch(/en p1|\u1780/);
+  });
+});
+
+// ---- a Module 1 of several lessons, lesson 1 kept as it is -----------------------------------------------------
+
+describe("a Module 1 of several lessons", () => {
+  /** Lesson `order` (2 or more) of a Module 1 file: no id, its own idents and video file. */
+  const later = (order: number, over: Json = {}): Json => ({
+    order,
+    name: bi(`lesson ${order}`),
+    video: { ref: `REF-${order}`, filename: `dcrs-m1-l${order}.mp4`, source: `M01-L0${order}-MP4.mp4` },
+    practice: [question(`DCRS-M1-L${order}-P1`, `l${order}p1`)],
+    quiz: [question(`DCRS-M1-L${order}-Q1`, `l${order}q1`, 3, 1)],
+    ...over,
+  });
+  /** Module 1 with `count` lessons; lesson 1 is the fixed one, with its video kept when `keep` is set. */
+  const multi = (count = 3, keep = false): Json => {
+    const c = sample();
+    if (keep) c.lessons[0].video = { ref: "REF-1", keep: true };
+    for (let order = 2; order <= count; order++) c.lessons.push(later(order));
+    return c;
+  };
+  const lesson1Slot = slotsOf(ID, 1).lessons[0];
+  const lesson1Ids = new Set<string>([lesson1Slot.id, lesson1Slot.doc, lesson1Slot.learning, lesson1Slot.practice, lesson1Slot.quiz, ID.q1, ID.q2, ID.q3, ID.q4, ...lesson1Slot.practiceJoins, ...lesson1Slot.quizJoins]);
+  const m1 = (...path: (string | number)[]) => moduleId(1, ...path);
+  const stepsFor = (p: Json, ids: Set<string>): Json[] => p.steps.filter((s: Json) => s.kind !== "hide" && ids.has(s.kind === "translate" ? s.values.rowid : s.id));
+
+  it("lesson 1 keeps every fixed id and question id, and lessons 2 on take ids of their own, derived from Module 1's role paths", () => {
+    const p = plan(multi(3));
+    expect(upserted(p, "lessons")).toEqual([ID.lesson1, m1("lesson", 2), m1("lesson", 3)]);
+    expect(upserted(p, "documents")).toEqual([ID.doc1, m1("doc", 2), m1("doc", 3)]);
+    expect(upserted(p, "lessonlearnings")).toEqual([ID.learning1, m1("learning", 2), m1("learning", 3)]);
+    expect(upserted(p, "lessonpractices")).toEqual([ID.practice1, m1("practice", 2), m1("practice", 3)]);
+    expect(upserted(p, "lessonquizzes")).toEqual([ID.quiz1, m1("quiz", 2), m1("quiz", 3)]);
+    expect(upserted(p, "questions")).toEqual([ID.q1, ID.q2, ID.q3, ID.q4, m1("q", "practice", 2, 1), m1("q", "quiz", 2, 1), m1("q", "practice", 3, 1), m1("q", "quiz", 3, 1)]);
+    expect(upserted(p, "lessonpracticequestions")).toEqual([ID.pqLesson1, "c0000000-0000-4000-8000-000000000032", m1("join", "practice", 2, 1), m1("join", "practice", 3, 1)]);
+    expect(upserted(p, "lessonquizquestions")).toEqual([ID.qqLesson1, "c0000000-0000-4000-8000-000000000035", m1("join", "quiz", 2, 1), m1("join", "quiz", 3, 1)]);
+    // the derived ids are RFC 4122 version 5, the same role paths a later module uses with its own number, and none is one the seed already holds
+    const seeded = new Set(Object.values(ID));
+    for (const id of idsOf(p).filter((i) => !lesson1Ids.has(i) && !seeded.has(i) && /^[0-9a-f]{8}-[0-9a-f]{4}-5/.test(i))) expect(seeded.has(id)).toBe(false);
+    expect(m1("lesson", 2)).toBe(uuidV5(MODULE_ID_NAMESPACE, "dcrs/m1/lesson/2"));
+    expect(m1("lesson", 2)).not.toBe(moduleId(2, "lesson", 2));
+    // a later lesson's rows
+    const l2 = p.steps.find((s: Json) => s.kind === "upsert" && s.table === "lessons" && s.id === m1("lesson", 2));
+    expect(l2.values).toMatchObject({ levelid: ID.level, lessonname: "en lesson 2", lessonorder: 2, lessonstatus: 1, isdeleted: 0, total_points: 100 });
+    expect(p.steps.find((s: Json) => s.table === "documents" && s.id === m1("doc", 2)).values.documentname).toBe("dcrs-m1-l2.mp4");
+    expect(p.steps.find((s: Json) => s.table === "questions" && s.id === m1("q", "quiz", 2, 1)).values.questionidentifier).toBe("DCRS-M1-L2-Q1");
+    // its translation rows keep the Module 1 style of id, and every id is unique
+    const tr = translations(p).map((v) => v.translationid);
+    expect(new Set(tr).size).toBe(tr.length);
+    expect(forRow(p, "lessons", m1("lesson", 2)).map((v) => v.translationid)).toEqual([translationId("lessons", m1("lesson", 2), "lessonname", "", "km")]);
+    expect(p.media.map((m: Json) => [m.order, m.filename, m.source, m.keep])).toEqual([
+      [1, "dcrs-m1-l1.mp4", "lesson_final.mp4", false],
+      [2, "dcrs-m1-l2.mp4", "M01-L02-MP4.mp4", false],
+      [3, "dcrs-m1-l3.mp4", "M01-L03-MP4.mp4", false],
+    ]);
+  });
+
+  it("writes lesson 1 exactly as the one-lesson file did: the same rows, the same values, the same update columns", () => {
+    const one = plan(multi(1));
+    const six = plan(multi(6));
+    expect(stepsFor(six, lesson1Ids)).toEqual(stepsFor(one, lesson1Ids));
+    expect(stepsFor(one, lesson1Ids).length).toBeGreaterThan(30);
+    // lesson 1 is still named by the fixed lesson id, and the seed's placeholder lessons 2 to 4 stay hidden with their rows, not handed to the new lessons
+    expect(hidden(six).lessons).toEqual(expect.arrayContaining([ID.lesson2, ID.lesson3, ID.lesson4]));
+    expect(hidden(six).documents).toEqual(expect.arrayContaining([ID.doc2, ID.doc3, ID.doc4]));
+    expect(hidden(six).questions).toEqual(expect.arrayContaining([ID.q5, ID.q6, ID.q7]));
+    // and a lesson that is written is not also hidden
+    const written = new Set(upserted(six, "lessons"));
+    for (const id of hidden(six).lessons) expect(written.has(id)).toBe(false);
+    expect(written.size).toBe(6);
+  });
+
+  it("counts the new lessons into the level and the grade, and leaves the lesson's own points to the database", () => {
+    const level = (over: Json = {}) => ({ levelid: ID.level, levelstatus: 1, isdeleted: 0, points: 100, quiz_points: 20, levelquizrows: 0, ...over });
+    const lessonRow = (over: Json = {}) => ({ lessonid: ID.lesson1, lessonname: "en lesson", isdeleted: 0, total_points: 100, ...over });
+    // the shape UAT is in: the level at 100 (quiz_points 20 but no level quiz), the grade at 100
+    const before = planContent(multi(1), ID, { organisationid: ORG, now: NOW, existing: { levels: [level()], lessons: [lessonRow()] } });
+    expect(before.module).toMatchObject({ levelpoints: 100, gradepoints: 100 });
+    const after = planContent(multi(6), ID, { organisationid: ORG, now: NOW, existing: { levels: [level()], lessons: [lessonRow()] } });
+    expect(after.module).toMatchObject({ levelpoints: 600, gradepoints: 600, levelstatus: 1, levelIsNew: false });
+    // lesson 1's total_points is not written (the update list has no such column), so the lesson keeps what it has
+    const l1 = after.steps.find((s: Json) => s.kind === "upsert" && s.table === "lessons" && s.id === ID.lesson1);
+    expect(l1.update).not.toContain("total_points");
+    // ...and the level counts it as the database has it
+    const edited = planContent(multi(6), ID, { organisationid: ORG, now: NOW, existing: { levels: [level()], lessons: [lessonRow({ total_points: 150 })] } });
+    expect(edited.module.levelpoints).toBe(650);
+    // a level with a level quiz keeps its quiz points on top
+    const quizzed = planContent(multi(6), ID, { organisationid: ORG, now: NOW, existing: { levels: [level({ levelquizrows: 1 })], lessons: [lessonRow()] } });
+    expect(quizzed.module.levelpoints).toBe(620);
+    // a lesson dropped from the file is no longer counted
+    const five = multi(6);
+    five.lessons.pop();
+    expect(planContent(five, ID, { organisationid: ORG, now: NOW, existing: { levels: [level()], lessons: [lessonRow()] } }).module.levelpoints).toBe(500);
+  });
+
+  it("a lesson with no practice question gets its practice set written switched off, so the app lists no step it cannot finish; one with no quiz likewise", () => {
+    const c = multi(3);
+    c.lessons[2].practice = [];
+    const p = plan(c);
+    const row = (table: string, id: string) => p.steps.find((s: Json) => s.kind === "upsert" && s.table === table && s.id === id);
+    expect(row("lessonpractices", m1("practice", 3)).values.lessonpracticestatus).toBe(0);
+    expect(row("lessonpractices", m1("practice", 2)).values.lessonpracticestatus).toBe(1);
+    expect(row("lessonpractices", m1("practice", 3)).update).toContain("lessonpracticestatus"); // a later file that names a question switches it on
+    expect(row("lessons", m1("lesson", 3)).values).toMatchObject({ practicecount: 0, quizcount: 1 });
+    expect(row("lessonquizzes", m1("quiz", 3)).values.lessonquizstatus).toBe(1);
+    expect(upserted(p, "lessonpracticequestions")).not.toContain(m1("join", "practice", 3, 1));
+    expect(upserted(p, "questions")).not.toContain(m1("q", "practice", 3, 1));
+    expect(upserted(p, "questions")).toContain(m1("q", "quiz", 3, 1));
+    expect(() => validateContent(c, ID)).not.toThrow();
+    // and with no quiz question
+    const d = multi(3);
+    d.lessons[1].quiz = [];
+    const q = plan(d);
+    expect(q.steps.find((s: Json) => s.table === "lessonquizzes" && s.id === m1("quiz", 2)).values.lessonquizstatus).toBe(0);
+    expect(q.steps.find((s: Json) => s.table === "lessonpractices" && s.id === m1("practice", 2)).values.lessonpracticestatus).toBe(1);
+  });
+
+  it("the applier writes and verifies a switched-off set beside a switched-on one, switches it on when a question is named, and a second run changes nothing", async () => {
+    const fake = fakeConn();
+    placeholderRows(fake.store);
+    const c = multi(3);
+    c.lessons[2].practice = [];
+    await applyPlan(fake.conn, await planned(fake, c, { levelSwitch: "live" }));
+    expect(fake.store.lessonpractices[m1("practice", 3)].lessonpracticestatus).toBe(0);
+    expect(fake.store.lessonpractices[m1("practice", 2)].lessonpracticestatus).toBe(1);
+    const again = await applyPlan(fake.conn, await planned(fake, c, {}, new Date("2031-01-01T00:00:00Z")));
+    for (const t of Object.values(again.tables) as Json[]) expect(t).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
+    c.lessons[2].practice = [question("DCRS-M1-L3-P1", "l3p1")];
+    await applyPlan(fake.conn, await planned(fake, c));
+    expect(fake.store.lessonpractices[m1("practice", 3)].lessonpracticestatus).toBe(1);
+  });
+
+  describe("keeping a lesson's video", () => {
+    it("writes no documents step for the kept lesson, lists no file to copy, and requires the row to be there", () => {
+      const p = plan(multi(3, true));
+      expect(upserted(p, "documents")).toEqual([m1("doc", 2), m1("doc", 3)]);
+      expect(idsOf(p)).not.toContain(ID.doc1); // not written, and not hidden either
+      expect(p.media[0]).toEqual({ lessonid: ID.lesson1, order: 1, ref: "REF-1", keep: true, source: null, filename: null });
+      expect(p.requires).toEqual([{ what: "lesson 1's video document", kept: true, table: "documents", pk: "documentid", ids: [ID.doc1] }]);
+      // the learning item still points at the document, but a re-run never rewrites that column
+      const learning = p.steps.find((s: Json) => s.table === "lessonlearnings" && s.id === ID.learning1);
+      expect(learning.values.documentid).toBe(ID.doc1);
+      expect(learning.update).not.toContain("documentid");
+      // the document is still owner-checked
+      expect(p.owned.find((o: Json) => o.table === "documents").ids).toContain(ID.doc1);
+    });
+
+    it("everything else of the plan is what it is without the keep", () => {
+      const kept = plan(multi(3, true));
+      const unkept = plan(multi(3, false));
+      const rest = (p: Json) => JSON.stringify(p.steps.filter((s: Json) => !(s.table === "documents" && s.id === ID.doc1)));
+      expect(rest(kept)).toBe(rest(unkept));
+      expect(unkept.steps.some((s: Json) => s.table === "documents" && s.id === ID.doc1)).toBe(true);
+    });
+
+    it("is refused when the video also names a file, a source, or a keep that is not true", () => {
+      const withName = multi(1, true);
+      withName.lessons[0].video.filename = "dcrs-m1-l1.mp4";
+      expect(refusal(withName)).toEqual(["lessons[0].video keeps the lesson's existing video, so it has no filename and no source"]);
+      const withSource = multi(1, true);
+      withSource.lessons[0].video.source = "x.mp4";
+      expect(refusal(withSource)).toEqual(["lessons[0].video keeps the lesson's existing video, so it has no filename and no source"]);
+      const no = multi(1, true);
+      no.lessons[0].video.keep = false;
+      expect(refusal(no)).toEqual(["lessons[0].video.keep must be true when given"]);
+      const noRef = multi(1, true);
+      delete noRef.lessons[0].video.ref;
+      expect(refusal(noRef)).toEqual(["lessons[0].video.ref is missing"]);
+    });
+
+    it("the dry run says the video is kept, and lists the other lessons' files to copy", () => {
+      const out: string[] = [];
+      const log = jest.spyOn(console, "log").mockImplementation((m: string) => void out.push(m));
+      try {
+        printDryRun(multi(3, true), ID);
+      } finally {
+        log.mockRestore();
+      }
+      const text = out.join("\n");
+      expect(text).toContain("media: lesson 1 keeps its existing video; its document row is not written and no file is copied");
+      expect(text).toContain("media: copy M01-L02-MP4.mp4 to <media folder>/dcrs-m1-l2.mp4");
+      expect(text).toContain("media: copy M01-L03-MP4.mp4 to <media folder>/dcrs-m1-l3.mp4");
+      expect(text).toContain("lessons: 3 written (1, 2, 3); questions: 8 written");
+      expect(text).toContain("points: the level 300; the grade 300 counting only this level");
+      expect(text).not.toContain("dcrs-m1-l1.mp4");
+    });
+  });
+
+  describe("on a database that already holds lesson 1 and progress against it", () => {
+    /** The seed's placeholder rows, then the one-lesson file written as today, then a real video in lesson 1's document. */
+    const withLesson1 = async () => {
+      const fake = fakeConn();
+      placeholderRows(fake.store);
+      await applyPlan(fake.conn, await planned(fake, sample(), { levelSwitch: "live" }));
+      fake.store.documents[ID.doc1] = { documentid: ID.doc1, documenttypeid: 2, documentname: "kept-file.mp4", documents3meta: '{"seeded":true,"media":"folder","bytes":1}', isdeleted: 0, documenttags: '["dcrs"]', organisationid: ORG };
+      // learners' rows live in tables the import never names
+      fake.store.studentlessonsprogress = { s1: { id: "s1", lessonid: ID.lesson1, points: 80 } };
+      fake.store.studentprogressquestions = { p1: { id: "p1", questionid: ID.q1, correct: 1 } };
+      return fake;
+    };
+    const rowsOf = (store: Store, table: string, ids: string[]) => JSON.stringify(ids.map((id) => store[table]?.[id]));
+
+    it("leaves lesson 1's document row and the learners' progress exactly as they were, and writes lessons 2 on", async () => {
+      const fake = await withLesson1();
+      const docBefore = rowsOf(fake.store, "documents", [ID.doc1]);
+      const progressBefore = JSON.stringify([fake.store.studentlessonsprogress, fake.store.studentprogressquestions]);
+      const content = multi(6, true);
+      const p = await planned(fake, content);
+      await expect(preflight(fake.conn, p)).resolves.toBeUndefined();
+      const run = await applyPlan(fake.conn, p);
+      expect(rowsOf(fake.store, "documents", [ID.doc1])).toBe(docBefore);
+      expect(JSON.stringify([fake.store.studentlessonsprogress, fake.store.studentprogressquestions])).toBe(progressBefore);
+      // the five new lessons, and nothing is rewritten for lesson 1's document
+      expect(run.tables.lessons).toMatchObject({ inserted: 5, updated: 0 });
+      expect(run.tables.documents).toEqual({ inserted: 5, updated: 0, unchanged: 0, hidden: 0 });
+      expect(run.tables.lessonlearnings.inserted).toBe(5);
+      expect(run.tables.questions.inserted).toBe(5 * 2);
+      // lesson 1's own rows: same ids, same values (the English is the same text, so nothing changes)
+      for (const [table, id] of [["lessons", ID.lesson1], ["lessonlearnings", ID.learning1], ["lessonpractices", ID.practice1], ["lessonquizzes", ID.quiz1], ["questions", ID.q1], ["questions", ID.q4]] as const) {
+        expect(fake.store[table][id]).toBeDefined();
+      }
+      // the level and the grade count the six lessons
+      expect(fake.store.levels[ID.level].points).toBe(600);
+      expect(fake.store.grades[ID.grade].points).toBe(600);
+      expect(fake.store.lessons[ID.lesson1].total_points).toBe(100);
+      expect(fake.store.lessons[m1("lesson", 6)]).toMatchObject({ lessonorder: 6, isdeleted: 0, levelid: ID.level });
+      // the placeholder lessons the seed made are still hidden, their rows untouched by the new lessons
+      expect(fake.store.lessons[ID.lesson2].isdeleted).toBe(1);
+    });
+
+    it("a second run of the same file changes nothing at all", async () => {
+      const fake = await withLesson1();
+      await applyPlan(fake.conn, await planned(fake, multi(6, true)));
+      const before = JSON.stringify(fake.store);
+      const again = await applyPlan(fake.conn, await planned(fake, multi(6, true), {}, new Date("2031-01-01T00:00:00Z")));
+      for (const c of Object.values(again.tables) as Json[]) expect(c).toMatchObject({ inserted: 0, updated: 0, hidden: 0 });
+      expect(JSON.stringify(fake.store)).toBe(before);
+    });
+
+    it("lesson 1's Khmer text is updated in place (same row, same id), and only the rows whose text changed move", async () => {
+      const fake = await withLesson1();
+      const key = `lessons|${ID.lesson1}|lessonname||km`;
+      const before = JSON.parse(JSON.stringify(fake.store.contenttranslations));
+      const edited = multi(2, true);
+      edited.lessons[0].name = { en: "en lesson", km: km("lesson edited") };
+      await applyPlan(fake.conn, await planned(fake, edited, {}, new Date("2031-01-01T00:00:00Z")));
+      expect(fake.store.contenttranslations[key].translationid).toBe(before[key].translationid);
+      expect(fake.store.contenttranslations[key].text).toBe(km("lesson edited"));
+      expect(fake.store.contenttranslations[key].lastupdated).not.toBe(before[key].lastupdated);
+      // the lesson's name also names its learning item, practice and quiz: those four rows move; every other row is byte-for-byte as it was
+      const nameRows = new Set([lesson1Slot.id, lesson1Slot.learning, lesson1Slot.practice, lesson1Slot.quiz]);
+      let moved = 0;
+      for (const [k, row] of Object.entries(before) as [string, Json][]) {
+        if (nameRows.has(row.rowid)) moved += 1;
+        else expect(fake.store.contenttranslations[k]).toEqual(row);
+      }
+      expect(moved).toBe(4);
+    });
+
+    it("refuses a kept video when the database has no such document row, and writes nothing", async () => {
+      const fake = await withLesson1();
+      delete fake.store.documents[ID.doc1];
+      const p = await planned(fake, multi(2, true));
+      await expect(preflight(fake.conn, p)).rejects.toThrow(/lesson 1's video document is kept as it is, and this database has no such document row/);
+    });
+
+    it("a lesson slot of Module 1 beyond the first cannot change meaning without --rename-lessons, but lesson 1's text can", async () => {
+      const fake = await withLesson1();
+      await applyPlan(fake.conn, await planned(fake, multi(3, true)));
+      const renamed = multi(3, true);
+      renamed.lessons[2].name = bi("another lesson");
+      await expect(planned(fake, renamed)).rejects.toThrow(/module 1, lesson slot 3: the lesson there now/);
+      const allowed = await planned(fake, renamed, { renameLessons: true });
+      expect(allowed.steps.find((s: Json) => s.table === "lessons" && s.id === m1("lesson", 3)).values.lessonname).toBe("en another lesson");
+      const retitled = multi(3, true);
+      retitled.lessons[0].name = bi("a new title for lesson one");
+      await expect(planned(fake, retitled)).resolves.toBeDefined();
+    });
+
+    it("dropping a later lesson from the file hides that lesson and its own rows, and no other", async () => {
+      const fake = await withLesson1();
+      await applyPlan(fake.conn, await planned(fake, multi(3, true)));
+      const run = await applyPlan(fake.conn, await planned(fake, multi(2, true)));
+      expect(run.tables.lessons.hidden).toBe(1);
+      expect(fake.store.lessons[m1("lesson", 3)].isdeleted).toBe(1);
+      expect(fake.store.lessons[m1("lesson", 2)].isdeleted).toBe(0);
+      expect(fake.store.lessons[ID.lesson1].isdeleted).toBe(0);
+      expect(fake.store.questions[m1("q", "quiz", 3, 1)].isdeleted).toBe(1);
+      expect(fake.store.questions[m1("q", "quiz", 2, 1)].isdeleted).toBe(0);
+      expect(fake.store.levels[ID.level].points).toBe(200);
+    });
+  });
+
+  describe("what a Module 1 file may not hold", () => {
+    it("refuses an order that is not a slot: lesson 1 without its id, 0, 13, a fraction, a repeat, or a fixed lesson sharing an order", () => {
+      const noId = multi(2);
+      delete noId.lessons[0].id;
+      expect(refusal(noId)).toEqual([`lessons[0].order must be a whole number from 2 to 12 for a Module 1 lesson with no id (it is also the lesson's slot; lesson 1 names the fixed id ${ID.lesson1})`]);
+      for (const order of [0, 13, 1.5, "2", undefined, 1]) {
+        const c = multi(2);
+        c.lessons[1].order = order;
+        expect(refusal(c)).toHaveLength(1);
+        expect(refusal(c)[0]).toMatch(/^lessons\[1\]\.order must be a whole number from 2 to 12 for a Module 1 lesson with no id/);
+      }
+      const twice = multi(3);
+      twice.lessons[2].order = 2;
+      expect(refusal(twice)).toEqual(["lessons[2].order 2 is used by another lesson"]);
+      const clash = multi(2);
+      clash.lessons.push({ ...later(3), id: ID.lesson2, order: 2 });
+      expect(refusal(clash)).toEqual(["lessons[2].order 2 is used by another lesson"]);
+    });
+
+    it("refuses a fifth question in a later lesson, and counts the seven fixed question ids over the fixed lessons only", () => {
+      const five = multi(2);
+      five.lessons[1].quiz = Array.from({ length: 5 }, (_, i) => question(`DCRS-M1-L2-X${i}`, `x${i}`));
+      expect(refusal(five)).toEqual(["lessons[1].quiz names 5 questions; a lesson has room for 4"]);
+      // eight questions in lessons 2 on are fine (their ids are their own); lesson 1 alone is still held to the seven
+      const many = multi(3);
+      many.lessons[1].practice = Array.from({ length: 4 }, (_, i) => question(`DCRS-M1-L2-P${i + 1}`, `m${i}`));
+      many.lessons[1].quiz = Array.from({ length: 4 }, (_, i) => question(`DCRS-M1-L2-Q${i + 1}`, `n${i}`));
+      expect(() => validateContent(many, ID)).not.toThrow();
+      expect(upserted(plan(many), "questions")).toHaveLength(4 + 8 + 2);
+    });
+
+    it("refuses a repeated video file name or question identifier across lessons", () => {
+      const sameFile = multi(3);
+      sameFile.lessons[2].video.filename = "dcrs-m1-l2.mp4";
+      expect(refusal(sameFile)).toEqual(["lessons[2].video.filename is used by another lesson"]);
+      const sameIdent = multi(3);
+      sameIdent.lessons[2].practice[0].ident = "DCRS-M1-L2-P1";
+      expect(refusal(sameIdent)).toEqual(["lessons[2].practice[0].ident DCRS-M1-L2-P1 is used twice"]);
+    });
   });
 });

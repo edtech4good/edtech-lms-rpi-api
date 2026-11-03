@@ -107,11 +107,20 @@ const describeSwitch = (status, levelSwitch) =>
       ? `switched off (levelstatus 0${levelSwitch === "draft" ? ", --draft" : ", as it is"}): built, not shown to learners`
       : "left as it is if it exists (neither --draft nor --live; a new level would be refused)";
 
+/** What the run does about one lesson's video, in words (a file name is the author's folder's, a reference is printed by the converter, not here). */
+function describeMedia(m) {
+  return m.keep
+    ? `  media: lesson ${m.order} keeps its existing video; its document row is not written and no file is copied`
+    : `  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`;
+}
+
 /** The plan as table names and counts; no content, no database. */
 function printDryRun(content, ID, { levelSwitch = null, renameLessons = false } = {}) {
   const plan = planContent(content, ID, { organisationid: "dry-run", now: new Date(0), levelSwitch, renameLessons, existing: null });
   console.log(`DCRS content plan (dry run, base language ${plan.baseLanguage}, translations ${plan.translationLanguage}): ${plan.steps.length} steps, no database used.`);
   console.log(`  module ${plan.module.number}: its level is order ${plan.module.levelorder}, ${describeSwitch(plan.module.levelstatus, levelSwitch)}`);
+  const rows = (table) => plan.steps.filter((x) => x.kind === "upsert" && x.table === table).length;
+  console.log(`  lessons: ${rows("lessons")} written (${content.lessons.map((l) => l.order).join(", ")}); questions: ${rows("questions")} written`);
   console.log(`  points: the level ${plan.module.levelpoints}; the grade ${plan.module.gradepoints} counting only this level (a real run adds the other live levels)`);
   const translated = {};
   for (const step of plan.steps) {
@@ -119,7 +128,7 @@ function printDryRun(content, ID, { levelSwitch = null, renameLessons = false } 
     else console.log(`  ${step.kind === "upsert" ? "upsert" : "hide  "} ${step.table} ${step.kind === "upsert" ? 1 : step.ids.length}`);
   }
   for (const [table, n] of Object.entries(translated)) console.log(`  translate ${table} ${n}`);
-  for (const m of plan.media) console.log(`  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`);
+  for (const m of plan.media) console.log(describeMedia(m));
 }
 
-module.exports = { USAGE, parseArgs, levelSwitchOf, describeSwitch, readContent, prepare, refuse, printDryRun };
+module.exports = { USAGE, parseArgs, levelSwitchOf, describeSwitch, describeMedia, readContent, prepare, refuse, printDryRun };

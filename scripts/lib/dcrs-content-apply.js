@@ -27,7 +27,7 @@
  * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
  * require one for a new level, compute the grade's points over the live levels, and refuse a lesson slot that would change meaning.
  */
-const { statementOf, slotsOf, ContentRefused } = require("./dcrs-content-plan");
+const { statementOf, slotsOf, lessonSlotsOf, ContentRefused } = require("./dcrs-content-plan");
 
 const blank = () => ({ inserted: 0, updated: 0, unchanged: 0, hidden: 0 });
 
@@ -60,7 +60,7 @@ async function readExisting(conn, content, ID) {
       "FROM `levels` l WHERE l.`gradeid` = ?",
     [ID.grade],
   );
-  const lessonids = slots.lessons.map((l) => l.id);
+  const lessonids = lessonSlotsOf(slots).map((l) => l.id);
   const [lessons] = await conn.execute(
     `SELECT lessonid, lessonname, isdeleted, total_points FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
     lessonids,
@@ -77,17 +77,21 @@ async function preflight(conn, plan) {
     throw new ContentRefused(["this database has no contenttranslations table or no organisations.contentlanguage column; run the migrations first"]);
   }
   await organisationLanguage(conn, plan, false);
-  // A module after the first attaches to the curriculum and the grade that are already there; it never creates them.
+  // A module after the first attaches to the curriculum and the grade that are already there; it never creates them. A lesson whose video is kept needs the document row it keeps.
   const missing = [];
-  for (const { what, table, pk, ids } of plan.requires ?? []) {
+  const missingVideos = [];
+  for (const { what, kept, table, pk, ids } of plan.requires ?? []) {
     const [[row]] = await conn.execute(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")})`, ids);
-    if (Number(row.n) !== ids.length) missing.push(what);
+    if (Number(row.n) !== ids.length) (kept ? missingVideos : missing).push(what);
   }
+  const refusals = [];
   if (missing.length > 0) {
-    throw new ContentRefused([
-      `this file is module ${plan.module.number}, which attaches to the programme's existing ${missing.join(" and ")}, and this database has no such row; seed Module 1 first`,
-    ]);
+    refusals.push(`this file is module ${plan.module.number}, which attaches to the programme's existing ${missing.join(" and ")}, and this database has no such row; seed Module 1 first`);
   }
+  if (missingVideos.length > 0) {
+    refusals.push(`${missingVideos.join(" and ")} is kept as it is, and this database has no such document row; there is nothing to keep (name a video file for the lesson instead)`);
+  }
+  if (refusals.length > 0) throw new ContentRefused(refusals);
   for (const { table, pk, ids } of plan.owned) {
     const [[row]] = await conn.execute(
       `SELECT COUNT(*) AS n FROM \`${table}\` WHERE \`${pk}\` IN (${ids.map(() => "?").join(", ")}) AND \`organisationid\` IS NOT NULL AND \`organisationid\` <> ?`,
@@ -155,6 +159,9 @@ async function applyPlan(conn, plan) {
   return { tables };
 }
 
+/** The switch columns (isdeleted / status) a step's row is written with, as `[column, value]`. */
+const switchesOf = (step) => step.update.filter((c) => /^(isdeleted|\w+status)$/.test(c)).map((c) => [c, step.values[c]]);
+
 /**
  * Every row the plan upserts is there, and every row of it that exists and should be hidden is hidden:
  * counted, not assumed. (A join-row slot the plan hides may never have been created; that is not a failure.)
@@ -174,7 +181,8 @@ async function verifyPlan(conn, plan) {
       if (Number(row.n) !== 1) throw new Error(`content check failed: the ${v.language} translation of ${v.tablename}.${v.field} is not there as the plan wrote it`);
       continue;
     }
-    const key = `${step.kind}:${step.table}:${step.pk}`;
+    // Rows of one table are counted together only when they are meant to carry the same switch values (a practice set written switched off sits beside one switched on).
+    const key = `${step.kind}:${step.table}:${step.pk}:${step.kind === "upsert" ? JSON.stringify(switchesOf(step)) : ""}`;
     const entry = byTable.get(key) ?? { step, ids: [] };
     entry.ids.push(...(step.kind === "upsert" ? [step.id] : step.ids));
     byTable.set(key, entry);
@@ -196,7 +204,7 @@ async function verifyPlan(conn, plan) {
       if (done !== there) throw new Error(`content check failed: ${step.table} has ${there - done} of ${there} rows the plan hid still showing`);
     } else {
       // A live row: each of the step's own switch columns (isdeleted / status) is the value the plan wrote.
-      const switches = step.update.filter((c) => /^(isdeleted|\w+status)$/.test(c)).map((c) => [c, step.values[c]]);
+      const switches = switchesOf(step);
       const n = await count(step.table, step.pk, ids, switches);
       if (n !== ids.length) throw new Error(`content check failed: ${step.table} has ${n} of the ${ids.length} rows the plan wrote`);
     }

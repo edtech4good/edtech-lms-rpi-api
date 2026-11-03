@@ -67,8 +67,11 @@
  *    `en` when it has none; any other language stops the run before anything is written.
  *    `--lang` is retired and refused. The database must have the translations migration.
  *  - `--dry-run` validates and prints the plan, with no database connection.
+ *  - A Module 1 of several lessons: lesson 1 keeps the fixed ids it has always had; lessons 2 on (a Module 1 lesson with no `id`)
+ *    take ids derived from `dcrs/m1/...` role paths, the same in both APIs, and the seed's own placeholder lessons 2 to 4 stay
+ *    hidden. A lesson whose video is `keep: true` has no documents write at all.
  * The lesson video is not uploaded: its document row names the file the content gives (`dcrs-m1-l1.mp4`, `dcrs-m2-l1.mp4`, ...) and the
- * script prints the copy to make into the media folder.
+ * script prints the copy to make into the media folder (or says the lesson keeps the video its document row already has).
  */
 const path = require("path");
 const dotenv = require("dotenv");
@@ -78,7 +81,7 @@ const bcryptjs = require("bcryptjs");
 const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
 const { planContent } = require("./lib/dcrs-content-plan");
 const { applyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName } = require("./lib/dcrs-content-apply");
-const { prepare, refuse, printDryRun, levelSwitchOf, describeSwitch } = require("./lib/dcrs-content-cli");
+const { prepare, refuse, printDryRun, levelSwitchOf, describeSwitch, describeMedia } = require("./lib/dcrs-content-cli");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -461,7 +464,7 @@ async function main() {
       console.log(`  module ${contentPlan.module.number}: level order ${contentPlan.module.levelorder}, ${describeSwitch(contentPlan.module.levelstatus, levelSwitchOf(args))}`);
       console.log(`  points: the level ${contentPlan.module.levelpoints}, the grade ${contentPlan.module.gradepoints} (its levels that are switched on)`);
       console.log(formatCurriculumName(nameNote));
-      for (const m of contentPlan.media) console.log(`  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`);
+      for (const m of contentPlan.media) console.log(describeMedia(m));
     } else {
       console.log("  Lesson videos will not play: no media is seeded.");
     }
