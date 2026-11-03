@@ -27,7 +27,7 @@ import { TokenType } from "src/models/enums";
 import { SchoolRole } from "src/models/enums/school.role.enum";
 import { IMultiPaging } from "src/models/IPaging";
 import { Token } from "src/models/token.model";
-import { TeacherStudent } from "./teacher.business.validator";
+import { assertTeacherStudent, TeacherStudent } from "./teacher.business.validator";
 import { studentstats } from "./teacher.request.validator";
 
 @ApiTags("Teacher")
@@ -132,7 +132,8 @@ export class TeacherController {
   @HttpCode(HttpStatus.OK)
   @ApiParam({ name: `studentid`, type: "string", required: true })
   @HttpCode(HttpStatus.OK)
-  async getstudentstats(@Param("studentid") studentid: string): Promise<any> {
+  async getstudentstats(@Param("studentid") studentid: string, @User() user: Token): Promise<any> {
+    await assertTeacherStudent(user, studentid);
     const tb = new StudentBusiness();
     return {
       data: (await tb.getstudentstats(studentid))[0],
@@ -154,8 +155,10 @@ export class TeacherController {
   @ApiParam({ name: `studentid`, type: "string", required: true })
   @HttpCode(HttpStatus.OK)
   async getstudentpracticestats(
-    @Param("studentid") studentid: string
+    @Param("studentid") studentid: string,
+    @User() user: Token
   ): Promise<any> {
+    await assertTeacherStudent(user, studentid);
     const tb = new StudentBusiness();
     return {
       data: await tb.getstudentpracticestats(studentid),
@@ -177,8 +180,10 @@ export class TeacherController {
   @ApiParam({ name: `studentid`, type: "string", required: true })
   @HttpCode(HttpStatus.OK)
   async getstudentquizstats(
-    @Param("studentid") studentid: string
+    @Param("studentid") studentid: string,
+    @User() user: Token
   ): Promise<any> {
+    await assertTeacherStudent(user, studentid);
     const tb = new StudentBusiness();
     return {
       data: await tb.getstudentquizstats(studentid),
@@ -200,8 +205,10 @@ export class TeacherController {
   @ApiParam({ name: `studentid`, type: "string", required: true })
   @HttpCode(HttpStatus.OK)
   async getstudentlevelstats(
-    @Param("studentid") studentid: string
+    @Param("studentid") studentid: string,
+    @User() user: Token
   ): Promise<any> {
+    await assertTeacherStudent(user, studentid);
     const tb = new StudentBusiness();
     return {
       data: await tb.getstudentlevelstats(studentid),
