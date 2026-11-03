@@ -17,26 +17,13 @@ export class BusinessValidationInterceptor implements NestInterceptor {
     const request: IRequest = ctx.getRequest();
     const value: RequestValidator = pick(request as any, ['params', 'query', 'body']);
 
-    let businessobject: any = {};
-
-    if (value.params) {
-      businessobject = {
-        ...businessobject,
-        ...value.params,
-      };
-    }
-    if (value.query) {
-      businessobject = {
-        ...businessobject,
-        ...value.query,
-      };
-    }
-    if (value.body) {
-      businessobject = {
-        ...businessobject,
-        ...value.body,
-      };
-    }
+    // A path parameter takes precedence over body and query: the business rules
+    // check the same id the handler acts on. Body still takes precedence over query.
+    const businessobject: any = {
+      ...(value.query || {}),
+      ...(value.body || {}),
+      ...(value.params || {}),
+    };
     if (Object.keys(businessobject).length > 0) {
       const validationresultarray = await forkJoin(this.rules.map(x => from(x(request, businessobject)))).toPromise();
       const validationresult = flatten(validationresultarray);
