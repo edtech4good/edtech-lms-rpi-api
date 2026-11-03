@@ -24,10 +24,14 @@
  * printing the client's text, whether the run changes the curriculum's name.
  *
  * `readExisting` is what the seed reads, read-only, BEFORE it plans (and before its placeholder pass): the grade's levels (whether
- * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are, so that the plan can keep an existing level's switch,
- * require one for a new level, compute the grade's points over the live levels, and refuse a lesson slot that would change meaning.
+ * each is switched on, its points, whether it has a level quiz) and the module's lesson slots as they are (their pass marks and counts
+ * too), so that the plan can keep an existing level's switch, require one for a new level, compute the grade's points over the live levels,
+ * and refuse a lesson slot that would change meaning or a file that would leave an existing lesson impossible to complete.
+ *
+ * These checks run against rows, so they run only in a real run: the dry run (`--dry-run`) opens no database connection and cannot make
+ * them. They are made at the start of the real run, before any content write, and a refusal there writes nothing.
  */
-const { statementOf, slotsOf, lessonSlotsOf, questionIdsOf, ContentRefused } = require("./dcrs-content-plan");
+const { statementOf, slotsOf, lessonSlotsOf, questionIdsOf, isSeedPlaceholder, ContentRefused } = require("./dcrs-content-plan");
 
 const blank = () => ({ inserted: 0, updated: 0, unchanged: 0, hidden: 0 });
 
@@ -51,7 +55,7 @@ async function organisationLanguage(conn, plan, lock) {
  * What the plan needs to know of the database (see planContent's `existing`): every level of the grade, and the module's lesson slots
  * that exist. Read-only; nothing is written. A grade that is not there yet simply has no levels.
  */
-async function readExisting(conn, content, ID) {
+async function readExisting(conn, content, ID, placeholders = []) {
   const slots = slotsOf(ID, content.module.number);
   // `levelquizrows`: the level's active level-quiz questions (the same "active" the student API reports as level_has_quiz); its quiz_points count only when there is one.
   const [levels] = await conn.execute(
@@ -62,14 +66,15 @@ async function readExisting(conn, content, ID) {
   );
   const lessonids = lessonSlotsOf(slots).map((l) => l.id);
   const [lessons] = await conn.execute(
-    `SELECT lessonid, lessonname, isdeleted, total_points FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
+    "SELECT lessonid, lessonname, isdeleted, total_points, passing_points, learning_points, quizzes_points, practices_points, practicecount, quizcount " +
+      `FROM \`lessons\` WHERE \`lessonid\` IN (${lessonids.map(() => "?").join(", ")})`,
     lessonids,
   );
   // The module's question slots that exist: which sets (practice, quiz) hold each by an active join row, and its stored options (what a
   // learner's answers were given against). The plan refuses a file that would change either of them.
   const questionids = questionIdsOf(slots);
   const marks = questionids.map(() => "?").join(", ");
-  const [questionRows] = await conn.execute(`SELECT questionid, questionoptions FROM \`questions\` WHERE \`questionid\` IN (${marks})`, questionids);
+  const [questionRows] = await conn.execute(`SELECT questionid, questionidentifier, questionoptions FROM \`questions\` WHERE \`questionid\` IN (${marks})`, questionids);
   const [practiceJoins] = await conn.execute(
     `SELECT DISTINCT questionid FROM \`lessonpracticequestions\` WHERE \`lessonpracticequestionstatus\` = 1 AND \`questionid\` IN (${marks})`,
     questionids,
@@ -88,16 +93,20 @@ async function readExisting(conn, content, ID) {
       return null;
     }
   };
-  const questions = questionRows.map((r) => ({
-    questionid: r.questionid,
-    roles: [...(inPractice.has(r.questionid) ? ["practice"] : []), ...(inQuiz.has(r.questionid) ? ["quiz"] : [])],
-    options: optionsOf(r.questionoptions),
-  }));
+  // `placeholders` is what the seed's own placeholder pass writes for each question ({ questionid, ident, options: [{ text, correct }] }).
+  // `placeholder` marks a stored question that is still exactly that (see isSeedPlaceholder): it has no meaning yet to keep.
+  const seeded = new Map(placeholders.map((p) => [p.questionid, p]));
+  const questions = questionRows.map((r) => {
+    const options = optionsOf(r.questionoptions);
+    return {
+      questionid: r.questionid,
+      roles: [...(inPractice.has(r.questionid) ? ["practice"] : []), ...(inQuiz.has(r.questionid) ? ["quiz"] : [])],
+      options,
+      placeholder: isSeedPlaceholder({ ident: r.questionidentifier, options }, seeded.get(r.questionid)),
+    };
+  });
   return { levels, lessons, questions };
 }
-
-/** The document ids of the lessons whose video the plan keeps (their rows are not written, so nothing else may write them either). */
-const keptDocumentIds = (plan) => (plan.requires ?? []).filter((r) => r.kept).flatMap((r) => r.ids);
 
 /** Read-only checks before anything of the content is written; throws ContentRefused with the reason. */
 async function preflight(conn, plan) {
@@ -262,4 +271,4 @@ function formatReport(report) {
   ].join("\n");
 }
 
-module.exports = { applyPlan, verifyPlan, preflight, readExisting, keptDocumentIds, formatReport, curriculumNameLengths, formatCurriculumName };
+module.exports = { applyPlan, verifyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName };

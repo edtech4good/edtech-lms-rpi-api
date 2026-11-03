@@ -66,7 +66,9 @@
  *    the hash of the English it translates). The organisation's `contentlanguage` is set to
  *    `en` when it has none; any other language stops the run before anything is written.
  *    `--lang` is retired and refused. The database must have the translations migration.
- *  - `--dry-run` validates and prints the plan, with no database connection.
+ *  - `--dry-run` validates and prints the plan, with no database connection. It therefore cannot make the checks against rows that are
+ *    already in the database (an existing question's shape, an existing lesson's pass mark, a kept video's document): those run only at the start
+ *    of the real run, before any content write, and a refusal there writes nothing.
  *  - A Module 1 of several lessons: lesson 1 keeps the fixed ids it has always had; lessons 2 on (a Module 1 lesson with no `id`)
  *    take ids derived from `dcrs/m1/...` role paths, the same in both APIs, and the seed's own placeholder lessons 2 to 4 stay
  *    hidden. A lesson whose video is `keep: true` has no documents write at all.
@@ -80,8 +82,8 @@ const md5 = require("crypto-js/md5");
 const bcryptjs = require("bcryptjs");
 const { ensureOrganisation, fillAndVerify } = require("./lib/seed-organisations");
 const { planContent } = require("./lib/dcrs-content-plan");
-const { applyPlan, preflight, readExisting, keptDocumentIds, formatReport, curriculumNameLengths, formatCurriculumName } = require("./lib/dcrs-content-apply");
-const { prepare, refuse, printDryRun, levelSwitchOf, describeSwitch, describeMedia } = require("./lib/dcrs-content-cli");
+const { applyPlan, preflight, readExisting, formatReport, curriculumNameLengths, formatCurriculumName } = require("./lib/dcrs-content-apply");
+const { prepare, refuse, printDryRun, levelSwitchOf, describeSwitch, describeMedia, printNotices } = require("./lib/dcrs-content-cli");
 
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
 
@@ -259,6 +261,14 @@ const QUESTIONS = [
   },
 ];
 
+// What the placeholder pass above writes for each question, by id: the identifier and, per option, its text and whether it is correct.
+// The content import reads it to tell a question that is still the placeholder (nothing to keep) from one an import has written.
+const PLACEHOLDER_QUESTIONS = QUESTIONS.map((Q) => ({
+  questionid: ID[Q.key],
+  ident: Q.ident,
+  options: Q.options.map((o) => ({ text: o.questionoptiontext, correct: o.questionoptioniscorrect })),
+}));
+
 async function main() {
   // Content mode (`--content <dir>`): arguments and content.json are checked first; a refusal exits 1 with nothing written.
   const { args, content } = prepare(process.argv.slice(2), ID);
@@ -299,11 +309,12 @@ async function main() {
     let contentPlan = null;
     if (content) {
       try {
-        const existing = await readExisting(conn, content, ID);
+        const existing = await readExisting(conn, content, ID, PLACEHOLDER_QUESTIONS);
         contentPlan = planContent(content, ID, { organisationid, now: new Date(), levelSwitch: levelSwitchOf(args), renameLessons: args.renameLessons, existing });
       } catch (err) {
         refuse(err);
       }
+      printNotices(contentPlan);
       await preflight(conn, contentPlan).catch(refuse);
     }
     // The curriculum's name before the placeholder pass can make it, by length only (the names are the client's text).
@@ -436,20 +447,18 @@ async function main() {
     // Content mode: the real text over the placeholder rows, in one transaction, then counted.
     const contentReport = contentPlan ? await applyPlan(conn, contentPlan) : null;
 
-    // A kept lesson video's document row is left exactly as it is: not even a NULL owner is filled (and it is not checked for one).
-    const keptDocuments = new Set(contentPlan ? keptDocumentIds(contentPlan) : []);
     // INSERT IGNORE turns a refused row into a silent skip, and leaves rows seeded before owners existed as they
     // were: fill the NULL owners and school ids of this seed's own rows, then check every one is there.
     await fillAndVerify(conn, [
       { table: "schools", key: "schoolid", ids: [ID.school], column: "organisationid", value: organisationid },
       { table: "subjects", key: "subjectid", ids: [ID.subject], column: "organisationid", value: organisationid },
       { table: "curriculums", key: "curriculumid", ids: [ID.curriculum], column: "organisationid", value: organisationid },
-      { table: "documents", key: "documentid", ids: [ID.doc1, ID.doc2, ID.doc3, ID.doc4].filter((id) => !keptDocuments.has(id)), column: "organisationid", value: organisationid },
+      { table: "documents", key: "documentid", ids: [ID.doc1, ID.doc2, ID.doc3, ID.doc4], column: "organisationid", value: organisationid },
       { table: "questions", key: "questionid", ids: QUESTIONS.map((Q) => ID[Q.key]), column: "organisationid", value: organisationid },
       { table: "standards", key: "standardid", ids: [ID.standard], column: "schoolid", value: ID.school },
       { table: "schoolusers", key: "schooluserid", ids: [ID.studentUser, ID.facilitatorUser], column: "schoolid", value: ID.school },
       { table: "students", key: "studentid", ids: [ID.student, ID.facilitator], column: "schoolid", value: ID.school },
-    ].filter((e) => e.ids.length > 0));
+    ]);
 
     const [[c]] = await conn.query(`
       SELECT (SELECT COUNT(*) FROM lessons WHERE levelid = ?)   AS lessons,
@@ -483,4 +492,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { ID };
+module.exports = { ID, QUESTIONS, PLACEHOLDER_QUESTIONS };

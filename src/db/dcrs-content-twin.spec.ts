@@ -11,13 +11,13 @@ import * as fs from "fs";
 import * as path from "path";
 
 const TWINS: Record<string, string> = {
-  "dcrs-content-plan.js": "c1fa628b326e36a92083a0e605d74676f401925ea168c8688e0170dbb348342c",
-  "dcrs-content-apply.js": "ffdcb63db6b742d2a530d45e4a4f3d18932ebdd2bff0c30887cee82a31cd13f8",
-  "dcrs-content-cli.js": "0e9a71f08b484666a453f7d049fecad40e87b5da26e742cb0b53f353eb07a2cf",
+  "dcrs-content-plan.js": "2f989dc23f434548216c6331dc75ef9c58adbc070efa63e2eef0790347c33e27",
+  "dcrs-content-apply.js": "e7f7357d611e8b453e4bce40f4e5e00eb6c350611208b21276ef70cc1f924810",
+  "dcrs-content-cli.js": "8b49d6e9d2d66d7753811aad4377b532000c37f6b4d11959ec93825693301661",
 };
 // The plan's spec is a twin too: it runs the same plan against the same rules in each repo.
 const SPEC_TWINS: Record<string, string> = {
-  "dcrs-content-plan.spec.ts": "b6beed543ca7aa58b7d38ee12b12331e9cde4675abca09567679773eeafe3dc7",
+  "dcrs-content-plan.spec.ts": "f91c3c19f6f25437cda8b76eb6642188925c8e40258a73ff6929c9df4c940e98",
 };
 
 describe("the files shared with the other API", () => {

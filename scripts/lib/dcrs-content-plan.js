@@ -137,6 +137,9 @@ const LESSON_LEARNING_POINTS = 20;
 const LESSON_QUIZ_POINTS = 40;
 const LESSON_PRACTICE_POINTS = 40;
 const LESSON_PASS_POINTS = 80;
+// The app's own fallback (lessonPassMark in the student API's src/business/lesson.business.ts): a lesson with no usable passing_points
+// is complete at this percentage of its total_points.
+const APP_PASS_PERCENTAGE = 80;
 const LEVEL_SWITCHES = ["draft", "live"];
 
 const OLD_SHAPE =
@@ -216,6 +219,50 @@ function questionTexts(templatetypeid, questionid, q) {
 function lessonPassingPoints(lesson) {
   const reachable = LESSON_LEARNING_POINTS + (lesson.quiz.length > 0 ? LESSON_QUIZ_POINTS : 0) + (lesson.practice.length > 0 ? LESSON_PRACTICE_POINTS : 0);
   return Math.min(LESSON_PASS_POINTS, reachable);
+}
+
+/**
+ * The pass mark the student app applies to a lesson row, as `lessonPassMark` there reads it: its passing_points when that is above 0,
+ * else APP_PASS_PERCENTAGE of its total_points rounded up, else no mark at all (Infinity: the lesson is never complete, whatever the
+ * file says). A stored 0 or NULL therefore means the fallback applies, not "no pass mark".
+ */
+function storedPassMark(row) {
+  const passing = Number(row.passing_points);
+  if (Number.isFinite(passing) && passing > 0) return passing;
+  const total = Number(row.total_points);
+  if (Number.isFinite(total) && total > 0) return Math.ceil((total * APP_PASS_PERCENTAGE) / 100);
+  return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The points a learner can reach in an EXISTING lesson once the file's sets are in: the lesson's own learning points, plus its quiz
+ * points when the file gives it a quiz question, plus its practice points when the file gives it a practice question. A points column
+ * the row does not hold (NULL or 0) is read as what a new lesson is written with.
+ */
+function reachablePoints(row, lesson) {
+  const pts = (value, fallback) => (Number(value) > 0 ? Number(value) : fallback);
+  return (
+    pts(row.learning_points, LESSON_LEARNING_POINTS) +
+    (lesson.quiz.length > 0 ? pts(row.quizzes_points, LESSON_QUIZ_POINTS) : 0) +
+    (lesson.practice.length > 0 ? pts(row.practices_points, LESSON_PRACTICE_POINTS) : 0)
+  );
+}
+
+/** A stored `questionoptioniscorrect` the way the student API reads it (asCorrectFlag in src/business/grading/option.ts): true, 1, "true" or "1". */
+function asCorrectFlag(v) {
+  return v === true || v === 1 || v === "true" || v === "1";
+}
+
+/**
+ * Whether a stored question is still exactly what the seed's own placeholder pass wrote for that id: the seed's question identifier and
+ * the seed's options, by count, by text and by which one is correct. `seeded` is `{ ident, options: [{ text, correct }] }`, `stored`
+ * `{ ident, options }` as `readExisting` reads them. Nothing weaker counts: a question an import has written carries the file's
+ * identifier and text, so a real question that differs in shape from the file is never taken for a placeholder, and a placeholder that
+ * was changed in any of these ways is not one any more.
+ */
+function isSeedPlaceholder(stored, seeded) {
+  if (!seeded || !stored || stored.ident !== seeded.ident || !Array.isArray(stored.options) || stored.options.length !== seeded.options.length) return false;
+  return stored.options.every((o, j) => o && o.questionoptiontext === seeded.options[j].text && asCorrectFlag(o.questionoptioniscorrect) === Boolean(seeded.options[j].correct));
 }
 
 /** The four lesson ids of the seed, in lesson order (the seed's id map must agree: a spec checks). */
@@ -479,7 +526,8 @@ const optionRow = (i, text, correct) => ({
  * `lessons: [{ lessonid, lessonname, isdeleted, total_points }]` for the module's lesson slots that exist, and
  * `questions: [{ questionid, roles, options }]` for the module's question slots that exist (`roles`: "practice" and/or "quiz", the sets with an
  * active join row for it; `options`: its stored option rows, or null when they cannot be read) (`readExisting` in dcrs-content-apply.js).
- * Returns `{ baseLanguage, translationLanguage, organisationid, module, curriculumName, requires, steps, media, owned }`. A step is one of
+ * Returns `{ baseLanguage, translationLanguage, organisationid, module, curriculumName, requires, steps, media, owned, notices }` (`notices`: what the
+ * file does to existing rows that the run says in words and does not refuse; empty on a dry run). A step is one of
  *   `{ kind: "upsert", table, pk, id, values, update }`  (INSERT ... ON DUPLICATE KEY UPDATE `update` columns)
  *   `{ kind: "translate", table: "contenttranslations", pk, id, values, update, touch }`  (the same, and `touch`
  *      (`lastupdated`) is only moved when a column of `update` changes)
@@ -653,6 +701,7 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
   // A question that is already in the database keeps its meaning: the id is what a learner's answers hang from. So a file is refused, before
   // anything is written, when it would put an existing question in the other set (practice or quiz), give it another number of options, or
   // move its correct option. Text-only changes pass. This reads every question the file names, whatever the id is derived from.
+  const notices = [];
   if (existing !== null) {
     const rows = new Map((existing.questions ?? []).map((r) => [r.questionid, r]));
     const changes = [];
@@ -660,7 +709,8 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
       for (const [kind, list] of [["practice", practice], ["quiz", quiz]]) {
         list.forEach(({ q, id }, j) => {
           const row = rows.get(id);
-          if (!row) return;
+          // A question the seed's placeholder pass wrote and nothing has replaced yet has no meaning to keep: the file gives it its first.
+          if (!row || row.placeholder === true) return;
           const at = `lesson ${lesson.order} (row ${lesson.order + 1} of the sheet), ${kind} question ${j + 1}`;
           if (Array.isArray(row.roles) && row.roles.length > 0 && !row.roles.includes(kind)) {
             changes.push(`${at}: the question with this id is a ${row.roles.join(" and ")} question in the database, and the file puts it in the ${kind}; a question cannot move between sets`);
@@ -668,11 +718,36 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
           if (Array.isArray(row.options)) {
             if (row.options.length !== q.options.length) {
               changes.push(`${at}: it has ${row.options.length} options in the database and ${q.options.length} in the file; the number of options of an existing question cannot change`);
-            } else if (row.options.findIndex((o) => Boolean(Number(o.questionoptioniscorrect))) !== q.options.findIndex((o) => o.correct)) {
+            } else if (row.options.findIndex((o) => asCorrectFlag(o.questionoptioniscorrect)) !== q.options.findIndex((o) => o.correct)) {
               changes.push(`${at}: the file marks another option correct than the database does; the correct option of an existing question cannot move`);
             }
           }
         });
+      }
+    }
+    // An existing lesson keeps the pass mark it has (the lesson step does not rewrite it), so a file that takes a set away from it must
+    // not leave the mark above what a learner can then reach: the lesson could never be completed.
+    for (const { slot, lesson } of placed) {
+      const row = existing.lessons.find((l) => l.lessonid === slot.id);
+      if (!row) continue;
+      const at = `lesson ${lesson.order} (row ${lesson.order + 1} of the sheet)`;
+      const mark = storedPassMark(row);
+      const reachable = reachablePoints(row, lesson);
+      // Infinity: the row already has no pass mark the app can use, and this file does not change that.
+      if (Number.isFinite(mark) && mark > reachable) {
+        const how = Number(row.passing_points) > 0 ? `a stored pass mark of ${mark}` : `no stored pass mark, so the app's ${APP_PASS_PERCENTAGE}% of its ${Number(row.total_points)} points, ${mark}`;
+        changes.push(
+          `${at}: the lesson in the database has ${how}, and with the sets this file gives it a learner can reach ${reachable}; it could never be completed ` +
+            "(keep the set, or lower the lesson's pass mark in the database first)",
+        );
+      }
+      // A set the lesson did not have: the lesson's counts and pass mark are not rewritten, so say so.
+      const gained = [
+        ...(lesson.practice.length > 0 && row.practicecount !== undefined && !Number(row.practicecount) ? ["a practice"] : []),
+        ...(lesson.quiz.length > 0 && row.quizcount !== undefined && !Number(row.quizcount) ? ["a quiz"] : []),
+      ];
+      if (gained.length > 0) {
+        notices.push(`${at} gains ${gained.join(" and ")}: its pass mark (${Number.isFinite(mark) ? mark : "none"}) and its practice and quiz counts stay as the database has them; this import does not rewrite them`);
       }
     }
     if (changes.length > 0) throw new ContentRefused(changes);
@@ -908,6 +983,7 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     steps,
     media,
     owned,
+    notices,
   };
 }
 
@@ -952,6 +1028,10 @@ module.exports = {
   LESSON_TOTAL_POINTS,
   DEFAULT_QUIZ_POINTS,
   lessonPassingPoints,
+  storedPassMark,
+  reachablePoints,
+  asCorrectFlag,
+  isSeedPlaceholder,
   MAX_LESSONS_LATER_MODULE,
   OLD_SHAPE,
   ContentRefused,

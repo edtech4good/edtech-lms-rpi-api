@@ -114,10 +114,16 @@ function describeMedia(m) {
     : `  media: copy ${m.source ?? "the lesson video"} to <media folder>/${m.filename}`;
 }
 
+/** What the plan says about rows that are already in the database and that it does not refuse, one line each (a dry run has none: it reads no database). */
+function printNotices(plan) {
+  for (const note of plan.notices ?? []) console.log(`notice: ${note}`);
+}
+
 /** The plan as table names and counts; no content, no database. */
 function printDryRun(content, ID, { levelSwitch = null, renameLessons = false } = {}) {
   const plan = planContent(content, ID, { organisationid: "dry-run", now: new Date(0), levelSwitch, renameLessons, existing: null });
   console.log(`DCRS content plan (dry run, base language ${plan.baseLanguage}, translations ${plan.translationLanguage}): ${plan.steps.length} steps, no database used.`);
+  console.log("  The checks against rows already in the database (existing questions, lesson pass marks, a kept video) are made only at the start of the real run, before any content write; this dry run cannot make them.");
   console.log(`  module ${plan.module.number}: its level is order ${plan.module.levelorder}, ${describeSwitch(plan.module.levelstatus, levelSwitch)}`);
   const rows = (table) => plan.steps.filter((x) => x.kind === "upsert" && x.table === table).length;
   console.log(`  lessons: ${rows("lessons")} written (${content.lessons.map((l) => l.order).join(", ")}); questions: ${rows("questions")} written`);
@@ -131,4 +137,4 @@ function printDryRun(content, ID, { levelSwitch = null, renameLessons = false } 
   for (const m of plan.media) console.log(describeMedia(m));
 }
 
-module.exports = { USAGE, parseArgs, levelSwitchOf, describeSwitch, describeMedia, readContent, prepare, refuse, printDryRun };
+module.exports = { USAGE, parseArgs, levelSwitchOf, describeSwitch, describeMedia, readContent, prepare, refuse, printNotices, printDryRun };
