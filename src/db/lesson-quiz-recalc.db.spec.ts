@@ -354,6 +354,24 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     expect(Number((await levelRow(learner)).progress)).toBe(12.5);
   });
 
+  it("a quiz whose points were edited between two failed attempts: what comes off is the newest attempt's points", async () => {
+    const { organisationid, learner } = await legacyLearner();
+    await watch(learner, ids.learningA);
+    await submitQuiz(learner, ids.quizA, 1); // holds 40
+    await sql("UPDATE lessonquizzes SET points = 30 WHERE lessonquizid = :q", { q: ids.quizA });
+    try {
+      await submitQuiz(learner, ids.quizA, 1); // holds 30; the lesson moved by -10
+    } finally {
+      await sql("UPDATE lessonquizzes SET points = 40 WHERE lessonquizid = :q", { q: ids.quizA });
+    }
+    expect(await attempts(learner, ids.quizA)).toEqual([{ points: 40, ispass: false, pct: 50 }, { points: 30, ispass: false, pct: 50 }]);
+    expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 50, completed: false, level: 50, grade: 50 });
+    await setting(organisationid, { requireLessonQuizPass: true });
+    await recalc(organisationid, true);
+    expect(await attempts(learner, ids.quizA)).toEqual([{ points: 0, ispass: false, pct: 50 }, { points: 0, ispass: false, pct: 50 }]);
+    expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 20, completed: false, level: 20, grade: 20 });
+  });
+
   it("level and grade totals and their completed flags are exact", async () => {
     const { organisationid, learner } = await legacyLearner();
     await watch(learner, ids.learningA);
