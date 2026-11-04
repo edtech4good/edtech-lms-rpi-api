@@ -92,6 +92,10 @@ describe("savelessonquizresult stores the points the organisation's rule allows"
     beforeEach(() => {
       process.env.GRADING_MODE = "enforce";
       process.env.REQUIRE_GRADED_ANSWERS = "true";
+      // each active question carries its grading data; the submitted items carry no `answer`, so none can be verified
+      jest.spyOn(lessonquizquestions, "findAll").mockResolvedValue(
+        ["q1", "q2"].map((lessonquizquestionid) => ({ lessonquizquestionid, question: { templatetypeid: 1, questionoptions: null, questioncorrectvalue: 1, questiondistractors: null } })) as never,
+      );
     });
     afterEach(() => {
       for (const [key, value] of [["GRADING_MODE", saved.mode], ["REQUIRE_GRADED_ANSWERS", saved.require]] as const) {
@@ -147,8 +151,8 @@ describe("savelessonquizresult stores the points the organisation's rule allows"
       await submit(1);
       expect(getoldpoints).toHaveBeenCalledTimes(1);
       expect(getpassoldpoints).not.toHaveBeenCalled();
-      expect(updateUserReward.mock.calls[0][3]).toBe(40);
-      expect(updateUserReward.mock.calls[0][4]).toBe(0);
+      expect(updateUserReward.mock.calls[0][2]).toBe(40);
+      expect(updateUserReward.mock.calls[0][3]).toBe(0);
     });
   });
 });
