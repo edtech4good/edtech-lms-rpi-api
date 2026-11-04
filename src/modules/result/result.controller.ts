@@ -44,6 +44,7 @@ import {
 } from "src/business/quizscore";
 import { gradeSubmissionItems, logGradingDisagreements } from "src/business/gradesubmission";
 import { confineToContainer } from "src/business/result-items";
+import { lessonQuizAttemptPoints, lessonQuizPassRequired } from "src/business/lesson-quiz-pass";
 
 @ApiTags("Result")
 @Controller("result")
@@ -240,6 +241,9 @@ export class ResultController {
     // would force every shadow-mode result to fail regardless of this flag.
     const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
+    // Per-organisation rule (settingsconfig.requireLessonQuizPass, off unless strictly true): an attempt that
+    // does not pass is stored with 0 points; a pass earns the quiz's points. The attempt is saved either way.
+    const quizpoints = lessonQuizAttemptPoints(await lessonQuizPassRequired(user), ispass, userpoints);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
@@ -249,7 +253,7 @@ export class ResultController {
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: lessonquizid,
       marks: score.marks,
-      points: userpoints,
+      points: quizpoints,
       fullpoints,
       verified: graded.verified,
     };
