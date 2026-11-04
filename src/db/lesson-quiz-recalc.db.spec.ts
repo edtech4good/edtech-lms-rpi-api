@@ -397,7 +397,8 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     await submitQuiz(learner, ids.quizC, 1); // 40 + 40 = 80 against a total of 60: the lesson holds 60
     expect(await totals(learner, ids.lessonC)).toEqual({ lesson: 60, completed: true, level: 60, grade: 60 });
     await setting(organisationid, { requireLessonQuizPass: true });
-    await recalc(organisationid, true);
+    const out = await recalc(organisationid, true);
+    expect(out.counts.lessonsCreditNotFullyTakenOff).toBe(1);
     expect(await totals(learner, ids.lessonC)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
   });
 

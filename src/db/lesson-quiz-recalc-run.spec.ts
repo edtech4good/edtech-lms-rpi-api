@@ -90,6 +90,11 @@ describe("run() over a stand-in connection", () => {
     expect(r.counts).toMatchObject({ learners: 2, attemptRowsToZero: 2, lessonsChanged: 2 });
   });
 
+  it("prints the line for credit that did not fully come off", async () => {
+    const r = await go(new FakeConn());
+    expect(r.lines).toContain("lessons where less than the whole credit came off, because the lesson had not counted all of it (it overflowed its total, or its rows were changed by hand): 0");
+  });
+
   it("--apply writes the attempts, lesson, level and grade rows, each progress row with lastupdated set", async () => {
     const c = new FakeConn();
     const r = await go(c, { apply: true, apiStopped: true });

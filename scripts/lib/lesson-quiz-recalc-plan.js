@@ -57,6 +57,7 @@ function emptyCounts() {
     levelsCompletedToNot: 0,
     gradesCompletedToNot: 0,
     lessonsAtFloor: 0,
+    lessonsCreditNotFullyTakenOff: 0,
     levelsAtFloor: 0,
     gradesAtFloor: 0,
     progressRowsMissing: 0,
@@ -184,6 +185,7 @@ function planLearner(input, rules) {
       const rest = num(practice[lessonid]) + num(learning[lessonid]) + num(credit[lessonid]);
       reduction = Math.min(amount, old - Math.min(old, rest));
       const next = old - reduction;
+      if (reduction < amount) counts.lessonsCreditNotFullyTakenOff += 1;
       if (old < amount && next === 0) counts.lessonsAtFloor += 1;
       const percent = rules.progressPercent(next, lesson.total_points);
       const completed = next >= rules.lessonPassMark(lesson);

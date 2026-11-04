@@ -35,6 +35,9 @@
  *   docker compose -f <compose file> --env-file <env file> run --rm student-api node scripts/recalc-lesson-quiz-points.js --org <code> --apply --api-stopped
  *   docker compose -f <compose file> --env-file <env file> start student-api
  * (the first line is the dry run, with the API still up; read it before stopping). Take a database backup before --apply.
+ * While the student API is stopped, learners and admins see errors (the proxy has no upstream, and the central server's pushes
+ * and online reports fail), so pick a quiet time and keep the stop short. The image must already hold this build: `run`
+ * builds a missing image, and building on a small server is a hazard, so build and check it before stopping the service.
  *
  * After a recalculation:
  *   - The central server holds its own copy of progress. Rows are replaced by id when the student API's export

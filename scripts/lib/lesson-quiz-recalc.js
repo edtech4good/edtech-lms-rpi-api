@@ -181,6 +181,7 @@ async function run(options) {
   out(`levels that change: ${total.levelsChanged} (completed to not completed: ${total.levelsCompletedToNot})`);
   out(`grades that change: ${total.gradesChanged} (completed to not completed: ${total.gradesCompletedToNot})`);
   out(`rows reduced to the floor of 0: lessons ${total.lessonsAtFloor}, levels ${total.levelsAtFloor}, grades ${total.gradesAtFloor}`);
+  out(`lessons where less than the whole credit came off, because the lesson had not counted all of it (it overflowed its total, or its rows were changed by hand): ${total.lessonsCreditNotFullyTakenOff}`);
   out(`progress rows missing (nothing to reduce): ${total.progressRowsMissing}`);
   out(`learners who keep a completion star for a lesson that is now not complete (stars are not changed): ${total.learnersKeepingStar}`);
   out(`passed quizzes whose newest attempt is not the pass (readers that take the newest attempt show 0 for them): ${total.passWhoseNewestAttemptIsNotPass}`);

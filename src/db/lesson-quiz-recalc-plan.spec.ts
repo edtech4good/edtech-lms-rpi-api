@@ -97,6 +97,27 @@ describe("planLearner", () => {
     expect(p.counts.lessonsCompletedToNot).toBe(0);
   });
 
+  it("practice points count among the lesson's other parts: learning 20 + practice 40 under a total of 60 keeps the lesson at 60", () => {
+    const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }, { learning: { L1: 20 }, practice: { L1: 40 } }));
+    expect(p.zeroRows).toEqual(["a"]);
+    expect(p.lessonUpdates).toEqual([]);
+    expect(p.levelUpdates).toEqual([]);
+    expect(p.counts.lessonsCreditNotFullyTakenOff).toBe(1);
+  });
+
+  it("another quiz's kept credit counts among the lesson's other parts: a counted pass of 40 beside a failed 40 under a total of 60 leaves 40", () => {
+    const qs = { Q1: { lessonid: "L1", retired: false }, Q3: { lessonid: "L1", retired: false } };
+    const p = plan(base([attempt("a", "Q1", 0, 40), attempt("b", "Q3", 1, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }, { quizzes: qs, lessons: { ...lessons, L1: { levelid: "V1", total_points: 60, passing_points: 40 } } }));
+    expect(p.lessonUpdates).toEqual([{ id: "pl", points: 40, progress: 66.67, completed: true }]);
+    expect(p.levelUpdates[0].points).toBe(40);
+    expect(p.counts.lessonsCreditNotFullyTakenOff).toBe(1);
+  });
+
+  it("a lesson that held the whole credit has nothing 'not fully taken off'", () => {
+    const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }));
+    expect(p.counts.lessonsCreditNotFullyTakenOff).toBe(0);
+  });
+
   it("a lesson whose parts already add up to the total loses nothing and so its level and grade lose nothing", () => {
     const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }, { learning: { L1: 60 } }));
     expect(p.zeroRows).toEqual(["a"]);
@@ -222,6 +243,8 @@ describe("the command line", () => {
     expect(text).toContain("THE DRY RUN IS SAFE WITH THE STUDENT API RUNNING. --apply IS NOT");
     expect(text).toContain("run --rm student-api node scripts/recalc-lesson-quiz-points.js --org <code> --apply --api-stopped");
     expect(text).toContain("restore the database backup taken before --apply instead");
+    expect(text).toContain("learners and admins see errors");
+    expect(text).toContain("The image must already hold this build");
     expect(text).not.toMatch(/correct under the rule, but one that/);
     expect(text).toContain("Sync Students and Sync Content carry no learner progress and are safe to use");
   });
