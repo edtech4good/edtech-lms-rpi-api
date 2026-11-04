@@ -64,6 +64,13 @@ describe("getpassoldpoints reads the counted pass row, not any row and not the n
     expect(await old()).toBeNull();
   });
 
+  it("with more than one counted pass row, the earliest one is the credit", async () => {
+    rows = [row(1, 25, true), row(2, 40, true)];
+    expect(await old(40)).toBe(25);
+    rows = [row(1, 40, true), row(2, 25, true)];
+    expect(await old(40)).toBeNull();
+  });
+
   it("another learner's pass row is not used", async () => {
     rows = [row(1, 25, true, false, "s2")];
     expect(await old()).toBeNull();
