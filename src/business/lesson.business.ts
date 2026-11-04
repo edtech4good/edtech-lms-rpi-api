@@ -30,6 +30,7 @@ import { dbinstance } from "src/services/dbservice";
 import { Logger } from "src/config";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import type { ContentTranslations } from "./content-translations";
+import { lessonPassMark, percentCompleted, progressPercent } from "./progress-rules";
 
 interface PracticeCorrectAnswer {
   iscorrect: boolean;
@@ -54,25 +55,7 @@ interface LevelQuizCorrectAnswer {
   questionid: number;
 }
 
-/**
- * A lesson is complete once accumulated points reach its own pass mark
- * (`lessons.passing_points`), falling back to COMPLETED_PERCENTAGE of
- * total_points for older content that has no passing_points set. This
- * replaces the previous "progress strictly greater than 80%" rule, which
- * left a lesson permanently incomplete when its reachable points (e.g. no
- * video on the learning activity) summed to exactly the old percentage
- * threshold.
- */
-export function lessonPassMark(lesson: lessons): number {
-  if (typeof lesson.passing_points === "number" && lesson.passing_points > 0) {
-    return lesson.passing_points;
-  }
-  if (typeof lesson.total_points === "number" && lesson.total_points > 0) {
-    return Math.ceil((lesson.total_points * COMPLETED_PERCENTAGE) / 100);
-  }
-  // No usable total either: an unreachable pass mark means never complete, not "0 points completes it".
-  return Number.POSITIVE_INFINITY;
-}
+export { lessonPassMark };
 
 export class LessonBusiness {
   isexistsLessonID = async (lessonid: string) => {
@@ -555,7 +538,7 @@ export class LessonBusiness {
             lessonprogress.points = lesson.total_points;
             points = Math.max(0, points - overflow);
           }
-          const lsp = Number((lessonprogress.points*100/lesson.total_points).toFixed(2)) ?? 0;
+          const lsp = progressPercent(lessonprogress.points, lesson.total_points);
           lessonprogress.progress = lsp;
           lessonprogress.completed = lessonprogress.points >= lessonPassMark(lesson) ? true : false;
           lessonprogress.lastupdated = currentdate;
@@ -579,8 +562,8 @@ export class LessonBusiness {
           }, {transaction});
         } else {
           levelprogress.points += (points < 0 && levelprogress.points + points < 0) ? 0 : points;
-          levelprogress.progress = Number((levelprogress.points*100/lesson.level.points).toFixed(2)) ?? 0;
-          levelprogress.completed = levelprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
+          levelprogress.progress = progressPercent(levelprogress.points, lesson.level.points);
+          levelprogress.completed = percentCompleted(levelprogress.progress);
           levelprogress.lastupdated = currentdate;
           await levelprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
         }
@@ -601,8 +584,8 @@ export class LessonBusiness {
           }, {transaction});
         } else {
           gradeprogress.points += (points < 0 && gradeprogress.points + points < 0) ? 0 : points;
-          gradeprogress.progress = Number((gradeprogress.points*100/grade.points).toFixed(2)) ?? 0;
-          gradeprogress.completed = gradeprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
+          gradeprogress.progress = progressPercent(gradeprogress.points, grade.points);
+          gradeprogress.completed = percentCompleted(gradeprogress.progress);
           gradeprogress.lastupdated = currentdate;
           await gradeprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
         }

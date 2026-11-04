@@ -29,6 +29,7 @@
     "seed:demo": "node scripts/seed-demo-users.js",
     "seed:content": "node scripts/seed-demo-content.js",
     "seed:dcrs": "node scripts/seed-dcrs-content.js",
+    "recalc:lesson-quiz": "node scripts/recalc-lesson-quiz-points.js",
     "routes:policy": "ts-node -r tsconfig-paths/register -P tsconfig.json scripts/route-policy-inventory.ts",
     "model-gen": "sequelize-auto -h localhost -d test -u root -x password --dialect mysql -o ./path/to/models -l ts"
   },
