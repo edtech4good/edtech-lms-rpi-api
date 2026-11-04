@@ -1,20 +1,16 @@
 import { organisations } from "src/models/data-models/organisations";
 import { Logger } from "src/config";
 import { Token } from "src/models/token.model";
+import { requiresLessonQuizPass } from "./progress-rules";
 
 /**
  * The per-organisation rule "a lesson quiz that is not passed earns no points".
  *
- * The setting lives at `organisations.settingsconfig.requireLessonQuizPass`. Only the boolean `true`
- * turns it on; an absent key, a null or non-object `settingsconfig`, the string "true", the number 1
- * and anything else leave it off, so a malformed value can never change how a submission is scored.
+ * The setting lives at `organisations.settingsconfig.requireLessonQuizPass` and is read by `requiresLessonQuizPass`
+ * (in progress-rules.ts, so an operator script can load it without the app's database layer): only the boolean `true`
+ * turns it on.
  */
-export const requiresLessonQuizPass = (settingsconfig: unknown): boolean => {
-  if (settingsconfig === null || typeof settingsconfig !== "object" || Array.isArray(settingsconfig)) {
-    return false;
-  }
-  return (settingsconfig as Record<string, unknown>).requireLessonQuizPass === true;
-};
+export { requiresLessonQuizPass };
 
 /**
  * The points a lesson quiz attempt is stored with. With the rule on, an attempt that does not pass
