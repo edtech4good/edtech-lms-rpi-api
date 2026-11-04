@@ -39,7 +39,7 @@ async function readLearner(conn, studentid, countedPassNeedsVerified, lock) {
   }
   // Locked in the order the app writes them: lesson, then level, then grade.
   const [lp] = await conn.query(
-    `SELECT studentlessonprogressid AS id, lessonid AS k, points, progress, completed FROM studentlessonsprogress WHERE studentid = ? AND lessonid IN (${marks(lessonids)}) ORDER BY studentlessonprogressid${forUpdate}`,
+    `SELECT studentlessonprogressid AS id, lessonid AS k, points, progress, completed, added_completed_scores FROM studentlessonsprogress WHERE studentid = ? AND lessonid IN (${marks(lessonids)}) ORDER BY studentlessonprogressid${forUpdate}`,
     [studentid, ...lessonids],
   );
   for (const r of lp) if (!(r.k in input.progress.lesson)) input.progress.lesson[r.k] = r;
@@ -97,12 +97,16 @@ async function writePlan(conn, plan, now) {
   }
 }
 
+/** Whether an error means the connection itself is gone (so every later learner would fail the same way). */
+const connectionLost = (err) =>
+  Boolean(err) && (err.fatal === true || ["PROTOCOL_CONNECTION_LOST", "ECONNRESET", "EPIPE", "ETIMEDOUT", "ECONNREFUSED"].includes(err.code) || /closed state|connection lost/i.test(String(err.message)));
+
 /**
- * options: { conn, organisationcode, apply, rules, countedPassNeedsVerified, ruleDeployed, dbname, out(line), now }
+ * options: { conn, organisationcode, apply, apiStopped, rules, countedPassNeedsVerified, ruleDeployed, dbname, out(line), now }
  * returns { exitCode, counts, changed }. Exit codes: 0 done (or nothing to do), 1 refused, 2 some learners failed.
  */
 async function run(options) {
-  const { conn, organisationcode, apply, rules, countedPassNeedsVerified, ruleDeployed, dbname } = options;
+  const { conn, organisationcode, apply, apiStopped, rules, countedPassNeedsVerified, ruleDeployed, dbname } = options;
   const out = options.out || ((line) => console.log(line));
   const now = options.now || new Date();
   const refuse = (why) => {
@@ -112,11 +116,18 @@ async function run(options) {
   out(`recalc-lesson-quiz-points: ${apply ? "APPLY" : "dry run (nothing is written)"}`);
   out(`database: ${dbname}`);
   if (!organisationcode) return refuse("--org <code> is required");
+  if (apply && !apiStopped) {
+    return refuse("--apply needs --api-stopped: the student API must be stopped while this writes, because a submission that arrives during the run can leave a total wrong that a rerun does not repair (the dry run is safe with the API running)");
+  }
+  if (!apply && apiStopped) return refuse("--api-stopped only applies with --apply");
   if (!ruleDeployed) return refuse("this build does not contain the lesson quiz pass rule, so new failed attempts would earn points again");
 
-  const [orgs] = await conn.query("SELECT organisationid, settingsconfig FROM organisations WHERE organisationcode = ? LIMIT 2", [organisationcode]);
+  // The database compares codes without case, trailing spaces or accents; the match here is exact.
+  const [candidates] = await conn.query("SELECT organisationid, organisationcode, settingsconfig, isdeleted FROM organisations WHERE organisationcode = ?", [organisationcode]);
+  const orgs = candidates.filter((o) => o.organisationcode === organisationcode);
   out(`organisation: ${organisationcode}`);
-  if (orgs.length !== 1) return refuse(orgs.length === 0 ? "no organisation has that code" : "more than one organisation has that code");
+  if (orgs.length !== 1) return refuse(orgs.length === 0 ? "no organisation has exactly that code" : "more than one organisation has that code");
+  if (Number(orgs[0].isdeleted)) return refuse("the organisation has been deleted");
   let settings = orgs[0].settingsconfig;
   if (typeof settings === "string") {
     try { settings = JSON.parse(settings); } catch { settings = null; }
@@ -130,7 +141,9 @@ async function run(options) {
     [orgs[0].organisationid],
   );
   const total = emptyCounts();
-  for (const { studentid } of learners) {
+  let lost = false;
+  for (let index = 0; index < learners.length && !lost; index++) {
+    const { studentid } = learners[index];
     const counts = emptyCounts();
     try {
       // A dry run's transaction is read-only, so it cannot write even if the code below were wrong.
@@ -144,6 +157,12 @@ async function run(options) {
       try { await conn.rollback(); } catch { /* the connection may be gone */ }
       counts.learnersFailed = 1;
       out(`a learner's transaction failed and was rolled back (${err && err.code ? err.code : "error"}); that learner is unchanged`);
+      if (connectionLost(err)) {
+        // Every later learner would fail the same way: stop, and say how many were not reached.
+        lost = true;
+        counts.learnersNotReached = learners.length - index - 1;
+        out("the database connection was lost; stopping here");
+      }
     }
     counts.learners = 1;
     addCounts(total, counts);
@@ -155,19 +174,21 @@ async function run(options) {
   out(`  with no pass (credit comes off): ${total.quizzesWithoutPass}`);
   out(`  left alone, only an uncounted pass row: ${total.quizzesLeftOnlyUncountedPass}`);
   out(`  left alone, no pass and the lesson, level or grade is missing: ${total.quizzesLeftContentMissing}`);
+  out(`  left alone, no pass and a lesson, level or grade total gives no percentage: ${total.quizzesLeftUnusableTotal}`);
   out(`  retired or deleted quizzes (included above): ${total.quizzesRetiredOrDeleted}`);
   out(`attempt rows to set to 0 points: ${total.attemptRowsToZero}`);
   out(`lessons that change: ${total.lessonsChanged} (completed to not completed: ${total.lessonsCompletedToNot})`);
   out(`levels that change: ${total.levelsChanged} (completed to not completed: ${total.levelsCompletedToNot})`);
   out(`grades that change: ${total.gradesChanged} (completed to not completed: ${total.gradesCompletedToNot})`);
   out(`rows reduced to the floor of 0: lessons ${total.lessonsAtFloor}, levels ${total.levelsAtFloor}, grades ${total.gradesAtFloor}`);
-  out(`progress rows missing (nothing to reduce): ${total.progressRowsMissing}; rows with an unusable total (left as they are): ${total.rowsWithUnusableTotal}`);
+  out(`progress rows missing (nothing to reduce): ${total.progressRowsMissing}`);
+  out(`learners who keep a completion star for a lesson that is now not complete (stars are not changed): ${total.learnersKeepingStar}`);
   out(`passed quizzes whose newest attempt is not the pass (readers that take the newest attempt show 0 for them): ${total.passWhoseNewestAttemptIsNotPass}`);
   out(`lessons whose stored points differ from their attempts and learnings (counted, not fixed): ${total.lessonsStoredPointsDiffer}`);
-  out(`learner transactions failed: ${total.learnersFailed}`);
+  out(`learner transactions failed: ${total.learnersFailed}; learners not reached because the connection was lost: ${total.learnersNotReached}`);
   out("daily point history (studentpoints) is not changed by this script");
   if (total.learnersFailed > 0) {
-    out("Some learners failed; the others were handled. Run it again to retry the failed ones.");
+    out(lost ? "The connection was lost; the learners handled before it are done and the rest were not touched. Check the database, then run again." : "Some learners failed; the others were handled. Run it again to retry the failed ones.");
     return { exitCode: 2, counts: total, changed };
   }
   if (!changed) out("Nothing to change.");
@@ -176,4 +197,4 @@ async function run(options) {
   return { exitCode: 0, counts: total, changed };
 }
 
-module.exports = { run, readLearner, writePlan };
+module.exports = { run, readLearner, writePlan, connectionLost };

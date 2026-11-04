@@ -5,6 +5,7 @@ import { Progress } from "src/models/enums/progress.enum";
 import * as lessonBusiness from "src/business/lesson.business";
 import * as quizPass from "src/business/lesson-quiz-pass";
 import * as rules from "src/business/progress-rules";
+import * as validator from "src/validators/config.validator";
 
 const { PROGRESS, planLearner, isEmptyPlan } = require("../../scripts/lib/lesson-quiz-recalc-plan");
 const { parseArgs, dbSettings } = require("../../scripts/recalc-lesson-quiz-points");
@@ -79,9 +80,44 @@ describe("planLearner", () => {
   it("never below 0, and says how many rows hit the floor", () => {
     const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 10, 16.67, false) }, level: { V1: prog("pv", 10, 6.25, false) }, grade: { G1: prog("pg", 50, 31.25, false) } }));
     expect(p.lessonUpdates[0].points).toBe(0);
-    expect(p.levelUpdates[0].points).toBe(0);
-    expect(p.gradeUpdates[0].points).toBe(10);
-    expect(p.counts).toMatchObject({ lessonsAtFloor: 1, levelsAtFloor: 1, gradesAtFloor: 0 });
+    expect(p.levelUpdates[0].points).toBe(0); // it loses what the lesson lost (10), which is all it holds
+    expect(p.gradeUpdates[0].points).toBe(40);
+    expect(p.counts).toMatchObject({ lessonsAtFloor: 1, levelsAtFloor: 0, gradesAtFloor: 0 });
+    const lower = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 50, 83.33, false) }, level: { V1: prog("pv", 5, 3.13, false) }, grade: { G1: prog("pg", 50, 31.25, false) } }));
+    expect(lower.levelUpdates[0].points).toBe(0);
+    expect(lower.counts.levelsAtFloor).toBe(1);
+  });
+
+  it("a lesson that overflowed its total loses only what it held for the quiz, and level and grade lose what the lesson lost", () => {
+    // learning 40 + quiz 40 against a total of 60: the lesson held 60, the level and grade got 60 (40 + the 20 that fitted)
+    const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }, { learning: { L1: 40 }, lessons: { ...lessons, L1: { levelid: "V1", total_points: 60, passing_points: 40 } } }));
+    expect(p.lessonUpdates).toEqual([{ id: "pl", points: 40, progress: 66.67, completed: true }]);
+    expect(p.levelUpdates).toEqual([{ id: "pv", points: 40, progress: 25, completed: false }]);
+    expect(p.gradeUpdates).toEqual([{ id: "pg", points: 40, progress: 25, completed: false }]);
+    expect(p.counts.lessonsCompletedToNot).toBe(0);
+  });
+
+  it("a lesson whose parts already add up to the total loses nothing and so its level and grade lose nothing", () => {
+    const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }, { learning: { L1: 60 } }));
+    expect(p.zeroRows).toEqual(["a"]);
+    expect(p.lessonUpdates).toEqual([]);
+    expect(p.levelUpdates).toEqual([]);
+  });
+
+  it("a total that gives no percentage leaves the whole quiz alone: no attempt is changed either", () => {
+    for (const bad of [{ lessons: { L1: { levelid: "V1", total_points: 0, passing_points: 0 } } }, { levels: { V1: { gradeid: "G1", points: 0 } } }, { grades: { G1: { points: null } } }]) {
+      const p = plan(base([attempt("a", "Q1", 0, 40)], { lesson: { L1: prog("pl", 60, 100, true) }, level: { V1: prog("pv", 60, 37.5, false) }, grade: { G1: prog("pg", 60, 37.5, false) } }, bad));
+      expect(isEmptyPlan(p)).toBe(true);
+      expect(p.counts.quizzesLeftUnusableTotal).toBe(1);
+    }
+  });
+
+  it("counts a learner who keeps a completion star for a lesson that is no longer complete, once", () => {
+    const rows = [attempt("a", "Q1", 0, 40)];
+    const star = plan(base(rows, { lesson: { L1: { ...prog("pl", 60, 100, true), added_completed_scores: 1 } }, level: {}, grade: {} }));
+    expect(star.counts).toMatchObject({ lessonsCompletedToNot: 1, learnersKeepingStar: 1 });
+    const none = plan(base(rows, { lesson: { L1: { ...prog("pl", 60, 100, true), added_completed_scores: 0 } }, level: {}, grade: {} }));
+    expect(none.counts.learnersKeepingStar).toBe(0);
   });
 
   it("a row already at 0 with nothing to take is not rewritten", () => {
@@ -160,18 +196,33 @@ describe("what the script shares with the app", () => {
 
 describe("the command line", () => {
   it("takes --org and --apply and refuses anything else", () => {
-    expect(parseArgs(["--org", "x", "--apply"])).toEqual({ org: "x", apply: true });
-    expect(parseArgs(["--org", "x"])).toEqual({ org: "x", apply: false });
+    expect(parseArgs(["--org", "x", "--apply"])).toEqual({ org: "x", apply: true, apiStopped: false });
+    expect(parseArgs(["--org", "x"])).toEqual({ org: "x", apply: false, apiStopped: false });
     expect(() => parseArgs(["--force"])).toThrow("unknown argument --force");
     expect(() => parseArgs(["--org", "--apply"])).toThrow("--org needs a code");
   });
   it("reads the connection from the environment and from FORTYKAPIRPICONFIG the way the app does", () => {
-    expect(dbSettings({ RPI_DB_USER: "u", RPI_DB_PASSWORD: "p", RPI_DB_NAME: "n" })).toMatchObject({ user: "u", password: "p", database: "n", host: "localhost", port: 3306 });
-    const cfg = JSON.stringify({ fortyk: { api: { rpi: { database: { name: "m", user: "v", password: "q", host: "h", port: 3307 } } } } });
-    expect(dbSettings({ FORTYKAPIRPICONFIG: cfg })).toEqual({ host: "h", port: 3307, user: "v", password: "q", database: "m" });
+    expect(dbSettings({ RPI_DB_USER: "u", RPI_DB_PASSWORD: "p", RPI_DB_NAME: "n" }, validator)).toMatchObject({ user: "u", password: "p", database: "n", host: "localhost", port: 3306 });
+    const good = { fortyk: { api: { serversynckey: "k", rpi: { port: 1, debug: false, accessexpirationminutes: 5, applicationsecret: "s", offline: false, database: { name: "m", user: "v", password: "q", host: "h", port: 3307 } } } } };
+    expect(dbSettings({ FORTYKAPIRPICONFIG: JSON.stringify(good), RPI_DB_NAME: "other" }, validator)).toEqual({ host: "h", port: 3307, user: "v", password: "q", database: "m" });
+  });
+  it("a FORTYKAPIRPICONFIG the app's validation rejects is ignored, as the app ignores it (the variables decide)", () => {
+    const invalid = { fortyk: { api: { rpi: { database: { name: "m", user: "v", password: "q", host: "h", port: 3307 } } } } }; // no serversynckey, port, secret...
+    const env = { FORTYKAPIRPICONFIG: JSON.stringify(invalid), RPI_DB_USER: "u", RPI_DB_PASSWORD: "p", RPI_DB_NAME: "n" };
+    expect(dbSettings(env, validator)).toMatchObject({ database: "n", user: "u" });
+    // what an unvalidated read of the same text would have chosen
+    expect(JSON.parse(env.FORTYKAPIRPICONFIG).fortyk.api.rpi.database.name).toBe("m");
+    expect(dbSettings({ ...env, FORTYKAPIRPICONFIG: "{not json" }, validator)).toMatchObject({ database: "n" });
+  });
+  it("--api-stopped is a flag of its own", () => {
+    expect(parseArgs(["--org", "x", "--apply", "--api-stopped"])).toEqual({ org: "x", apply: true, apiStopped: true });
   });
   it("the script header carries the warning about importing a student export from central", () => {
     const text = fs.readFileSync(path.join(__dirname, "..", "..", "scripts", "recalc-lesson-quiz-points.js"), "utf8");
-    expect(text).toContain("Do not import a student export taken from the central server (PUT /import/students) from before that upload");
+    expect(text).toContain("THE DRY RUN IS SAFE WITH THE STUDENT API RUNNING. --apply IS NOT");
+    expect(text).toContain("run --rm student-api node scripts/recalc-lesson-quiz-points.js --org <code> --apply --api-stopped");
+    expect(text).toContain("restore the database backup taken before --apply instead");
+    expect(text).not.toMatch(/correct under the rule, but one that/);
+    expect(text).toContain("Sync Students and Sync Content carry no learner progress and are safe to use");
   });
 });

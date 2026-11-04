@@ -11,10 +11,13 @@
  *     the pass was credited once, so the lesson, level and grade rows stay as they are, and the non-passing attempts are
  *     set to 0 points;
  *   - a quiz with NO pass row of any kind: what the app currently treats as credited is the NEWEST attempt's points
- *     (result.business.ts `getoldpoints`, newest by starttime), so that comes off the lesson, level and grade rows, floored
- *     at 0, and every attempt is set to 0 points;
+ *     (result.business.ts `getoldpoints`, newest by starttime), so that comes off, and every attempt is set to 0 points.
+ *     The app added a credit to a lesson only as far as it fitted under the lesson's total_points, and to the level and grade
+ *     only what landed on the lesson, so the lesson goes down to min(its points, what its other parts add up to) and the level
+ *     and grade lose exactly what the lesson lost, all floored at 0;
  *   - a quiz whose only pass rows are uncounted (ispass set but not verified while the app requires verification), or
- *     whose lesson, level or grade is missing from the content and which has no counted pass, is left entirely alone and counted.
+ *     whose lesson, level or grade is missing from the content or has a total that cannot give a percentage, and which has
+ *     no counted pass, is left entirely alone (no attempt changed either) and counted.
  * A row with ispass set is never changed. After a change the progress and completed columns of the changed lesson,
  * level and grade rows are recomputed with the app's own rules (src/business/progress-rules.js: `lessonPassMark`,
  * `progressPercent`, `percentCompleted`), passed in as `rules`.
@@ -44,6 +47,7 @@ function emptyCounts() {
     quizzesWithoutPass: 0,
     quizzesLeftOnlyUncountedPass: 0,
     quizzesLeftContentMissing: 0,
+    quizzesLeftUnusableTotal: 0,
     quizzesRetiredOrDeleted: 0,
     attemptRowsToZero: 0,
     lessonsChanged: 0,
@@ -56,7 +60,8 @@ function emptyCounts() {
     levelsAtFloor: 0,
     gradesAtFloor: 0,
     progressRowsMissing: 0,
-    rowsWithUnusableTotal: 0,
+    learnersKeepingStar: 0,
+    learnersNotReached: 0,
     passWhoseNewestAttemptIsNotPass: 0,
     lessonsStoredPointsDiffer: 0,
     learnersFailed: 0,
@@ -141,6 +146,12 @@ function planLearner(input, rules) {
       if (lessonid) touchedLessons.add(lessonid);
       continue;
     }
+    if (![lesson.total_points, level.points, grade.points].every((total) => Number.isFinite(rules.progressPercent(0, total)))) {
+      // A total that gives no percentage cannot be recomputed, so nothing of this quiz is changed (a half change would not be repaired by a rerun).
+      counts.quizzesLeftUnusableTotal += 1;
+      touchedLessons.add(lessonid);
+      continue;
+    }
     counts.quizzesWithoutPass += 1;
     touchedLessons.add(lessonid);
     const held = num([...rows].sort(newestFirst)[0].points);
@@ -157,47 +168,67 @@ function planLearner(input, rules) {
   const levelUpdates = [];
   const gradeUpdates = [];
   const storedLesson = {};
+  const taken = { level: {}, grade: {} };
+  let keepsStar = false;
 
-  const reduce = (kind, key, row, total, completedOf, updates, flags) => {
-    const amount = subtract[kind][key];
-    if (!amount) return row ? Number(row.points || 0) : 0;
+  // The lesson first: it goes down to what its other parts add up to, never by more than the credit taken off.
+  for (const lessonid of Object.keys(subtract.lesson).sort()) {
+    const lesson = lessons[lessonid];
+    const row = progress.lesson[lessonid];
+    const amount = subtract.lesson[lessonid];
+    let reduction = amount;
     if (!row) {
       counts.progressRowsMissing += 1;
-      return 0;
+    } else {
+      const old = num(row.points);
+      const rest = num(practice[lessonid]) + num(learning[lessonid]) + num(credit[lessonid]);
+      reduction = Math.min(amount, old - Math.min(old, rest));
+      const next = old - reduction;
+      if (old < amount && next === 0) counts.lessonsAtFloor += 1;
+      const percent = rules.progressPercent(next, lesson.total_points);
+      const completed = next >= rules.lessonPassMark(lesson);
+      storedLesson[lessonid] = next;
+      if (!(next === old && percent === num(row.progress) && completed === Boolean(row.completed))) {
+        lessonUpdates.push({ id: row.id, points: next, progress: percent, completed });
+        counts.lessonsChanged += 1;
+        if (Boolean(row.completed) && !completed) {
+          counts.lessonsCompletedToNot += 1;
+          if (row.added_completed_scores) keepsStar = true;
+        }
+      }
+    }
+    const levelid = lesson.levelid;
+    const gradeid = levels[levelid].gradeid;
+    taken.level[levelid] = (taken.level[levelid] || 0) + reduction;
+    taken.grade[gradeid] = (taken.grade[gradeid] || 0) + reduction;
+  }
+
+  const reduce = (kind, key, total, updates, flags) => {
+    const amount = taken[kind][key];
+    if (!amount) return;
+    const row = progress[kind][key];
+    if (!row) {
+      counts.progressRowsMissing += 1;
+      return;
     }
     const old = num(row.points);
     const wanted = old - amount;
     const next = Math.max(0, wanted);
-    const percent = rules.progressPercent(next, total);
-    if (!Number.isFinite(percent)) {
-      counts.rowsWithUnusableTotal += 1;
-      return old;
-    }
     if (wanted < 0) counts[flags.floor] += 1;
-    const completed = completedOf(next, percent);
-    if (next === old && percent === num(row.progress) && completed === Boolean(row.completed)) return old;
+    const percent = rules.progressPercent(next, total);
+    const completed = rules.percentCompleted(percent);
+    if (next === old && percent === num(row.progress) && completed === Boolean(row.completed)) return;
     updates.push({ id: row.id, points: next, progress: percent, completed });
     counts[flags.changed] += 1;
     if (Boolean(row.completed) && !completed) counts[flags.toNot] += 1;
-    return next;
   };
-
-  for (const lessonid of Object.keys(subtract.lesson).sort()) {
-    const lesson = lessons[lessonid];
-    storedLesson[lessonid] = reduce("lesson", lessonid, progress.lesson[lessonid], lesson.total_points,
-      (points) => points >= rules.lessonPassMark(lesson), lessonUpdates,
-      { floor: "lessonsAtFloor", changed: "lessonsChanged", toNot: "lessonsCompletedToNot" });
+  for (const levelid of Object.keys(taken.level).sort()) {
+    reduce("level", levelid, levels[levelid].points, levelUpdates, { floor: "levelsAtFloor", changed: "levelsChanged", toNot: "levelsCompletedToNot" });
   }
-  for (const levelid of Object.keys(subtract.level).sort()) {
-    reduce("level", levelid, progress.level[levelid], levels[levelid].points,
-      (_points, percent) => rules.percentCompleted(percent), levelUpdates,
-      { floor: "levelsAtFloor", changed: "levelsChanged", toNot: "levelsCompletedToNot" });
+  for (const gradeid of Object.keys(taken.grade).sort()) {
+    reduce("grade", gradeid, grades[gradeid].points, gradeUpdates, { floor: "gradesAtFloor", changed: "gradesChanged", toNot: "gradesCompletedToNot" });
   }
-  for (const gradeid of Object.keys(subtract.grade).sort()) {
-    reduce("grade", gradeid, progress.grade[gradeid], grades[gradeid].points,
-      (_points, percent) => rules.percentCompleted(percent), gradeUpdates,
-      { floor: "gradesAtFloor", changed: "gradesChanged", toNot: "gradesCompletedToNot" });
-  }
+  if (keepsStar) counts.learnersKeepingStar += 1;
 
   // Stored lesson points against what the lesson's own attempts and learnings add up to (a count only; nothing is fixed here).
   for (const lessonid of [...touchedLessons].sort()) {

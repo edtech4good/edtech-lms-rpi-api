@@ -33,7 +33,7 @@ import * as rules from "src/business/progress-rules";
  * Every row it creates carries a generated id and is removed in afterAll.
  *
  * Content: one level (160) of one grade (160), three lessons: A learning 20 + quiz 40 (pass mark 60), B quiz 40 (pass mark 40),
- * C learning 40 + quiz 20 (pass mark 40, total 60). Each quiz has two questions: one right is 50 percent (fail), two are 100 (pass).
+ * C learning 40 + quiz 40 against a typed total of 60 (pass mark 40), so a lesson can overflow its total. Each quiz has two questions: one right is 50 percent (fail), two are 100 (pass).
  */
 const dbname = Config.fortyk.api.rpi.database.name;
 const enabled = process.env.QUIZ_PASS_DB_SPEC === "1" && /_scratch_/.test(dbname);
@@ -191,6 +191,7 @@ const recalc = async (organisationid: string, apply: boolean, over: Record<strin
     conn: connection,
     organisationcode: codeOf(organisationid),
     apply,
+    apiStopped: apply,
     rules,
     countedPassNeedsVerified: false,
     ruleDeployed: true,
@@ -224,7 +225,7 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     await curriculums.create({ curriculumid: ids.curriculum, curriculumname: "Rule curriculum", organisationid: await makeOrg(null) } as never);
     await grades.create({ gradeid: ids.grade, curriculumid: ids.curriculum, gradename: "G", gradeorder: 1, points: 160, passing_points: 100, gradestatus: true, isdeleted: false } as never);
     await levels.create({ levelid: ids.level, gradeid: ids.grade, levelname: "L", points: 160, passing_points: 100, levelstatus: true, isdeleted: false } as never);
-    const lesson = (lessonid: string, name: string, learning: number, quiz: number, pass: number) =>
+    const lesson = (lessonid: string, name: string, learning: number, quiz: number, pass: number, total = learning + quiz) =>
       lessons.create({
         lessonid,
         levelid: ids.level,
@@ -232,19 +233,19 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
         learning_points: learning,
         practices_points: 0,
         quizzes_points: quiz,
-        total_points: learning + quiz,
+        total_points: total,
         passing_points: pass,
         lessonstatus: true,
         isdeleted: false,
       } as never);
     await lesson(ids.lessonA, "A", 20, 40, 60);
     await lesson(ids.lessonB, "B", 0, 40, 40);
-    await lesson(ids.lessonC, "C", 40, 20, 40);
+    await lesson(ids.lessonC, "C", 40, 40, 40, 60);
     const learning = (lessonlearningid: string, lessonid: string, points: number) =>
       lessonlearnings.create({ lessonlearningid, lessonlearningname: "item", lessonlearningdescription: "d", lessonid, lessonlearningorder: 1, lessonlearningstatus: true, points } as never);
     await learning(ids.learningA, ids.lessonA, 20);
     await learning(ids.learningC, ids.lessonC, 40);
-    for (const [quizid, lessonid, points] of [[ids.quizA, ids.lessonA, 40], [ids.quizB, ids.lessonB, 40], [ids.quizC, ids.lessonC, 20]] as const) {
+    for (const [quizid, lessonid, points] of [[ids.quizA, ids.lessonA, 40], [ids.quizB, ids.lessonB, 40], [ids.quizC, ids.lessonC, 40]] as const) {
       await lessonquizzes.create({ lessonquizid: quizid, lessonid, lessonquizorder: 1, lessonquizname: "q", lessonquizdescription: "d", lessonquizstatus: true, points } as never);
     }
     for (const questionid of [ids.q1, ids.q2]) {
@@ -347,11 +348,12 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     await submitQuiz(learner, ids.quizA, 1);
     expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 60, completed: true, level: 60, grade: 60 });
     await setting(organisationid, { requireLessonQuizPass: true });
-    await recalc(organisationid, true);
+    const out = await recalc(organisationid, true);
     expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 20, completed: false, level: 20, grade: 20 });
     const lesson = await rowOf("studentlessonsprogress", learner);
     expect(Number(lesson.progress)).toBe(33.33);
     expect(Number((await levelRow(learner)).progress)).toBe(12.5);
+    expect(out.counts.learnersKeepingStar).toBe(1);
   });
 
   it("a quiz whose points were edited between two failed attempts: what comes off is the newest attempt's points", async () => {
@@ -389,10 +391,10 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     expect(await totals(learner, ids.lessonA)).toMatchObject({ lesson: 60, completed: true });
   });
 
-  it("a lesson at its total cap: the failed quiz's points come off and the lesson stays completed when the rest reaches the pass mark", async () => {
+  it("a lesson that overflowed its total (learning 40 + quiz 40 against 60): it goes back to the learning 40 and stays completed, and level and grade lose the 20 that landed", async () => {
     const { organisationid, learner } = await legacyLearner();
     await watch(learner, ids.learningC);
-    await submitQuiz(learner, ids.quizC, 1);
+    await submitQuiz(learner, ids.quizC, 1); // 40 + 40 = 80 against a total of 60: the lesson holds 60
     expect(await totals(learner, ids.lessonC)).toEqual({ lesson: 60, completed: true, level: 60, grade: 60 });
     await setting(organisationid, { requireLessonQuizPass: true });
     await recalc(organisationid, true);
@@ -407,7 +409,7 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     await setting(organisationid, { requireLessonQuizPass: true });
     const out = await recalc(organisationid, true);
     expect(out.counts).toMatchObject({ lessonsAtFloor: 1, levelsAtFloor: 0, gradesAtFloor: 0 });
-    expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 0, completed: false, level: 0, grade: 30 });
+    expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 0, completed: false, level: 30, grade: 60 });
   });
 
   it("practice and level quiz attempts are not touched, and neither is anything of an attempt but its points", async () => {
@@ -428,6 +430,44 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
     expect(JSON.stringify(await keep())).toBe(kept);
     const [afterRows] = await sql("SELECT resultpercentage, marks, scores, verified, ispass, starttime, fullpoints FROM studentprogress WHERE studentid = :s AND progresstype = 2", { s: learner.studentid });
     expect(JSON.stringify(afterRows)).toBe(JSON.stringify(beforeRows));
+  });
+
+  it("a lesson whose total gives no percentage leaves the whole quiz alone, and a rerun says nothing changed", async () => {
+    const { organisationid, learner } = await legacyLearner();
+    await submitQuiz(learner, ids.quizB, 1);
+    await setting(organisationid, { requireLessonQuizPass: true });
+    const before = await dump([learner]);
+    await sql("UPDATE lessons SET total_points = 0 WHERE lessonid = :l", { l: ids.lessonB });
+    try {
+      const out = await recalc(organisationid, true);
+      expect(out.counts).toMatchObject({ quizzesLeftUnusableTotal: 1, attemptRowsToZero: 0 });
+      expect(await dump([learner])).toBe(before);
+    } finally {
+      await sql("UPDATE lessons SET total_points = 40 WHERE lessonid = :l", { l: ids.lessonB });
+    }
+  });
+
+  it("the organisation code is matched exactly: another case, a trailing space and a deleted organisation are refused", async () => {
+    const { organisationid, learner } = await legacyLearner();
+    await submitQuiz(learner, ids.quizB, 1);
+    await setting(organisationid, { requireLessonQuizPass: true });
+    const before = await dump([learner]);
+    for (const code of [codeOf(organisationid).toUpperCase(), `${codeOf(organisationid)} `]) {
+      expect((await recalc(organisationid, true, { organisationcode: code })).exitCode).toBe(1);
+    }
+    await sql("UPDATE organisations SET isdeleted = 1 WHERE organisationid = :o", { o: organisationid });
+    expect((await recalc(organisationid, true)).exitCode).toBe(1);
+    await sql("UPDATE organisations SET isdeleted = 0 WHERE organisationid = :o", { o: organisationid });
+    expect(await dump([learner])).toBe(before);
+  });
+
+  it("--apply without --api-stopped refuses and writes nothing", async () => {
+    const { organisationid, learner } = await legacyLearner();
+    await submitQuiz(learner, ids.quizB, 1);
+    await setting(organisationid, { requireLessonQuizPass: true });
+    const before = await dump([learner]);
+    expect((await recalc(organisationid, true, { apiStopped: false })).exitCode).toBe(1);
+    expect(await dump([learner])).toBe(before);
   });
 
   it("another organisation's rows are byte-identical, whatever its setting", async () => {
