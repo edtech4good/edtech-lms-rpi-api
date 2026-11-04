@@ -331,6 +331,23 @@ suite("savelessonquizresult with requireLessonQuizPass (real controller, scratch
       ]);
     });
 
+    it("fail, pass, then two resubmissions: the quiz's points are credited once, at every step", async () => {
+      const learner = await makeLearner(on);
+      const expected = { lesson: 40, completed: false, level: 40, grade: 40 };
+      await submitQuiz(learner, ids.quizA, 1);
+      expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 0, completed: false, level: 0, grade: 0 });
+      await submitQuiz(learner, ids.quizA, 2);
+      expect(await totals(learner, ids.lessonA)).toEqual(expected);
+      await submitQuiz(learner, ids.quizA, 1);
+      expect(await totals(learner, ids.lessonA)).toEqual(expected);
+      await submitQuiz(learner, ids.quizA, 2);
+      expect(await totals(learner, ids.lessonA)).toEqual(expected);
+      expect(await attempts(learner, ids.quizA)).toEqual([
+        { points: 0, ispass: false, pct: 50 },
+        { points: 40, ispass: true, pct: 100 },
+      ]);
+    });
+
     it("a failed attempt dated before a stored one that held 40 points moves nothing, and a later pass still completes the lesson", async () => {
       const before = await makeOrg(null);
       const learner = await makeLearner(before);

@@ -30,6 +30,8 @@ describe("savelessonquizresult stores the points the organisation's rule allows"
   beforeEach(() => {
     createlessonquizprogress = jest.fn().mockResolvedValue(undefined);
     ((ResultBusiness as unknown as { prototype: Record<string, unknown> }).prototype).ispass = jest.fn().mockResolvedValue(false);
+    // The learner has attempted this quiz before: a rule keyed on history (first attempt only) would not apply.
+    ((ResultBusiness as unknown as { prototype: Record<string, unknown> }).prototype).hasTried = jest.fn().mockResolvedValue({ studentprogressid: "earlier" });
     ((ResultBusiness as unknown as { prototype: Record<string, unknown> }).prototype).createlessonquizprogress = createlessonquizprogress;
     ((LessonBusiness as unknown as { prototype: Record<string, unknown> }).prototype).calculateQuizScore = jest
       .fn()

@@ -56,7 +56,7 @@ describe("updateUserReward: the delta reaches the lesson, level and grade", () =
     expect(totals()).toEqual([60, 60, 60]);
   });
 
-  it("taking back an earlier 40 with 0 removes the 40 from all three, never below 0", async () => {
+  it("taking back an earlier 40 with 0 takes the lesson, level and grade from 40 to 0", async () => {
     await reward(40, null);
     await reward(0, 40);
     expect(totals()).toEqual([0, 0, 0]);
