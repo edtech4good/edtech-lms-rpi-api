@@ -1,4 +1,5 @@
 import { lessonQuizAttemptPoints, lessonQuizPassRequired, requiresLessonQuizPass } from "./lesson-quiz-pass";
+import { Logger } from "src/config";
 import { organisations } from "src/models/data-models/organisations";
 
 describe("requiresLessonQuizPass: only the boolean true turns the rule on", () => {
@@ -51,5 +52,18 @@ describe("lessonQuizPassRequired", () => {
     expect(await lessonQuizPassRequired({ organisationid: "o" })).toBe(false);
     find.mockRejectedValueOnce(new Error("db down"));
     expect(await lessonQuizPassRequired({ organisationid: "o" })).toBe(false);
+  });
+  it("logs a warning naming the organisation when the read fails, and still answers off", async () => {
+    jest.spyOn(organisations, "findOne").mockRejectedValue(new Error("db down"));
+    const warn = jest.spyOn(Logger, "warn").mockImplementation((() => Logger) as never);
+    expect(await lessonQuizPassRequired({ organisationid: "org-9" })).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("org-9");
+  });
+  it("does not log when the setting is simply absent", async () => {
+    jest.spyOn(organisations, "findOne").mockResolvedValue({ settingsconfig: null } as never);
+    const warn = jest.spyOn(Logger, "warn").mockImplementation((() => Logger) as never);
+    expect(await lessonQuizPassRequired({ organisationid: "org-9" })).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

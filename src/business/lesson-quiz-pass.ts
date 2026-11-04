@@ -1,4 +1,5 @@
 import { organisations } from "src/models/data-models/organisations";
+import { Logger } from "src/config";
 import { Token } from "src/models/token.model";
 
 /**
@@ -40,7 +41,9 @@ export const lessonQuizPassRequired = async (user: Pick<Token, "organisationid">
       where: { organisationid },
     });
     return requiresLessonQuizPass(organisation?.settingsconfig);
-  } catch {
+  } catch (err) {
+    // Fails towards off, but says so: a rule that silently stops applying must be visible in the log.
+    Logger.warn(`lesson quiz pass setting could not be read for organisation <${organisationid}>; the rule is treated as off`, { organisationid, error: err instanceof Error ? err.message : String(err) });
     return false;
   }
 };

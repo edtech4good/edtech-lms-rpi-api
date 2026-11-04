@@ -315,6 +315,60 @@ suite("savelessonquizresult with requireLessonQuizPass (real controller, scratch
       expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
     });
 
+    it("a pass dated before a failed attempt is credited once: the next submission adds nothing", async () => {
+      const learner = await makeLearner(on);
+      const t5 = nextTime();
+      const t10 = new Date(t5.getTime() + 5 * 60_000);
+      await submitQuiz(learner, ids.quizA, 1, t10);
+      await submitQuiz(learner, ids.quizA, 2, t5);
+      expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 40, completed: false, level: 40, grade: 40 });
+      await submitQuiz(learner, ids.quizA, 0);
+      await submitQuiz(learner, ids.quizA, 2);
+      expect(await totals(learner, ids.lessonA)).toEqual({ lesson: 40, completed: false, level: 40, grade: 40 });
+      expect(await attempts(learner, ids.quizA)).toEqual([
+        { points: 40, ispass: true, pct: 100 },
+        { points: 0, ispass: false, pct: 50 },
+      ]);
+    });
+
+    it("a failed attempt dated before a stored one that held 40 points moves nothing, and a later pass still completes the lesson", async () => {
+      const before = await makeOrg(null);
+      const learner = await makeLearner(before);
+      const t5 = nextTime();
+      const t10 = new Date(t5.getTime() + 5 * 60_000);
+      const t20 = new Date(t5.getTime() + 15 * 60_000);
+      await submitQuiz(learner, ids.quizB, 1, t10); // setting off: holds 40 points
+      await organisations.update({ settingsconfig: { requireLessonQuizPass: true } } as never, { where: { organisationid: before } });
+      await submitQuiz(learner, ids.quizB, 1, t5);
+      expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
+      await submitQuiz(learner, ids.quizB, 2, t20);
+      expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
+      await submitQuiz(learner, ids.quizB, 2);
+      expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
+    });
+
+    it("a failed attempt dated before a failed attempt that earned 0 moves nothing", async () => {
+      const learner = await makeLearner(on);
+      const t5 = nextTime();
+      const t10 = new Date(t5.getTime() + 5 * 60_000);
+      await submitQuiz(learner, ids.quizB, 1, t10);
+      await submitQuiz(learner, ids.quizB, 0, t5);
+      expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 0, completed: false, level: 0, grade: 0 });
+      expect(await attempts(learner, ids.quizB)).toHaveLength(2);
+      await submitQuiz(learner, ids.quizB, 2);
+      expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
+    });
+
+    it("a failed attempt dated before a pass takes the already-passed path: no row, nothing changes", async () => {
+      const learner = await makeLearner(on);
+      const t5 = nextTime();
+      const t10 = new Date(t5.getTime() + 5 * 60_000);
+      await submitQuiz(learner, ids.quizB, 2, t10);
+      await submitQuiz(learner, ids.quizB, 1, t5);
+      expect(await attempts(learner, ids.quizB)).toEqual([{ points: 40, ispass: true, pct: 100 }]);
+      expect(await totals(learner, ids.lessonB)).toEqual({ lesson: 40, completed: true, level: 40, grade: 40 });
+    });
+
     it("a lesson with no practice (learning 20, quiz 40, pass mark 60): a failed quiz after the learning leaves 20 points and not completed", async () => {
       const learner = await makeLearner(on);
       await watch(learner, ids.learningA);
