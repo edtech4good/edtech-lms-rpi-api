@@ -125,7 +125,6 @@ async function run(options) {
   out(`requireLessonQuizPass: ${on ? "on" : "not on (only the boolean true counts)"}`);
   if (!on) return refuse("the organisation's requireLessonQuizPass setting is not strictly true");
 
-  if (!apply) await conn.query("SET SESSION TRANSACTION READ ONLY");
   const [learners] = await conn.query(
     "SELECT s.studentid FROM students s JOIN schools sc ON sc.schoolid = s.schoolid WHERE sc.organisationid = ? ORDER BY s.studentid",
     [orgs[0].organisationid],
@@ -134,7 +133,8 @@ async function run(options) {
   for (const { studentid } of learners) {
     const counts = emptyCounts();
     try {
-      await conn.beginTransaction();
+      // A dry run's transaction is read-only, so it cannot write even if the code below were wrong.
+      if (apply) await conn.beginTransaction(); else await conn.query("START TRANSACTION READ ONLY");
       const input = await readLearner(conn, studentid, countedPassNeedsVerified, apply);
       const plan = planLearner(input, rules);
       if (apply && !isEmptyPlan(plan)) await writePlan(conn, plan, now);

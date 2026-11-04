@@ -210,8 +210,6 @@ const levelRow = (l: Learner) => rowOf("studentlevelsprogress", l);
 const gradeRow = (l: Learner) => rowOf("studentgradesprogress", l);
 
 suite("lesson quiz recalculation (real script entry, scratch database)", () => {
-  let on: string;
-  void on;
   const pass = (l: Learner, quizid: string) => submitQuiz(l, quizid, 2);
 
   /** A learner of a fresh organisation with the setting OFF, to be switched on by the test. */
@@ -258,7 +256,6 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
       await lessonquizquestions.create({ lessonquizquestionid: pair[0], lessonquizid: quizid, questionid: ids.q1, lessonquizquestionstatus: true, lessonquizquestionorder: 1 } as never);
       await lessonquizquestions.create({ lessonquizquestionid: pair[1], lessonquizid: quizid, questionid: ids.q2, lessonquizquestionstatus: true, lessonquizquestionorder: 2 } as never);
     }
-    on = await makeOrg({ requireLessonQuizPass: true });
   });
 
   afterAll(async () => {
@@ -398,7 +395,7 @@ suite("lesson quiz recalculation (real script entry, scratch database)", () => {
   it("practice and level quiz attempts are not touched, and neither is anything of an attempt but its points", async () => {
     const { organisationid, learner } = await legacyLearner();
     await submitQuiz(learner, ids.quizB, 1);
-    const extra = (type: number) => randomUUID() && sql(
+    const extra = (type: number) => sql(
       "INSERT INTO studentprogress (studentprogressid, studentid, ispass, studentprogressreferenceid, starttime, progresstype, resultpercentage, marks, points, fullpoints, scores, verified) VALUES (:id, :s, 0, :ref, '2026-11-01 07:00:00', :t, 33.5, 1, 25, 25, 2, 0)",
       { id: randomUUID(), s: learner.studentid, ref: randomUUID(), t: type },
     );
