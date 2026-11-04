@@ -256,7 +256,7 @@ export class ResultBusiness {
         await lessonbusiness.updateuserdailypoints(lesson.lessonid, user, tempprogress.starttime);
         return result;
     };
-    createlessonquizprogress = async (progress: any, lesson: any, user: Token) => {
+    createlessonquizprogress = async (progress: any, lesson: any, user: Token, passrule = false) => {
         const { actualanswers } = progress;
         const tempprogress = { ...progress };
         // tempprogress.endtime = new Date();
@@ -278,6 +278,13 @@ export class ResultBusiness {
         const hasTried = await this.hasTried(user, progress?.studentprogressreferenceid);
         // get old points to adjust points
         const oldpoints = await this.getoldpoints(user.studentid, progress?.studentprogressreferenceid, progress.points) ?? null;
+        // Rule on: a failed attempt dated before the newest stored attempt earns nothing and the credit the quiz
+        // holds comes from the newer row, so it moves no points (the row is still saved).
+        let staleattempt = false;
+        if (passrule && !progress.ispass) {
+            const newest = await this.getnewestattempt(user.studentid, progress?.studentprogressreferenceid);
+            staleattempt = !!newest && new Date(newest.starttime).getTime() > new Date(tempprogress.starttime).getTime();
+        }
         const tnx = await dbinstance.getdbinstance().transaction();
         const lessonbusiness = new LessonBusiness();
         let result: studentprogress;
@@ -304,7 +311,7 @@ export class ResultBusiness {
                     'lessonquizquestionid',
                     tnx
                 );
-                if(!hasTried || oldpoints !== null) {
+                if(!staleattempt && (!hasTried || oldpoints !== null)) {
                     await lessonbusiness.updateUserReward(user, lesson.lessonid, progress.points, oldpoints, tnx, tempprogress.starttime)
                 }
             }
@@ -407,6 +414,22 @@ export class ResultBusiness {
         // if the points is changed
         const oldpoints = lastprogress && (lastprogress?.points !== newpoints) ? lastprogress?.points : null;
         return oldpoints;
+    }
+
+    /** Rule on: the credit a passed quiz already holds is its pass row's points (null when that equals the quiz's current points). */
+    getpassoldpoints = async (studentid: string | undefined, referenceid: string, newpoints: number) => {
+        const pass = await studentprogress.findOne({
+            where: { studentid, studentprogressreferenceid: referenceid, ispass: true, ...countedpassclause() },
+            order: [['starttime', 'ASC']]
+        });
+        return pass && pass.points !== newpoints ? pass.points : null;
+    }
+
+    getnewestattempt = async (studentid: string | undefined, referenceid: string) => {
+        return studentprogress.findOne({
+            where: { studentid, studentprogressreferenceid: referenceid },
+            order: [['starttime', 'DESC']]
+        });
     }
 
     calculatescore = (percentage: number) => {

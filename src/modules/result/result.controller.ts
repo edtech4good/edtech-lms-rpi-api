@@ -44,6 +44,7 @@ import {
 } from "src/business/quizscore";
 import { gradeSubmissionItems, logGradingDisagreements } from "src/business/gradesubmission";
 import { confineToContainer } from "src/business/result-items";
+import { lessonQuizAttemptPoints, lessonQuizPassRequired } from "src/business/lesson-quiz-pass";
 
 @ApiTags("Result")
 @Controller("result")
@@ -181,9 +182,15 @@ export class ResultController {
   async savelessonquizresult(@Param('lessonquizid') lessonquizid: string, @Body() result: LessonQuizResultBody, @User() user: Token): Promise<ResponseBoolean> {
     const rb = new ResultBusiness();
     const lessonbusiness = new LessonBusiness();
+    // Per-organisation rule (settingsconfig.requireLessonQuizPass, off unless strictly true), read once per submission.
+    const passrule = await lessonQuizPassRequired(user);
     if (await rb.ispass(user.studentid || "", lessonquizid)) {
       const lessonquiz = await lessonbusiness.getlessonquiz(lessonquizid);
-      const oldpoints = await rb.getoldpoints(user.studentid, lessonquiz.lessonquizid, lessonquiz.points) ?? null;
+      // Rule on: the credit this quiz already holds is the pass row's, not that of the newest row (which can be an
+      // older-dated failed attempt that earned nothing), so a pass is never credited twice.
+      const oldpoints = (passrule
+        ? await rb.getpassoldpoints(user.studentid, lessonquiz.lessonquizid, lessonquiz.points)
+        : await rb.getoldpoints(user.studentid, lessonquiz.lessonquizid, lessonquiz.points)) ?? null;
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
         await rb.updateQuizPoints(lessonquiz, user, tnx);
@@ -240,6 +247,9 @@ export class ResultController {
     // would force every shadow-mode result to fail regardless of this flag.
     const ispass = mode === "enforce" && requireGradedAnswers() && !graded.verified ? false : score.ispass;
     const { userpoints, fullpoints, lesson} = await lessonbusiness.calculateQuizScore(lessonquizid, correct);
+    // Rule on: an attempt that does not pass (by the gated `ispass` above) is stored with 0 points; a pass earns
+    // the quiz's points. The attempt is saved either way.
+    const quizpoints = lessonQuizAttemptPoints(passrule, ispass, userpoints);
     const progress = {
       studentid: user.studentid,
       starttime: result.starttime,
@@ -249,11 +259,11 @@ export class ResultController {
       actualanswers: JSON.stringify(data),
       studentprogressreferenceid: lessonquizid,
       marks: score.marks,
-      points: userpoints,
+      points: quizpoints,
       fullpoints,
       verified: graded.verified,
     };
-    await rb.createlessonquizprogress(progress, lesson, user);
+    await rb.createlessonquizprogress(progress, lesson, user, passrule);
     Logger.info(`<${user.studentfirstname}> submits a quiz <${lessonquizid}>`, {logaccesstype: LOGTYPE.SUBMITQUIZ, userid: user.schooluserid});
     return {
       data: true,
