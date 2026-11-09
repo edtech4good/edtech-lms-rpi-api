@@ -6,12 +6,80 @@ import { SchoolRole } from "src/models/enums/school.role.enum";
 import {
   schoolusers,
   students,
+  tokens,
 } from "../models/data-models/init-models";
 import { byLogin, ExportKeys } from "./export-scope";
 import { withRequiredSchoolIds } from "./school-identity";
 
+/**
+ * Ends the sessions of every imported account that the import has just disabled, deleted or given a
+ * new password. A token issued before the import is checked only against the `tokens` table, so
+ * removing the account's rows there is what makes its next request answer 401.
+ *
+ * `before` is what the accounts' rows held before the upsert; the rows are read again here, after it,
+ * so an account that is matched by its username rather than its id is still the one that is judged.
+ * An account whose row is unchanged in these ways keeps its sessions: a roster is re-sent whole and
+ * must not sign anyone out. It runs in the import's own transaction, so the account change and the
+ * end of its sessions commit together or not at all. One read and one delete, however many accounts.
+ */
+const endSessionsOfChangedAccounts = async (
+  rows: Array<{ schooluserid?: string; schoolusername?: string }>,
+  before: Map<string, { hash: string | null }>,
+  tnx: Transaction
+): Promise<void> => {
+  const after = await findImportedAccounts(rows, tnx);
+  const ended = after
+    .filter((u) => {
+      if (u.isdisabled || u.isdeleted) {
+        return true;
+      }
+      const prior = before.get(u.schooluserid);
+      return prior !== undefined && prior.hash !== (u.schooluserpasswordhash ?? null);
+    })
+    .map((u) => u.schooluserid);
+  if (ended.length > 0) {
+    await tokens.destroy({ where: { lmsuserid: { [Op.in]: ended } }, transaction: tnx });
+  }
+};
+
+const findImportedAccounts = async (
+  rows: Array<{ schooluserid?: string; schoolusername?: string }>,
+  tnx: Transaction
+) => {
+  const ids = rows.map((r) => r.schooluserid).filter((v): v is string => typeof v === "string");
+  const names = rows.map((r) => r.schoolusername).filter((v): v is string => typeof v === "string");
+  if (ids.length === 0 && names.length === 0) {
+    return [];
+  }
+  return schoolusers.findAll({
+    attributes: ["schooluserid", "schooluserpasswordhash", "isdisabled", "isdeleted"],
+    where: { [Op.or]: [{ schooluserid: { [Op.in]: ids } }, { schoolusername: { [Op.in]: names } }] },
+    transaction: tnx,
+  });
+};
+
+const passwordHashesBefore = async (
+  rows: Array<{ schooluserid?: string; schoolusername?: string }>,
+  tnx: Transaction
+) =>
+  new Map(
+    (await findImportedAccounts(rows, tnx)).map((u) => [
+      u.schooluserid,
+      { hash: u.schooluserpasswordhash ?? null },
+    ])
+  );
+
 export class SchoolUserBusiness {
   importschoolusers = async (
+    newschooluser: Array<schoolusers>,
+    tnx: Transaction
+  ) => {
+    const before = await passwordHashesBefore(newschooluser, tnx);
+    const result = await this.upsertlearners(newschooluser, tnx);
+    await endSessionsOfChangedAccounts(newschooluser, before, tnx);
+    return result;
+  };
+  private upsertlearners = async (
     newschooluser: Array<schoolusers>,
     tnx: Transaction
   ) =>
@@ -48,6 +116,15 @@ export class SchoolUserBusiness {
       }
     );
   importschoolteachers = async (
+    newschooluser: Array<schoolusers>,
+    transaction: Transaction
+  ) => {
+    const before = await passwordHashesBefore(newschooluser, transaction);
+    const result = await this.upsertteachers(newschooluser, transaction);
+    await endSessionsOfChangedAccounts(newschooluser, before, transaction);
+    return result;
+  };
+  private upsertteachers = async (
     newschooluser: Array<schoolusers>,
     transaction: Transaction
   ) =>
