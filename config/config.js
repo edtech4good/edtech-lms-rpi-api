@@ -11,6 +11,8 @@ const base = {
   host: process.env.RPI_DB_HOST || '127.0.0.1',
   port: parseInt(process.env.RPI_DB_PORT || '3306', 10),
   dialect: 'mysql',
+  // Database statements are printed only when DB_LOG_SQL=1 (development).
+  logging: process.env.DB_LOG_SQL === '1' ? console.log : false,
 };
 
 module.exports = {

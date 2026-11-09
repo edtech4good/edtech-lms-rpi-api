@@ -13,7 +13,9 @@ export class dbinstance {
                 Config.fortyk.api.rpi.database.password, {
                 host: Config.fortyk.api.rpi.database.host,
                 dialect: 'mysql',
-                port: Config.fortyk.api.rpi.database.port || 3306
+                port: Config.fortyk.api.rpi.database.port || 3306,
+                // Database statements are printed only when DB_LOG_SQL=1 (development).
+                logging: process.env.DB_LOG_SQL === '1' ? console.log : false
             });
         }
         return this.sequelize;
