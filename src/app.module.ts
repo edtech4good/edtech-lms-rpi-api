@@ -6,6 +6,7 @@ import { ThrottlerModule } from "@nestjs/throttler";
 import { MorganInterceptor, MorganModule } from "nest-morgan";
 import { AppController } from "./app.controller";
 import { Config } from "./config";
+import { REQUEST_LOG_FORMAT, registerRequestLogTokens } from "./request-log";
 import { AccessModule } from "./modules/access/access.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CurriculumModule } from "./modules/curriculum/curriculum.module";
@@ -27,9 +28,10 @@ const providers = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const temp: Array<any> = [PassportModule, JwtAccessStrategy];
   if (Config.fortyk.api.rpi.debug === true) {
+    registerRequestLogTokens();
     temp.push({
       provide: APP_INTERCEPTOR,
-      useClass: MorganInterceptor("combined"),
+      useClass: MorganInterceptor(REQUEST_LOG_FORMAT),
     });
   }
 
