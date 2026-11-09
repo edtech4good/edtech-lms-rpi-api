@@ -76,6 +76,8 @@ describe("students import writes the nested student's dates to the right columns
       commit: jest.fn().mockResolvedValue(undefined),
       rollback: jest.fn().mockResolvedValue(undefined),
     } as never);
+    // The accounts the import finds already here (to tell which had a session to end): none.
+    jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);
     jest
       .spyOn(schoolusers, "bulkCreate")
       .mockResolvedValue([{ schoolusername: "sokha01" }] as never);

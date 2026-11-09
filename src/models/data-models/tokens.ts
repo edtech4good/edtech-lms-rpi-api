@@ -46,6 +46,13 @@ export class tokens extends Model<tokensAttributes, tokensCreationAttributes> im
             { name: "token" },
           ]
         },
+        {
+          name: "tokens_lmsuserid",
+          using: "BTREE",
+          fields: [
+            { name: "lmsuserid" },
+          ]
+        },
       ]
     });
     return tokens;

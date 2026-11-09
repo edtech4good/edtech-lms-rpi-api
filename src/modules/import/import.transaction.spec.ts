@@ -1,4 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
+import { Op } from "sequelize";
 import { StudentProgressBusiness } from "src/business/studentprogress.business";
 import {
   schoolusers,
@@ -8,6 +9,7 @@ import {
   studentlevelsprogress,
   studentprogress,
   students,
+  tokens,
 } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
 import { Token } from "src/models/token.model";
@@ -127,6 +129,8 @@ describe("import transactions wait for their writes and commit", () => {
     jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL, schoolname: "School" } as never);
     // importschoolusers returns schoolusers.bulkCreate's rows; the controller
     // matches them back to the payload by schoolusername.
+    // The accounts the import finds already here (to tell which had a session to end): none.
+    jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);
     jest
       .spyOn(schoolusers, "bulkCreate")
       .mockResolvedValue([{ schoolusername: "student1" }] as never);
@@ -220,5 +224,44 @@ describe("import transactions wait for their writes and commit", () => {
       BadRequestException
     );
     expect(tnx.rolledBack).toBe(true);
+  });
+
+  describe("the sessions of accounts a roster disables are ended once, after the commit", () => {
+    // The accounts the import finds here are disabled, before and after its write.
+    const disabled = { schooluserid: "su1", schooluserpasswordhash: "h", schooluserstatus: true, isdisabled: true, isdeleted: false };
+    let destroy: jest.SpyInstance;
+    beforeEach(() => {
+      jest.spyOn(schoolusers, "findAll").mockResolvedValue([disabled] as never);
+      destroy = jest.spyOn(tokens, "destroy").mockResolvedValue(1 as never);
+    });
+    const teacherRoster = [{ schooluserid: "su1", schoolusername: "teacher9", schoolid: SCHOOL }];
+    const runs: Array<[string, () => unknown, () => void]> = [
+      ["students", () => new ImportController().studentsimport(file, user), () => mockZipContaining(studentPayload)],
+      ["teachers", () => new ImportController().teachersimport(file, user), () => mockZipContaining(teacherRoster)],
+    ];
+
+    it.each(runs)("%s import: one delete of the tokens, after the commit", async (_n, run, arrange) => {
+      arrange();
+      await run();
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(destroy.mock.calls[0][0]).toEqual({ where: { lmsuserid: { [Op.in]: ["su1"] } } });
+      expect(tnx.commit).toHaveBeenCalledTimes(1);
+      expect(tnx.commit.mock.invocationCallOrder[0]).toBeLessThan(destroy.mock.invocationCallOrder[0]);
+    });
+
+    it.each(runs)("%s import: no delete when the import rolls back", async (_n, run, arrange) => {
+      arrange();
+      tnx.commit.mockReturnValue(rejectLater("commit failed"));
+      await expect(run()).rejects.toBeInstanceOf(BadRequestException);
+      expect(tnx.rolledBack).toBe(true);
+      expect(destroy).not.toHaveBeenCalled();
+    });
+
+    it.each(runs)("%s import: a failed delete is logged and the committed import is answered as usual", async (_n, run, arrange) => {
+      arrange();
+      destroy.mockRejectedValue(new Error("lock wait timeout"));
+      await expect(run()).resolves.toMatchObject({ error: false, data: true });
+      expect(tnx.commit).toHaveBeenCalledTimes(1);
+    });
   });
 });
