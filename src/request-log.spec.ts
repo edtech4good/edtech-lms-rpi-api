@@ -1,5 +1,3 @@
-import { readFileSync } from "fs";
-import { join } from "path";
 import morgan from "morgan";
 import { REQUEST_LOG_FORMAT, redactQuery, registerRequestLogTokens } from "./request-log";
 
@@ -77,10 +75,29 @@ describe("request log format", () => {
   });
 
   it("is what the app module hands to the request log, not the combined format", () => {
-    const source = readFileSync(join(__dirname, "app.module.ts"), "utf8");
-    expect(source).toMatch(/MorganInterceptor\(REQUEST_LOG_FORMAT\)/);
-    expect(source).not.toMatch(/MorganInterceptor\(\s*["']combined["']/);
-    expect(source).toMatch(/registerRequestLogTokens\(\)/);
+    const savedEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = "development";
+    try {
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { AppModule } = require("./app.module");
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { APP_INTERCEPTOR } = require("@nestjs/core");
+        const providers: Array<{ provide?: unknown; useClass?: new (...args: unknown[]) => { format: unknown } }> =
+          Reflect.getMetadata("providers", AppModule);
+        const logger = providers.find((p) => p.provide === APP_INTERCEPTOR);
+        expect(logger).toBeDefined();
+        expect(new logger!.useClass!(undefined).format).toBe(REQUEST_LOG_FORMAT);
+        // The morgan this module graph uses has the token (isolateModules gives it its own copy).
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const appMorgan = require("morgan");
+        const probe = { method: "GET", url: "/p?v=1", headers: {} };
+        expect(appMorgan.compile(":req-path")(appMorgan, probe, {})).toBe("/p?v=\u2026");
+      });
+    } finally {
+      if (savedEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = savedEnv;
+    }
   });
 
   it("writes a request line without parameter values, through the morgan the interceptor uses", () => {

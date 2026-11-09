@@ -27,21 +27,24 @@ export function redactQuery(url: string): string {
   if (at === -1) return withoutFragment;
   const path = withoutFragment.slice(0, at);
   try {
-    const names: string[] = [];
+    const names = new Set<string>();
     for (const pair of withoutFragment.slice(at + 1).split("&")) {
       if (pair === "") continue;
       const eq = pair.indexOf("=");
       const raw = eq === -1 ? pair : pair.slice(0, eq);
       const name = encodeName(decodeURIComponent(raw.replace(/\+/g, " ")));
-      if (name !== "" && !names.includes(name)) names.push(name);
+      if (name !== "") names.add(name);
     }
-    return names.length === 0 ? path : `${path}?${names.map((n) => `${n}=${VALUE_MARK}`).join("&")}`;
+    return names.size === 0 ? path : `${path}?${[...names].map((n) => `${n}=${VALUE_MARK}`).join("&")}`;
   } catch {
     return path;
   }
 }
 
 /**
+ * The request log runs only when the API's debug setting is on (NODE_ENV=development, or a configuration blob with debug
+ * true); app.module.ts adds it then and in no other case.
+ *
  * The request log keeps the "combined" layout, with the URL and the referrer written through redactQuery. Pinned in
  * request-log.spec.ts.
  */
