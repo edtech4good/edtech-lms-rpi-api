@@ -9,6 +9,9 @@ import { SchoolUserBusiness } from "./schooluser.business";
  * sessions: the next request made with a token issued before the import answers 401. An account the
  * import leaves as it was keeps its sessions (a roster is re-sent whole).
  *
+ * The import only names the accounts (inside its transaction); the removal is `endsessions`, run once
+ * after the commit, as the controller does. `importThenCommit` below is that sequence.
+ *
  * No database: the login rows and the token rows are in-memory lists behind the real models' methods;
  * the import, the session removal and the strategy that answers each request are the real code.
  */
@@ -21,6 +24,7 @@ type Row = {
   schooluserid: string;
   schoolusername: string;
   schooluserpasswordhash: string;
+  schooluserstatus?: boolean;
   isdisabled?: boolean;
   isdeleted?: boolean;
 };
@@ -39,6 +43,7 @@ const row = (id: string, name: string, extra: Partial<Row> = {}): Row => ({
   schooluserid: id,
   schoolusername: name,
   schooluserpasswordhash: "hash-" + name,
+  schooluserstatus: true,
   isdisabled: false,
   isdeleted: false,
   ...extra,
@@ -70,7 +75,8 @@ beforeEach(() => {
   }) as never);
   jest.spyOn(schoolusers, "bulkCreate").mockImplementation((async (rows: Row[], opts: { updateOnDuplicate: Array<keyof Row> }) => {
     for (const r of rows) {
-      const existing = users.find((u) => u.schooluserid === r.schooluserid);
+      // the table's keys: the id, and the unique username (a row naming an existing username updates that row)
+      const existing = users.find((u) => u.schooluserid === r.schooluserid || u.schoolusername === r.schoolusername);
       if (!existing) {
         users.push({ isdisabled: false, isdeleted: false, ...r });
       } else {
@@ -94,8 +100,16 @@ beforeEach(() => {
   }) as never);
 });
 
-const importLearners = (rows: Row[]) => new SchoolUserBusiness().importschoolusers(rows as never, tnx);
-const importTeachers = (rows: Row[]) => new SchoolUserBusiness().importschoolteachers(rows as never, tnx);
+/** What the controller does: import in the transaction, commit, then end the sessions once. */
+const importThenCommit = async (rows: Row[], write: (b: SchoolUserBusiness, set: Set<string>) => Promise<unknown>) => {
+  const business = new SchoolUserBusiness();
+  const sessionsToEnd = new Set<string>();
+  await write(business, sessionsToEnd);
+  expect(destroyCalls).toBe(0); // nothing is deleted while the transaction is open
+  await business.endsessions(sessionsToEnd);
+};
+const importLearners = (rows: Row[]) => importThenCommit(rows, (b, set) => b.importschoolusers(rows as never, tnx, set));
+const importTeachers = (rows: Row[]) => importThenCommit(rows, (b, set) => b.importschoolteachers(rows as never, tnx, set));
 const imports: Array<[string, (rows: Row[]) => Promise<unknown>]> = [
   ["learner", importLearners],
   ["teacher", importTeachers],
@@ -159,6 +173,23 @@ describe.each(imports)("the %s roster import and sessions", (_name, run) => {
     await run([row(A, "ann", { isdisabled: true }), row(B, "ben", { schooluserpasswordhash: "new" }), row(C, "cat")]);
     expect(destroyCalls).toBe(1);
     expect([await request(A), await request(B), await request(C)]).toEqual([401, 401, 200]);
+  });
+
+  it("an import that switches an account's login off (status) ends its sessions", async () => {
+    signIn(A);
+    signIn(B);
+    await run([row(A, "ann", { schooluserstatus: false }), row(B, "ben")]);
+    expect(await request(A)).toBe(401);
+    expect(await request(B)).toBe(200);
+  });
+
+  it("a row with a new id and an existing username, disabled, ends the sessions of the account that username belongs to", async () => {
+    signIn(A);
+    signIn(B);
+    await run([row(C, "ann", { isdisabled: true })]);
+    expect(users.find((u) => u.schooluserid === A)?.isdisabled).toBe(true);
+    expect(await request(A)).toBe(401);
+    expect(await request(B)).toBe(200);
   });
 
   it("an account that stays disabled in a re-sent roster stays without sessions", async () => {

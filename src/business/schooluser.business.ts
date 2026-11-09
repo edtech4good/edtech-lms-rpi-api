@@ -19,27 +19,30 @@ import { withRequiredSchoolIds } from "./school-identity";
  * `before` is what the accounts' rows held before the upsert; the rows are read again here, after it,
  * so an account that is matched by its username rather than its id is still the one that is judged.
  * An account whose row is unchanged in these ways keeps its sessions: a roster is re-sent whole and
- * must not sign anyone out. It runs in the import's own transaction, so the account change and the
- * end of its sessions commit together or not at all. One read and one delete, however many accounts.
+ * must not sign anyone out.
+ *
+ * It only works out WHICH accounts (two reads, inside the import's transaction, so they see its own
+ * writes) and adds them to `ended`. The delete is `SchoolUserBusiness.endsessions`, which the caller
+ * runs once, after the commit: `tokens` is scanned by account, and a delete inside the transaction
+ * would hold locks on it for as long as the import runs; and a login that read the old row before
+ * the commit would write its token after it.
  */
 const endSessionsOfChangedAccounts = async (
   rows: Array<{ schooluserid?: string; schoolusername?: string }>,
   before: Map<string, { hash: string | null }>,
-  tnx: Transaction
+  tnx: Transaction,
+  ended?: Set<string>
 ): Promise<void> => {
   const after = await findImportedAccounts(rows, tnx);
-  const ended = after
+  after
     .filter((u) => {
-      if (u.isdisabled || u.isdeleted) {
+      if (u.isdisabled || u.isdeleted || !u.schooluserstatus) {
         return true;
       }
       const prior = before.get(u.schooluserid);
       return prior !== undefined && prior.hash !== (u.schooluserpasswordhash ?? null);
     })
-    .map((u) => u.schooluserid);
-  if (ended.length > 0) {
-    await tokens.destroy({ where: { lmsuserid: { [Op.in]: ended } }, transaction: tnx });
-  }
+    .forEach((u) => ended?.add(u.schooluserid));
 };
 
 const findImportedAccounts = async (
@@ -52,7 +55,7 @@ const findImportedAccounts = async (
     return [];
   }
   return schoolusers.findAll({
-    attributes: ["schooluserid", "schooluserpasswordhash", "isdisabled", "isdeleted"],
+    attributes: ["schooluserid", "schooluserpasswordhash", "schooluserstatus", "isdisabled", "isdeleted"],
     where: { [Op.or]: [{ schooluserid: { [Op.in]: ids } }, { schoolusername: { [Op.in]: names } }] },
     transaction: tnx,
   });
@@ -72,11 +75,12 @@ const passwordHashesBefore = async (
 export class SchoolUserBusiness {
   importschoolusers = async (
     newschooluser: Array<schoolusers>,
-    tnx: Transaction
+    tnx: Transaction,
+    sessionsToEnd?: Set<string>
   ) => {
     const before = await passwordHashesBefore(newschooluser, tnx);
     const result = await this.upsertlearners(newschooluser, tnx);
-    await endSessionsOfChangedAccounts(newschooluser, before, tnx);
+    await endSessionsOfChangedAccounts(newschooluser, before, tnx, sessionsToEnd);
     return result;
   };
   private upsertlearners = async (
@@ -117,12 +121,20 @@ export class SchoolUserBusiness {
     );
   importschoolteachers = async (
     newschooluser: Array<schoolusers>,
-    transaction: Transaction
+    transaction: Transaction,
+    sessionsToEnd?: Set<string>
   ) => {
     const before = await passwordHashesBefore(newschooluser, transaction);
     const result = await this.upsertteachers(newschooluser, transaction);
-    await endSessionsOfChangedAccounts(newschooluser, before, transaction);
+    await endSessionsOfChangedAccounts(newschooluser, before, transaction, sessionsToEnd);
     return result;
+  };
+  /** Removes the sessions of these accounts: one delete, run after the import has committed. */
+  endsessions = async (accountIds: Iterable<string>): Promise<void> => {
+    const ids = [...accountIds];
+    if (ids.length > 0) {
+      await tokens.destroy({ where: { lmsuserid: { [Op.in]: ids } } });
+    }
   };
   private upsertteachers = async (
     newschooluser: Array<schoolusers>,

@@ -121,6 +121,25 @@ function assertMayImportOrganisation(user: Token | undefined, organisationid: un
   throw new ApiError(ErrorCode.NOT_ALLOWED);
 }
 
+/**
+ * Ends the sessions of the accounts a committed roster import disabled, deleted or gave a new
+ * password. The import has already committed and is answered as it always was: a failure here is
+ * logged (class and code only) and does not turn a committed import into an error, because a retry
+ * of the same roster would find the accounts already changed and end nothing.
+ */
+async function endSessionsAfterCommit(su: SchoolUserBusiness, accountIds: Set<string>): Promise<void> {
+  try {
+    await su.endsessions(accountIds);
+  } catch (e) {
+    const err = e as { constructor?: { name?: string }; code?: string; parent?: { code?: string } };
+    Logger.error("ending sessions after a roster import failed", {
+      errorclass: err?.constructor?.name,
+      code: err?.code ?? err?.parent?.code,
+      accounts: accountIds.size,
+    });
+  }
+}
+
 /** What a payload that is not one organisation's content (format 3) is told. */
 const FORMAT_RETIRED_MESSAGE =
   "This server accepts one organisation's content (format 3). Export it from the admin and send it again.";
@@ -202,6 +221,8 @@ export class ImportController {
         const st = new StudentBusiness();
         const stp = new StudentProgressBusiness();
         const tnx = await dbinstance.getdbinstance().transaction();
+        // The accounts this import disables, deletes or gives a new password: their sessions end after the commit.
+        const sessionsToEnd = new Set<string>();
         try {
           // A roster that names its school (format 3) may only carry that school's rows.
           if (payload.schoolid !== undefined) {
@@ -225,7 +246,7 @@ export class ImportController {
           if (studentprogresses) {
             await assertRosterProgressKnown(newstudents, studentprogresses, tnx);
           }
-          const suresult = await su.importschoolusers(newstudents, tnx);
+          const suresult = await su.importschoolusers(newstudents, tnx, sessionsToEnd);
           await st.importstudents(
             suresult.map((x: any) => {
               const tempstudent = newstudents.find(
@@ -257,6 +278,7 @@ export class ImportController {
             errormessage: "Invalid file",
           });
         }
+        await endSessionsAfterCommit(su, sessionsToEnd);
         Logger.info(`<${user.schoolusername}> import students`, {logaccesstype: LOGTYPE.IMPORTSTUDENT, userid: user.schooluserid, curriculumListsFromCurriculumid: curriculumListsFilled});
         // The report says how many learners were given their curriculum list from `curriculumid` (left out when none were).
         return curriculumListsFilled > 0
@@ -327,6 +349,7 @@ export class ImportController {
       assertEntryWithinLimit(zipEntries[0], UploadLimits.ROSTER_ZIP_DECOMPRESSED_MAX_BYTES);
       const tnx = await dbinstance.getdbinstance().transaction();
       const su = new SchoolUserBusiness();
+      const sessionsToEnd = new Set<string>();
       try {
         const teachersjson = zipEntries[0].getData().toString("utf8");
         let newteachers: Array<any> = [];
@@ -341,7 +364,7 @@ export class ImportController {
           newteachers = parsed.teachers;
           await assertRosterBelongsToSchool(newteachers, parsed.schoolid, tnx);
         }
-        await su.importschoolteachers(newteachers, tnx);
+        await su.importschoolteachers(newteachers, tnx, sessionsToEnd);
         await tnx.commit();
       } catch (e) {
         await rollbackQuietly(tnx);
@@ -353,6 +376,7 @@ export class ImportController {
           errormessage: "Invalid file",
         });
       }
+      await endSessionsAfterCommit(su, sessionsToEnd);
       Logger.info(`<${user.schoolusername}> import teacher`, {logaccesstype: LOGTYPE.IMPORTTEACHER, userid: user.schooluserid});
       return {
         error: false,
