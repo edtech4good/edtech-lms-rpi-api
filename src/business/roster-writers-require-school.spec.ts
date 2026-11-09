@@ -30,7 +30,7 @@ const login = (extra: Record<string, unknown> = {}) => ({ schooluserid: "su1", s
 
 describe("the roster writers refuse a row with no school before writing", () => {
   it("importschoolusers: a login that names no school this server has", async () => {
-    await expect(new SchoolUserBusiness().importschoolusers([login({ schoolname: "School A" }), login({ schoolname: "Nowhere" })], tnx)).rejects.toMatchObject({
+    await expect(new SchoolUserBusiness().importschoolusers([login({ schoolname: "School A" }), login({ schoolname: "Nowhere" })], tnx, new Set())).rejects.toMatchObject({
       status: 400,
       message: REFUSAL,
     });
@@ -38,7 +38,7 @@ describe("the roster writers refuse a row with no school before writing", () => 
   });
 
   it("importschoolteachers: a teacher that names no school this server has", async () => {
-    await expect(new SchoolUserBusiness().importschoolteachers([login()], tnx)).rejects.toMatchObject({ status: 400, message: REFUSAL });
+    await expect(new SchoolUserBusiness().importschoolteachers([login()], tnx, new Set())).rejects.toMatchObject({ status: 400, message: REFUSAL });
     expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
   });
 
@@ -52,8 +52,8 @@ describe("the roster writers refuse a row with no school before writing", () => 
   });
 
   it("a row that names a school this server has is written, with that school's id", async () => {
-    await new SchoolUserBusiness().importschoolusers([login({ schoolname: "School A" })], tnx);
-    await new SchoolUserBusiness().importschoolteachers([login({ schoolid: A })], tnx);
+    await new SchoolUserBusiness().importschoolusers([login({ schoolname: "School A" })], tnx, new Set());
+    await new SchoolUserBusiness().importschoolteachers([login({ schoolid: A })], tnx, new Set());
     await new StudentBusiness().importstudents([{ studentid: "s1", schooluserid: "su1", schoolname: "school a" } as never], tnx);
     expect((schoolusers.bulkCreate as jest.Mock).mock.calls.map((c) => c[0].map((r: { schoolid: string }) => r.schoolid))).toEqual([[A], [A]]);
     expect((students.bulkCreate as jest.Mock).mock.calls[0][0][0].schoolid).toBe(A);

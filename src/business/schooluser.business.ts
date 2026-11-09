@@ -76,7 +76,7 @@ export class SchoolUserBusiness {
   importschoolusers = async (
     newschooluser: Array<schoolusers>,
     tnx: Transaction,
-    sessionsToEnd?: Set<string>
+    sessionsToEnd: Set<string>
   ) => {
     const before = await passwordHashesBefore(newschooluser, tnx);
     const result = await this.upsertlearners(newschooluser, tnx);
@@ -122,7 +122,7 @@ export class SchoolUserBusiness {
   importschoolteachers = async (
     newschooluser: Array<schoolusers>,
     transaction: Transaction,
-    sessionsToEnd?: Set<string>
+    sessionsToEnd: Set<string>
   ) => {
     const before = await passwordHashesBefore(newschooluser, transaction);
     const result = await this.upsertteachers(newschooluser, transaction);
