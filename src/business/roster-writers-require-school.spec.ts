@@ -18,6 +18,8 @@ beforeEach(() => {
     opts.where.logic.trim().toLowerCase() === "school a" ? [{ schoolid: A, schoolname: "School A", isdeleted: false }] : []) as never);
   jest.spyOn(schools, "findOne").mockImplementation((async (opts: { where: { schoolid: string } }) =>
     opts.where.schoolid === A ? { schoolid: A, schoolname: "School A" } : null) as never);
+  // The accounts the import finds already here (to tell which had a session to end): none.
+  jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);
   jest.spyOn(schoolusers, "bulkCreate").mockImplementation((async (rows: unknown[]) => rows) as never);
   jest.spyOn(students, "bulkCreate").mockResolvedValue([] as never);
 });

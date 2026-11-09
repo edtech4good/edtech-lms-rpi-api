@@ -51,6 +51,8 @@ beforeEach(() => {
   jest.spyOn(levels, "findAll").mockImplementation(holding("levelid", () => held.levels));
   jest.spyOn(lessons, "findAll").mockImplementation(holding("lessonid", () => held.lessons));
   jest.spyOn(students, "findAll").mockImplementation(holding("studentid", () => held.students));
+  // The accounts the import finds already here (to tell which had a session to end): none.
+  jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);
   jest.spyOn(schoolusers, "bulkCreate").mockImplementation((async (rows: unknown[]) => rows) as never);
   jest.spyOn(students, "bulkCreate").mockResolvedValue([] as never);
   jest.spyOn(studentprogress, "bulkCreate").mockResolvedValue([] as never);

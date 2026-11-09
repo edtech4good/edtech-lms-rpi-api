@@ -127,6 +127,8 @@ describe("import transactions wait for their writes and commit", () => {
     jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL, schoolname: "School" } as never);
     // importschoolusers returns schoolusers.bulkCreate's rows; the controller
     // matches them back to the payload by schoolusername.
+    // The accounts the import finds already here (to tell which had a session to end): none.
+    jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);
     jest
       .spyOn(schoolusers, "bulkCreate")
       .mockResolvedValue([{ schoolusername: "student1" }] as never);

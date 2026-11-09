@@ -30,6 +30,8 @@ beforeEach(() => {
   jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
   jest.spyOn(schools, "findOne").mockImplementation((async () => ({ schoolid: SCHOOL })) as never);
   jest.spyOn(standards, "findAll").mockResolvedValue([] as never);
+  // The accounts the import finds already here (to tell which had a session to end): none.
+  jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);
   jest.spyOn(schoolusers, "bulkCreate").mockImplementation((async (rows: unknown[]) => rows) as never);
   jest.spyOn(students, "bulkCreate").mockResolvedValue([] as never);
 });
