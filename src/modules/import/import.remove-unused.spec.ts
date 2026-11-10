@@ -78,7 +78,13 @@ const fakeQuery = async (sql: string, options: { replacements?: Record<string, a
   const r = options.replacements ?? {};
   statements.push(sql.replace(/\s+/g, " "));
   if (/^SELECT schooluserid FROM schoolusers/.test(sql)) {
-    return logins.filter((l) => l.schooluserid === r.id && l.schooluserrole === r.role && (r.schoolids as string[]).includes(l.schoolid));
+    // Each condition is applied only when the statement carries it, so a statement that drops one finds more.
+    return logins.filter(
+      (l) =>
+        l.schooluserid === r.id &&
+        (!/schooluserrole = :role/.test(sql) || l.schooluserrole === r.role) &&
+        (!/schoolid IN \(:schoolids\)/.test(sql) || (r.schoolids as string[]).includes(l.schoolid))
+    );
   }
   if (/^SELECT studentid, schoolid FROM students/.test(sql)) {
     return learners.filter((l) => l.schooluserid === r.id);
