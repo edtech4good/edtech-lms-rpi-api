@@ -67,6 +67,7 @@ const ALLOWLIST: Array<RouteKey> = [
   routeKey("PUT", "/import/teachers"),
   routeKey("PUT", "/import/master"),
   routeKey("PUT", "/import/ownership"),
+  routeKey("DELETE", "/import/students/:schooluserid"),
 ];
 
 // Routes that take no authentication at all — the sync key isn't relevant
@@ -140,6 +141,7 @@ const ALLOWLIST_HANDLERS: Record<RouteKey, [any, string]> = {
   [routeKey("PUT", "/import/teachers")]: [ImportController, "teachersimport"],
   [routeKey("PUT", "/import/master")]: [ImportController, "completesync"],
   [routeKey("PUT", "/import/ownership")]: [ImportController, "ownership"],
+  [routeKey("DELETE", "/import/students/:schooluserid")]: [ImportController, "removeUnusedStudent"],
 };
 
 /**
