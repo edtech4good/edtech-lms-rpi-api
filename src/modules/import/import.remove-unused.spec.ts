@@ -61,6 +61,7 @@ let tokenRows: string[];
 let activity: Set<string>;
 let statements: string[];
 let begun: () => void;
+let missingTables: string[];
 
 const seed = () => {
   logins = [{ schooluserid: LOGIN, schooluserrole: SchoolRole.STUDENT, schoolid: SCHOOL_A }];
@@ -72,6 +73,7 @@ const seed = () => {
   activity = new Set();
   statements = [];
   begun = () => undefined;
+  missingTables = [];
 };
 
 const fakeQuery = async (sql: string, options: { replacements?: Record<string, any>; transaction?: { pending?: string[] } }) => {
@@ -88,6 +90,9 @@ const fakeQuery = async (sql: string, options: { replacements?: Record<string, a
   }
   if (/^SELECT studentid, schoolid FROM students/.test(sql)) {
     return learners.filter((l) => l.schooluserid === r.id);
+  }
+  if (/FROM information_schema.tables/.test(sql)) {
+    return (r.names as string[]).filter((n) => !missingTables.includes(n)).map((name) => ({ name }));
   }
   const check = /^SELECT 1 AS found FROM `(\w+)` WHERE `(\w+)` IN/.exec(sql);
   if (check) {
@@ -224,6 +229,17 @@ describe("DELETE /import/students/:schooluserid", () => {
       expect(res.body).toEqual({ removed: false, reason: "activity" });
       expect(stored()).toEqual(untouched);
       expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
+    });
+
+    it("does not fail on a table this database does not have, and still checks the ones it has", async () => {
+      missingTables = ["accesslog", "studentpracticesprogress", "studentquizzesprogress"];
+      activity.add(`accesslog.schooluserid.${LOGIN}`); // not reachable: the table is not there
+      await call().expect(200);
+      expect(statements.some((s) => /`accesslog`|`studentpracticesprogress`|`studentquizzesprogress`/.test(s))).toBe(false);
+      seed();
+      missingTables = ["accesslog"];
+      activity.add(`studentpoints.studentid.${LEARNER_1}`);
+      await call().expect(409);
     });
 
     it("counts a row of the login's second learner row as use", async () => {

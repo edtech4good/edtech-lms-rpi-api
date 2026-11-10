@@ -126,7 +126,13 @@ export class RemoveUnusedLearnerBusiness {
 
   /** Is there any row, in any table of ACTIVITY_SOURCES, for the login or for any of its learner rows? */
   private async hasActivity(schooluserid: string, studentids: string[], tnx: Transaction | undefined): Promise<boolean> {
+    // A table this database does not have cannot hold a row: some of these are legacy tables that a database
+    // built from the migrations does not have, and one that does have them is still checked.
+    const present = await this.tablesPresent(tnx);
     for (const source of ACTIVITY_SOURCES) {
+      if (!present.has(source.table.toLowerCase())) {
+        continue;
+      }
       const ids = source.owner === "login" ? [schooluserid] : studentids;
       if (ids.length === 0) {
         continue;
@@ -137,5 +143,11 @@ export class RemoveUnusedLearnerBusiness {
       }
     }
     return false;
+  }
+
+  private async tablesPresent(tnx: Transaction | undefined): Promise<Set<string>> {
+    const names = [...new Set(ACTIVITY_SOURCES.map((x) => x.table))];
+    const rows = await select(tnx, "SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN (:names)", { names });
+    return new Set(rows.map((r) => String(r.name ?? r.TABLE_NAME).toLowerCase()));
   }
 }
