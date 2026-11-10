@@ -51,14 +51,14 @@ import {
 
 // Pinned on purpose. When you add or remove a route, update these numbers AND run
 // `npm run routes:policy -- --write` to refresh the committed files.
-const EXPECTED_TOTAL = 83;
-const EXPECTED_BY_POLICY = { public: 5, learner: 42, teacher: 32, server: 3, "pi-import": 1 };
-const EXPECTED_PROVED = 78;
+const EXPECTED_TOTAL = 84;
+const EXPECTED_BY_POLICY = { public: 5, learner: 42, teacher: 32, server: 4, "pi-import": 1 };
+const EXPECTED_PROVED = 79;
 const EXPECTED_NOT_APPLICABLE = 5;
 const EXPECTED_PENDING = 0;
 
 // The routes still pending, by name: none. The three whole-server exports are proved by src/modules/export-scope.leak.spec.ts,
-// and the three server-key-only imports by the specs under src/modules/import.
+// and the server-key-only routes (three imports and the removal of an unused learner) by the specs under src/modules/import.
 const EXPECTED_PENDING_ROUTES: string[] = [];
 
 // Routes with no AccessGuard that read the bearer token in the handler.
@@ -106,7 +106,7 @@ describe("route inventory (real application wiring)", () => {
   });
 
   describe("proved and pending", () => {
-    it("divides the routes into 78 proved by a spec, 5 not applicable (public) and none pending", () => {
+    it("divides the routes into 79 proved by a spec, 5 not applicable (public) and none pending", () => {
       const count = (state: string) => routes.filter((r) => enforcementState(r) === state).length;
       expect(count("yes")).toBe(EXPECTED_PROVED);
       expect(count("n/a")).toBe(EXPECTED_NOT_APPLICABLE);
@@ -129,10 +129,11 @@ describe("route inventory (real application wiring)", () => {
       expect(routes.filter((r) => r.policy === "public" && r.enforcedBy !== undefined).map(key)).toEqual([]);
     });
 
-    it("the proving specs are the leak specs, the export spec and the specs of the three server-key imports", () => {
+    it("the proving specs are the leak specs, the export spec and the specs of the four server-key routes", () => {
       expect([...new Set(routes.filter((r) => r.enforcedBy !== undefined).map((r) => r.enforcedBy))].sort()).toEqual([
         "src/modules/export-scope.leak.spec.ts",
         "src/modules/import/import.ownership.spec.ts",
+        "src/modules/import/import.remove-unused.spec.ts",
         "src/modules/import/import.roster.school.spec.ts",
         "src/modules/org-boundary.leak.spec.ts",
       ]);
@@ -176,9 +177,9 @@ describe("route inventory (real application wiring)", () => {
       }
     });
 
-    it("`server` routes are the three imports that take only central's key", () => {
-      expect(routes.filter((r) => r.policy === "server").map(key).sort()).toEqual(["PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
-      expect(routes.filter((r) => r.auth === "server-key-only").map(key).sort()).toEqual(["PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
+    it("`server` routes are the three imports and the unused-learner removal, which take only central's key", () => {
+      expect(routes.filter((r) => r.policy === "server").map(key).sort()).toEqual(["DELETE /import/students/:schooluserid", "PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
+      expect(routes.filter((r) => r.auth === "server-key-only").map(key).sort()).toEqual(["DELETE /import/students/:schooluserid", "PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
     });
 
     it("`pi-import` is the content import alone: the key, and staff tokens on a Pi", () => {
@@ -219,7 +220,7 @@ describe("route inventory (real application wiring)", () => {
       expect(unguarded.map(key)).toEqual([]);
       // every route central proxies has the report scope in front of it
       expect(withGuard("ReportScopeGuard").length).toBe(
-        routes.filter((r) => r.path.startsWith("/report/")).length + 5, // + /student/logintime, the baseline results and the three exports
+        routes.filter((r) => r.path.startsWith("/report/")).length + 6, // + /student/logintime, the baseline results, the three exports and the unused-learner removal
       );
     });
   });

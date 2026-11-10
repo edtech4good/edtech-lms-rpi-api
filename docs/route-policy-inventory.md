@@ -26,16 +26,16 @@ pinned in `src/route-policy/pending-enforcement.snapshot.txt`.
 
 Pending refers only to the organisation boundary; every route keeps the authentication and role guards shown in the Guards column.
 
-Of **83** routes, **78** are proved by a spec, **5** are not applicable (public) and **0** are pending.
+Of **84** routes, **79** are proved by a spec, **5** are not applicable (public) and **0** are pending.
 
 | Policy | Routes | Proved | Not applicable | Pending |
 |---|---|---|---|---|
 | public | 5 | 0 | 5 | 0 |
 | learner | 42 | 42 | 0 | 0 |
 | teacher | 32 | 32 | 0 | 0 |
-| server | 3 | 3 | 0 | 0 |
+| server | 4 | 4 | 0 | 0 |
 | pi-import | 1 | 1 | 0 | 0 |
-| **all** | **83** | **78** | **5** | **0** |
+| **all** | **84** | **79** | **5** | **0** |
 
 ## Policies
 
@@ -56,7 +56,7 @@ A route used by both a user token and the server key is classified by its user p
 - **Server key**: `yes` when every authentication guard on the route lets central's server sync key through, so a caller with no user gets in.
 - **Staff only**: `yes` when an authentication guard lists school roles (teacher, admin, super admin), so a learner's token is refused.
 
-Routes admitting the server key: 21.
+Routes admitting the server key: 22.
 
 ## Routes
 
@@ -85,6 +85,7 @@ Routes admitting the server key: 21.
 | PUT | `/import/master` | ImportController.completesync | pi-import | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | ServerSyncGuard(Role.ADMIN, Role.SUPERADMIN, Role.TEACHER) | Payload header names the organisation; on a Pi it must match the token's claim, and a token with no claim is refused (the payload's rows are proved in src/modules/import). |
 | PUT | `/import/ownership` | ImportController.ownership | server | yes | `src/modules/import/import.ownership.spec.ts` | yes |  | ServerSyncGuard() | Central's ownership push. |
 | PUT | `/import/students` | ImportController.studentsimport | server | yes | `src/modules/import/import.roster.school.spec.ts` | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
+| DELETE | `/import/students/:schooluserid` | ImportController.removeUnusedStudent | server | yes | `src/modules/import/import.remove-unused.spec.ts` | yes |  | ServerSyncGuard(), ReportScopeGuard | Removes one unused learner of the organisation named in X-Organisation-Id; another organisation's or a non-learner answers as absent. |
 | PUT | `/import/teachers` | ImportController.teachersimport | server | yes | `src/modules/import/import.roster.school.spec.ts` | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
 | GET | `/Lesson/:lessonid/activities/progress` | LessonController.getlessonactivitiesprogress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(lesson:lessonid) |  |
 | GET | `/Lesson/:lessonid/progress` | LessonController.getuserlessonprogress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(lesson:lessonid) |  |
