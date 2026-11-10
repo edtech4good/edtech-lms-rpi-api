@@ -25,6 +25,8 @@ type Row = {
   schoolusername: string;
   schooluserpasswordhash: string;
   schooluserstatus?: boolean;
+  schoolid?: string;
+  student?: { standard: string };
   isdisabled?: boolean;
   isdeleted?: boolean;
 };
@@ -39,11 +41,14 @@ const strategy = () => new JwtAccessStrategy();
 const A = "a1000000-0000-4000-8000-0000000000a1";
 const B = "b2000000-0000-4000-8000-0000000000b2";
 const C = "c3000000-0000-4000-8000-0000000000c3";
+const SCHOOL_ONE = "51000000-0000-4000-8000-000000000001";
+const SCHOOL_TWO = "52000000-0000-4000-8000-000000000002";
 const row = (id: string, name: string, extra: Partial<Row> = {}): Row => ({
   schooluserid: id,
   schoolusername: name,
   schooluserpasswordhash: "hash-" + name,
   schooluserstatus: true,
+  schoolid: SCHOOL_ONE,
   isdisabled: false,
   isdeleted: false,
   ...extra,
@@ -197,5 +202,41 @@ describe.each(imports)("the %s roster import and sessions", (_name, run) => {
     signIn(A);
     await run([row(A, "ann", { isdisabled: true })]);
     expect(await request(A)).toBe(401);
+  });
+
+  it("an import that moves an account to another school ends its sessions", async () => {
+    signIn(A);
+    await run([row(A, "ann", { schoolid: SCHOOL_TWO })]);
+    expect(users.find((u) => u.schooluserid === A)?.schoolid).toBe(SCHOOL_TWO);
+    expect(await request(A)).toBe(401);
+  });
+
+  it("an import that keeps the school and only changes the class keeps the sessions", async () => {
+    signIn(A);
+    await run([row(A, "ann", { student: { standard: "class-two" } })]);
+    expect(await request(A)).toBe(200);
+    expect(destroyCalls).toBe(0);
+  });
+
+  it("a mixed roster, one moved and one not, ends only the moved account's sessions", async () => {
+    signIn(A);
+    signIn(B);
+    await run([row(A, "ann", { schoolid: SCHOOL_TWO }), row(B, "ben")]);
+    expect([await request(A), await request(B)]).toEqual([401, 200]);
+  });
+
+  it("an account that is moved and disabled in the same import is ended once", async () => {
+    signIn(A);
+    await run([row(A, "ann", { schoolid: SCHOOL_TWO, isdisabled: true })]);
+    expect(await request(A)).toBe(401);
+    expect(destroyCalls).toBe(1);
+  });
+
+  it("an account that is new in the import is not treated as moved", async () => {
+    signIn(A);
+    await run([row(A, "ann"), row(C, "cat", { schoolid: SCHOOL_TWO })]);
+    expect(users.map((u) => u.schooluserid)).toContain(C);
+    expect(await request(A)).toBe(200);
+    expect(destroyCalls).toBe(0);
   });
 });
