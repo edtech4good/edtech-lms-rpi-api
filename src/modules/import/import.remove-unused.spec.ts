@@ -190,6 +190,13 @@ describe("DELETE /import/students/:schooluserid", () => {
     expect(stored()).toEqual(untouched);
   });
 
+  it("answers absent for another organisation's learner whose learner rows name no school", async () => {
+    learners.forEach((l) => (l.schoolid = null));
+    const res = await call(ORG_B).expect(200);
+    expect(res.body).toEqual({ removed: false, absent: true });
+    expect(stored()).toEqual(untouched);
+  });
+
   it("answers absent, and changes nothing, for an organisation that has no schools here", async () => {
     const res = await call("a1000000-0000-4000-8000-00000000000c").expect(200);
     expect(res.body).toEqual({ removed: false, absent: true });
