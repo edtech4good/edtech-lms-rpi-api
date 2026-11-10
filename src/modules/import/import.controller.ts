@@ -310,13 +310,13 @@ export class ImportController {
 
   // Removing a learner who has never signed in and has no progress (central asks before it removes its own copy).
   // The server sync key only, with the organisation central acts for in X-Organisation-Id: a learner of any other
-  // organisation, a teacher or an unknown id answers as absent and nothing changes. The platform marker is refused.
+  // organisation or a teacher answers 409 elsewhere, an unknown id answers as absent, and nothing changes. The platform marker is refused.
   @Delete("students/:schooluserid")
-  @OrgPolicy("server", { note: "Removes one unused learner of the organisation named in X-Organisation-Id; another organisation's or a non-learner answers as absent.", enforcedBy: "src/modules/import/import.remove-unused.spec.ts" })
+  @OrgPolicy("server", { note: "Removes one unused learner of the organisation named in X-Organisation-Id; an id that is not here answers as absent, one outside that scope as elsewhere.", enforcedBy: "src/modules/import/import.remove-unused.spec.ts" })
   @UseGuards(ServerSyncGuard(), ReportScopeGuard)
   @ApiResponse({ status: 200, description: "removed (`removed: true`), or not here (`removed: false, absent: true`)" })
   @ApiResponse({ status: 400, description: "The organisation header is missing, or names the platform" })
-  @ApiResponse({ status: 409, description: "The account has signed in or has progress (`reason: activity`); nothing was deleted" })
+  @ApiResponse({ status: 409, description: "The account has signed in or has progress (`reason: activity`), or is outside the organisation's learners (`reason: elsewhere`); nothing was deleted" })
   @HttpCode(HttpStatus.OK)
   async removeUnusedStudent(
     @Param("schooluserid") schooluserid: string,
@@ -333,9 +333,10 @@ export class ImportController {
     const result = await new RemoveUnusedLearnerBusiness().remove(schooluserid, scope.schoolids);
     if (!result.removed && "reason" in result) {
       res.status(HttpStatus.CONFLICT);
+      Logger.info(`<${user.schoolusername}> refused to remove a learner: ${result.reason}`, { userid: user.schooluserid, schooluserid });
     }
     if (result.removed) {
-      Logger.info(`<${user.schoolusername}> removed an unused learner`, { userid: user.schooluserid });
+      Logger.info(`<${user.schoolusername}> removed an unused learner`, { userid: user.schooluserid, schooluserid });
     }
     return result;
   }

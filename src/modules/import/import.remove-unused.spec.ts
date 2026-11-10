@@ -4,6 +4,9 @@ import { sign } from "jsonwebtoken";
 import request from "supertest";
 import { Config } from "src/config";
 import { GlobalExceptionFilter } from "src/filters/global-exception.filter";
+import { Sequelize } from "sequelize";
+import { ACTIVITY_SOURCES, LEGACY_TABLES } from "src/business/remove-unused-learner";
+import { initModels } from "src/models/data-models/init-models";
 import { organisations } from "src/models/data-models/organisations";
 import { schools } from "src/models/data-models/school";
 import { SchoolRole } from "src/models/enums/school.role.enum";
@@ -37,6 +40,7 @@ const LEARNER_2 = "st-learner-2";
 
 /** Every table and column that counts as use, named here independently of the route's own list. */
 const ACTIVITY: Array<{ table: string; column: string; id: string }> = [
+  { table: "tokens", column: "lmsuserid", id: LOGIN },
   { table: "rpiuseraccess", column: "userid", id: LOGIN },
   { table: "studentappusages", column: "schooluserid", id: LOGIN },
   { table: "accesslog", column: "schooluserid", id: LOGIN },
@@ -69,7 +73,7 @@ const seed = () => {
     { studentid: LEARNER_1, schooluserid: LOGIN, schoolid: SCHOOL_A },
     { studentid: LEARNER_2, schooluserid: LOGIN, schoolid: SCHOOL_A },
   ];
-  tokenRows = [LOGIN];
+  tokenRows = [];
   activity = new Set();
   statements = [];
   begun = () => undefined;
@@ -79,14 +83,8 @@ const seed = () => {
 const fakeQuery = async (sql: string, options: { replacements?: Record<string, any>; transaction?: { pending?: string[] } }) => {
   const r = options.replacements ?? {};
   statements.push(sql.replace(/\s+/g, " "));
-  if (/^SELECT schooluserid FROM schoolusers/.test(sql)) {
-    // Each condition is applied only when the statement carries it, so a statement that drops one finds more.
-    return logins.filter(
-      (l) =>
-        l.schooluserid === r.id &&
-        (!/schooluserrole = :role/.test(sql) || l.schooluserrole === r.role) &&
-        (!/schoolid IN \(:schoolids\)/.test(sql) || (r.schoolids as string[]).includes(l.schoolid))
-    );
+  if (/^SELECT schooluserid, schooluserrole, schoolid FROM schoolusers/.test(sql)) {
+    return logins.filter((l) => l.schooluserid === r.id);
   }
   if (/^SELECT studentid, schoolid FROM students/.test(sql)) {
     return learners.filter((l) => l.schooluserid === r.id);
@@ -129,7 +127,7 @@ const tokenFor = (schooluserrole: SchoolRole) =>
   `Bearer ${sign({ jti: "t", schooluserid: `u-${schooluserrole}`, schooluserrole }, Config.fortyk.api.rpi.applicationsecret, { expiresIn: "5m" })}`;
 
 const stored = () => ({ logins: logins.length, learners: learners.length, tokens: tokenRows.length });
-const untouched = { logins: 1, learners: 2, tokens: 1 };
+const untouched = { logins: 1, learners: 2, tokens: 0 };
 
 describe("DELETE /import/students/:schooluserid", () => {
   let app: INestApplication;
@@ -174,7 +172,7 @@ describe("DELETE /import/students/:schooluserid", () => {
     return req;
   };
 
-  it("removes the tokens, the learner rows and the login of a learner who was never used", async () => {
+  it("removes the learner rows and the login of a learner who was never used", async () => {
     const res = await call().expect(200);
     expect(res.body).toEqual({ removed: true });
     expect(stored()).toEqual({ logins: 0, learners: 0, tokens: 0 });
@@ -189,37 +187,64 @@ describe("DELETE /import/students/:schooluserid", () => {
     expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
   });
 
-  it("answers absent, and changes nothing, for another organisation's learner", async () => {
-    const res = await call(ORG_B).expect(200);
-    expect(res.body).toEqual({ removed: false, absent: true });
+  const elsewhere = { removed: false, reason: "elsewhere" };
+
+  it("answers 409 elsewhere, and changes nothing, for another organisation's learner", async () => {
+    const res = await call(ORG_B).expect(409);
+    expect(res.body).toEqual(elsewhere);
     expect(stored()).toEqual(untouched);
+    expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
   });
 
-  it("answers absent for another organisation's learner whose learner rows name no school", async () => {
+  it("answers 409 elsewhere for another organisation's learner whose learner rows name no school", async () => {
     learners.forEach((l) => (l.schoolid = null));
-    const res = await call(ORG_B).expect(200);
-    expect(res.body).toEqual({ removed: false, absent: true });
+    const res = await call(ORG_B).expect(409);
+    expect(res.body).toEqual(elsewhere);
     expect(stored()).toEqual(untouched);
   });
 
-  it("answers absent, and changes nothing, for an organisation that has no schools here", async () => {
-    const res = await call("a1000000-0000-4000-8000-00000000000c").expect(200);
-    expect(res.body).toEqual({ removed: false, absent: true });
+  it("answers 409 elsewhere, and changes nothing, for an organisation that has no schools here", async () => {
+    const res = await call("a1000000-0000-4000-8000-00000000000c").expect(409);
+    expect(res.body).toEqual(elsewhere);
     expect(stored()).toEqual(untouched);
   });
 
-  it.each([SchoolRole.TEACHER, SchoolRole.ADMIN, SchoolRole.SUPERADMIN])("answers absent, and changes nothing, for a login whose role is %s", async (role) => {
+  it.each([SchoolRole.TEACHER, SchoolRole.ADMIN, SchoolRole.SUPERADMIN])("answers 409 elsewhere, and changes nothing, for a login whose role is %s", async (role) => {
     logins[0].schooluserrole = role;
-    const res = await call().expect(200);
-    expect(res.body).toEqual({ removed: false, absent: true });
+    const res = await call().expect(409);
+    expect(res.body).toEqual(elsewhere);
     expect(stored()).toEqual(untouched);
   });
 
-  it("answers absent when one of the login's learner rows sits in a school of another organisation", async () => {
+  it("answers 409 elsewhere when one of the login's learner rows sits in a school of another organisation", async () => {
     learners[1].schoolid = SCHOOL_B;
+    const res = await call().expect(409);
+    expect(res.body).toEqual(elsewhere);
+    expect(stored()).toEqual(untouched);
+  });
+
+  it("answers 409 elsewhere when only learner rows carry the id", async () => {
+    logins = [];
+    const res = await call().expect(409);
+    expect(res.body).toEqual(elsewhere);
+    expect(learners).toHaveLength(2);
+  });
+
+  it("answers absent when the id is gone by the time the transaction looks again", async () => {
+    begun = () => {
+      logins = [];
+      learners = [];
+    };
     const res = await call().expect(200);
     expect(res.body).toEqual({ removed: false, absent: true });
-    expect(stored()).toEqual(untouched);
+    expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
+  });
+
+  it("answers 409 elsewhere when the login moves out of the organisation before the transaction looks again", async () => {
+    begun = () => (logins[0].schoolid = SCHOOL_B);
+    const res = await call().expect(409);
+    expect(res.body).toEqual(elsewhere);
+    expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
   });
 
   describe("a learner who has been used", () => {
@@ -242,6 +267,20 @@ describe("DELETE /import/students/:schooluserid", () => {
       await call().expect(409);
     });
 
+    it("fails closed, with 500 and nothing deleted, when an activity table that is not a legacy one is missing", async () => {
+      missingTables = ["studentpoints"];
+      await call().expect(500);
+      expect(stored()).toEqual(untouched);
+      expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
+    });
+
+    it.each(ACTIVITY.filter((a) => !LEGACY_TABLES.has(a.table)).map((a) => a.table))("fails closed when `%s` is missing", async (table) => {
+      missingTables = [table];
+      await call().expect(500);
+      expect(stored()).toEqual(untouched);
+      expect(statements.some((s) => s.startsWith("DELETE"))).toBe(false);
+    });
+
     it("counts a row of the login's second learner row as use", async () => {
       activity.add(`studentpoints.studentid.${LEARNER_2}`);
       await call().expect(409);
@@ -260,6 +299,34 @@ describe("DELETE /import/students/:schooluserid", () => {
       await call().expect(200);
       expect(statements.filter((s) => /FOR UPDATE$/.test(s)).length).toBeGreaterThanOrEqual(2);
       expect(statements.filter((s) => /FROM schoolusers/.test(s) && /FOR UPDATE$/.test(s))).toHaveLength(1);
+    });
+  });
+
+  describe("the tables that show use", () => {
+    const registered = (): Set<string> => {
+      const sequelize = new Sequelize("test", "test", "test", { dialect: "mysql", logging: false });
+      initModels(sequelize);
+      return new Set(
+        Object.values(sequelize.models).map((m) => {
+          const name = m.getTableName();
+          return String(typeof name === "string" ? name : (name as { tableName: string }).tableName).toLowerCase();
+        })
+      );
+    };
+
+    it("every table the route checks, except the named legacy ones, is a table the models register", () => {
+      const tables = registered();
+      const unknown = ACTIVITY_SOURCES.filter((x) => !LEGACY_TABLES.has(x.table)).filter((x) => !tables.has(x.table.toLowerCase()));
+      expect(unknown).toEqual([]);
+    });
+
+    it("no legacy table is one the models register, so the legacy list hides nothing", () => {
+      const tables = registered();
+      expect([...LEGACY_TABLES].filter((t) => tables.has(t))).toEqual([]);
+    });
+
+    it("the spec's own list and the route's list name the same tables", () => {
+      expect(ACTIVITY.map((a) => a.table).sort()).toEqual([...new Set(ACTIVITY_SOURCES.map((x) => x.table))].sort());
     });
   });
 
