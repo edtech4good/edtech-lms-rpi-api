@@ -159,6 +159,45 @@ describe("PUT /import/students: the class of a learner", () => {
   });
 });
 
+describe("PUT /import/students: the curriculum of a learner", () => {
+  it("a curriculum this server holds is imported (compared without regard to letter case)", async () => {
+    await expect(send({ studentusers: [learner(1), learner(2, { curriculumid: "CUR-1 " })] })).resolves.toEqual({ error: false, data: true });
+    expect(tnx.commit).toHaveBeenCalledTimes(1);
+    expect(students.bulkCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("a curriculum this server does not hold refuses the whole file, names the field, counts the rows, and writes nothing", async () => {
+    const error = await send({ studentusers: [learner(1), learner(2, { curriculumid: "cur-not-here" }), learner(3, { curriculumid: "other-secret-cur" })] }).catch((e) => e);
+    expect(error.status).toBe(400);
+    expect(error.constructor.name).toBe("RosterRowsError");
+    expect(error.message).toBe("2 rows name a curriculum this server doesn't have. Nothing was written.");
+    expect(error.fields).toEqual([{ field: "curriculumids", message: error.message }]);
+    expect(JSON.stringify(error.response ?? error.message)).not.toMatch(/secret-cur|cur-not-here|learner2/);
+    nothingWritten();
+  });
+
+  it("one row is worded in the singular", async () => {
+    await expect(send({ studentusers: [learner(1, { curriculumid: "cur-not-here" })] })).rejects.toMatchObject(refused("1 row names a curriculum this server doesn't have. Nothing was written."));
+    nothingWritten();
+  });
+
+  it("a learner with no curriculumid is left to the list rule; an empty or non-text one names no curriculum", async () => {
+    await expect(send({ studentusers: [learner(1, { curriculumid: undefined }), learner(2, { curriculumid: null })] })).resolves.toEqual({ error: false, data: true });
+    for (const curriculumid of ["", "  ", 7]) {
+      jest.clearAllMocks();
+      tnx.commit.mockResolvedValue(undefined);
+      tnx.rollback.mockResolvedValue(undefined);
+      await expect(send({ studentusers: [learner(1, { curriculumid })] })).rejects.toMatchObject(refused("1 row names a curriculum this server doesn't have"));
+      nothingWritten();
+    }
+  });
+
+  it("is refused the same way when the roster names its school (format 3), with the rows of a valid learner not written either", async () => {
+    await expect(send({ schoolid: SCHOOL, studentusers: [learner(1), learner(2, { curriculumid: "nope" })] })).rejects.toMatchObject(refused("1 row names a curriculum"));
+    nothingWritten();
+  });
+});
+
 const lessonRow = (n: number, row: Record<string, unknown> = {}) => ({ studentlessonprogressid: `p${n}`, studentid: "s1", curid: "cur-1", gradeid: "gr-1", levelid: "lv-1", lessonid: "ls-1", ...row });
 const levelRow = (n: number, row: Record<string, unknown> = {}) => ({ studentlevelprogressid: `p${n}`, studentid: "s1", curid: "cur-1", gradeid: "gr-1", levelid: "lv-1", ...row });
 const gradeRow = (n: number, row: Record<string, unknown> = {}) => ({ studentgradeprogressid: `p${n}`, studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], gradeid: "gr-1", ...row });
@@ -218,7 +257,8 @@ describe("PUT /import/students: the content and the learner of a progress row", 
   });
 
   it("asks the database nothing for progress tables the roster carries no rows of", async () => {
-    await send({ studentusers: [learner(1)], studentprogresses: progress({}) });
+    // (the learner names its curriculum only by list, so the learner check asks about none either)
+    await send({ studentusers: [learner(1, { curriculumid: undefined })], studentprogresses: progress({}) });
     for (const model of [curriculums, grades, levels, lessons]) expect(model.findAll).not.toHaveBeenCalled();
     await send({ studentusers: [learner(1)] });
     expect(lessons.findAll).not.toHaveBeenCalled();

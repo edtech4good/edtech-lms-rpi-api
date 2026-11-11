@@ -104,7 +104,10 @@ describe("PUT /import/students", () => {
     mockZipContaining({
       studentusers: [learner(1, { schoolid: B, student: { studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], schooluserid: "su1", schoolname: "School A", schoolid: B } })],
     });
-    await expect(new ImportController().studentsimport(file, user)).rejects.toMatchObject({ status: 400 });
+    const error = await new ImportController().studentsimport(file, user).catch((e) => e);
+    expect(error).toMatchObject({ status: 400, message: "The school id and the school name name different schools." });
+    expect(error.constructor.name).toBe("RosterSchoolError");
+    expect(error.fields).toEqual([{ field: "schoolname", message: "The school id and the school name name different schools." }]);
     expect(students.bulkCreate).not.toHaveBeenCalled();
     expect(tnx.rollback).toHaveBeenCalledTimes(1);
     expect(tnx.commit).not.toHaveBeenCalled();
@@ -112,7 +115,10 @@ describe("PUT /import/students", () => {
 
   it("a teacher payload whose id and name name different schools fails with a 400", async () => {
     mockZipContaining([{ schooluserid: "t1", schoolusername: "teacher1", schoolname: "School A", schoolid: B }]);
-    await expect(new ImportController().teachersimport(file, user)).rejects.toMatchObject({ status: 400 });
+    const error = await new ImportController().teachersimport(file, user).catch((e) => e);
+    expect(error).toMatchObject({ status: 400 });
+    expect(error.constructor.name).toBe("RosterSchoolError");
+    expect(error.fields).toEqual([{ field: "schoolname", message: "The school id and the school name name different schools." }]);
     expect(schoolusers.bulkCreate).not.toHaveBeenCalled();
     expect(tnx.rollback).toHaveBeenCalledTimes(1);
   });

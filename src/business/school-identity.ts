@@ -255,9 +255,9 @@ export async function withImportSchoolIds<T extends { schoolid?: string | null; 
       }
       if (storedName !== null) {
         if (isGiven(row.schoolname) && !isSameSchoolName(storedName, row.schoolname)) {
-          throw new ApiError(ErrorCode.INVALID_INPUT, {
+          throw new RosterSchoolError(ErrorCode.INVALID_INPUT, {
             message: "The school id and the school name name different schools.",
-            fields: [{ field: "schoolid", message: "The school id and the school name name different schools." }],
+            fields: [{ field: "schoolname", message: "The school id and the school name name different schools." }],
           });
         }
         schoolid = id;

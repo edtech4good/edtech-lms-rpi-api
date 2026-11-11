@@ -88,6 +88,35 @@ export async function assertRosterClassesKnown(rosterRows: ReadonlyArray<{ stude
   }
 }
 
+/**
+ * The curriculum (`students.curriculumid`) of every learner row must be a curriculum this server holds: the column is a
+ * foreign key, and a roster naming one that is not here would otherwise fail inside the write. A learner with no
+ * `curriculumid` (absent or null) is left to `withCurriculumLists`; an empty or non-text value names no curriculum.
+ * Runs before any row is written; asks the database nothing when no learner names one. Counts the rows, never names
+ * an id.
+ */
+export async function assertRosterCurriculumsKnown(rosterRows: ReadonlyArray<{ student?: unknown } | null | undefined>, transaction: Transaction): Promise<void> {
+  const named = new Set<string>();
+  const given = rosterRows.map((row) => {
+    const curriculumid = (row?.student as Row | null | undefined)?.curriculumid;
+    if (curriculumid === undefined || curriculumid === null) return { given: false, id: null };
+    const id = idOf(curriculumid);
+    if (id !== null) named.add(id);
+    return { given: true, id };
+  });
+  if (!given.some((g) => g.given)) return;
+  const known = named.size === 0 ? new Set<string>() : await held(curriculums as Holder, "curriculumid", named, transaction);
+  const unknown = given.filter((g) => g.given && (g.id === null || !known.has(g.id))).length;
+  if (unknown > 0) {
+    const message = `${unknown} ${unknown === 1 ? "row names" : "rows name"} a curriculum this server doesn't have. Nothing was written.`;
+    throw new RosterRowsError(ErrorCode.INVALID_INPUT, {
+      message,
+      hint: "Bring the curriculum to this server first (publish it and sync the content), then send the roster again.",
+      fields: [{ field: "curriculumids", message }],
+    });
+  }
+}
+
 /** A usable id of a curriculum list, as `content-access.ts` reads one: text, 1 to 64 long. */
 const usableListId = (value: unknown): boolean => typeof value === "string" && value.length > 0 && value.length <= 64;
 

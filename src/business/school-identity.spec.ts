@@ -11,6 +11,7 @@ import {
   normaliseSchoolName,
   resolveSchoolRef,
   resolveSchoolScope,
+  RosterSchoolError,
   schoolOfStudent,
   schoolPredicate,
   schoolScopeFromToken,
@@ -261,8 +262,10 @@ describe("withImportSchoolIds: the id written with a roster row", () => {
   it("a payload whose id and name name different schools fails the write with a 400", async () => {
     const error = await withImportSchoolIds([{ schoolname: "School A", schoolid: B }]).catch((e) => e);
     expect(error).toBeInstanceOf(ApiError);
+    expect(error).toBeInstanceOf(RosterSchoolError);
     expect(error.getStatus()).toBe(400);
     expect(error.code).toBe(ErrorCode.INVALID_INPUT);
+    expect(error.fields).toEqual([{ field: "schoolname", message: "The school id and the school name name different schools." }]);
   });
 
   it("a name changed in the payload moves the id with it (the id is not left stale)", async () => {

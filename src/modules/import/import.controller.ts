@@ -33,7 +33,7 @@ import { exportpayload, StudentProgressBusiness } from "src/business/studentprog
 import { OrganisationContent } from "./organisation-content.validator";
 import { OrganisationContentImport, OrganisationContentResult } from "src/business/organisation-content.business";
 import { assertRosterBelongsToSchool, RosterSchoolError, withRequiredSchoolIds } from "src/business/school-identity";
-import { assertRosterClassesKnown, assertRosterProgressKnown, RosterRowsError, withCurriculumLists } from "src/business/roster-refs";
+import { assertRosterClassesKnown, assertRosterCurriculumsKnown, assertRosterProgressKnown, RosterRowsError, withCurriculumLists } from "src/business/roster-refs";
 import { Logger } from "src/config";
 import { UploadLimits } from "src/constants/upload-limits";
 import { User } from "src/decorators/user.decorator";
@@ -245,6 +245,7 @@ export class ImportController {
           // The class of every learner and the content and learner of every progress row must be here: each is a
           // foreign key in the database, and a roster that names one that is not is refused, by row, before a write.
           await assertRosterClassesKnown(newstudents, tnx);
+          await assertRosterCurriculumsKnown(newstudents, tnx);
           // The content guard reads only `curriculumids`: a learner with `curriculumid` and no list is given
           // `[curriculumid]`, one with neither is refused (by row, before a write), and the report counts the first.
           const withLists = withCurriculumLists(newstudents);
