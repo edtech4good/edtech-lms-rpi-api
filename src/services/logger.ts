@@ -280,6 +280,36 @@ const consolelogger = (
 };
 
 
+/** The one line a warning or an error takes on stdout: what `docker logs` shows. A stack is kept for errors (5xx) only. */
+export const stdoutLine = (info: any): string => {
+  const meta = info.metadata ?? {};
+  const exception = meta.exception ?? {};
+  const parts: string[] = [`${info.timestamp ?? new Date().toISOString()}`, `${info.level}`, JSON.stringify(`${info.message}`)];
+  const add = (key: string, value: unknown) => {
+    if (value !== undefined && value !== null && value !== '') parts.push(`${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`);
+  };
+  add('class', exception.class);
+  add('code', meta.code);
+  add('status', meta.status);
+  add('method', meta.method);
+  add('route', meta.route);
+  add('reference', meta.reference);
+  add('errormessage', exception.message);
+  add('errno', exception.errno);
+  // A crash logged as `Logger.error(error)` carries its stack on the entry itself, not under `exception`.
+  if (info.level === 'error') add('stack', exception.stack ?? meta.stack ?? info.stack);
+  return parts.join(' ');
+};
+
+/** Warnings and errors on stdout when debug is off (debug adds its own, verbose console output). */
+const stdoutTransport = () =>
+  new Console({
+    level: 'warn',
+    forceConsole: true, // console.log, so it is the same line on stdout however the process is hosted
+    silent: process.env.NODE_ENV === 'test',
+    format: format.combine(format.timestamp(), format.printf(stdoutLine)),
+  });
+
 const error = (errorMessage: string): string => {
   throw Error(errorMessage);
 };
@@ -328,6 +358,9 @@ class LoggerInstance {
       default:
         loggerconfig = consolelogger();
         break;
+    }
+    if (!localconfig.DEBUG && LOGGERTYPE !== LoggerType.CONSOLE) {
+      loggerconfig.transports = [...loggerconfig.transports, stdoutTransport()];
     }
     if (localconfig.DEBUG) {
       loggerconfig.transports = [

@@ -1,3 +1,4 @@
+import { curriculums } from "src/models/data-models/init-models";
 import { parseISO } from "date-fns";
 import {
   schoolusers,
@@ -71,6 +72,7 @@ const studentuser = (student: Record<string, unknown>) => ({
 
 describe("students import writes the nested student's dates to the right columns", () => {
   beforeEach(() => {
+    jest.spyOn(curriculums, "findAll").mockResolvedValue([{ curriculumid: "cur-1" }] as never);
     jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL, schoolname: "School" } as never);
     jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue({
       commit: jest.fn().mockResolvedValue(undefined),

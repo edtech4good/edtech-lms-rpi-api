@@ -1,3 +1,4 @@
+import { curriculums } from "src/models/data-models/init-models";
 import { BadRequestException } from "@nestjs/common";
 import { Op } from "sequelize";
 import { StudentProgressBusiness } from "src/business/studentprogress.business";
@@ -126,6 +127,7 @@ describe("import transactions wait for their writes and commit", () => {
       rolledBack: false,
     };
     jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
+    jest.spyOn(curriculums, "findAll").mockResolvedValue([{ curriculumid: "cur-1" }] as never);
     jest.spyOn(schools, "findOne").mockResolvedValue({ schoolid: SCHOOL, schoolname: "School" } as never);
     // importschoolusers returns schoolusers.bulkCreate's rows; the controller
     // matches them back to the payload by schoolusername.
