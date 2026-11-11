@@ -284,7 +284,7 @@ const consolelogger = (
 export const stdoutLine = (info: any): string => {
   const meta = info.metadata ?? {};
   const exception = meta.exception ?? {};
-  const parts: string[] = [`${info.timestamp ?? new Date().toISOString()}`, `${info.level}`, `${info.message}`];
+  const parts: string[] = [`${info.timestamp ?? new Date().toISOString()}`, `${info.level}`, JSON.stringify(`${info.message}`)];
   const add = (key: string, value: unknown) => {
     if (value !== undefined && value !== null && value !== '') parts.push(`${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`);
   };
@@ -296,7 +296,8 @@ export const stdoutLine = (info: any): string => {
   add('reference', meta.reference);
   add('errormessage', exception.message);
   add('errno', exception.errno);
-  if (info.level === 'error') add('stack', exception.stack);
+  // A crash logged as `Logger.error(error)` carries its stack on the entry itself, not under `exception`.
+  if (info.level === 'error') add('stack', exception.stack ?? meta.stack ?? info.stack);
   return parts.join(' ');
 };
 

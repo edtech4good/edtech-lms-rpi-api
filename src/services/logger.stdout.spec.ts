@@ -71,6 +71,24 @@ describe("stdout logging with debug off", () => {
     expect(lines.every((l) => !l.includes("\n"))).toBe(true);
   });
 
+  it("an error logged as an Error object carries its stack; a warning does not; a message with a newline stays one line", async () => {
+    const logger = Logger.getlogger(config(false));
+    const crash = new Error("crash\nsecond line");
+    crash.stack = "Error: crash\n    at crashSite (file.js:1:1)";
+    logger.error(crash);
+    const warning = new Error("careful");
+    warning.stack = "Error: careful\n    at warnSite (file.js:2:2)";
+    logger.warn(warning);
+    await settled();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/ error /);
+    expect(lines[0]).toContain("crashSite");
+    expect(lines[0]).toContain("crash\\nsecond line");
+    expect(lines[1]).toMatch(/ warn /);
+    expect(lines[1]).not.toContain("warnSite");
+    expect(lines.every((l) => !l.includes("\n"))).toBe(true);
+  });
+
   it("with debug on there is no extra warn console transport (debug has its own verbose one)", () => {
     const logger = Logger.getlogger(config(true));
     const levels = logger.transports.filter((t) => t.constructor.name === "Console").map((t) => t.level);
