@@ -462,6 +462,7 @@ const EXCLUDED: Record<string, string> = {
   "POST /access": "records the caller's own usage",
   "POST /student/logintime": "the caller's own login time",
   "POST /student/profile": "the caller's own profile",
+  "GET /student/awards": "the caller's own awards: a record of a level completed, kept when the level is later switched off or deleted (awards outlive their level); it lists no module content and a switched-off level cannot be completed",
   "POST /curriculum/baseline/:curriculumid/:schoolname/:studentid": "a baseline hangs from the curriculum, not from a level; a module is a level",
   "GET /question/baseline/:curriculumbaselineid": "a baseline hangs from the curriculum, not from a level; a module is a level",
   "POST /result/baseline/question/:curriculumbaselineid": "a baseline hangs from the curriculum, not from a level; a module is a level",

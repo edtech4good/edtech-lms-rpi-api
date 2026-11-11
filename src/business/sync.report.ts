@@ -4,6 +4,7 @@ import { Op } from "sequelize";
 import {
   rpiuseraccess,
   studentactives,
+  studentawards,
   studentgradesprogress,
   studentlearningprogress,
   studentlessonsprogress,
@@ -108,6 +109,16 @@ export class SyncReport {
     ).map((x) => ({
       ...x.get({ plain: true }),
     }));
+    const stawards = (
+      await studentawards.findAll({
+        where: {
+          earnedat: { [Op.gt]: limitdate },
+          ...byStudent(keys),
+        },
+      })
+    ).map((x) => ({
+      ...x.get({ plain: true }),
+    }));
     const stlsp = (
       await studentlessonsprogress.findAll({
         where: {
@@ -148,6 +159,7 @@ export class SyncReport {
         studentlearningprogress: stlp,
         studentgradesprogress: stgp,
         studentlevelsprogress: stlvp,
+        studentawards: stawards,
         studentlessonsprogress: stlsp,
         studentpoints: stpoints,
         studentappusages: stpusages,

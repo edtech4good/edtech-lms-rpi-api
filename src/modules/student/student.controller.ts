@@ -16,6 +16,7 @@ import { ContentTranslations, withContentLanguage } from "src/business/content-t
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { ReportScope } from "src/business/report-scope";
 import { schoolScopeFromToken } from "src/business/school-identity";
+import { awardsOfStudent } from "src/business/level-award";
 import { StudentBusiness } from "src/business/student.business";
 import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
 import { User } from "src/decorators/user.decorator";
@@ -162,6 +163,25 @@ export class StudentController {
       data: await new StudentBusiness().getprogresssummary(user, translations),
       error: false,
     });
+  }
+
+  @Get("awards")
+  @OrgPolicy("learner", { note: "The caller's own awards only; read-only.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @ApiResponse({
+    status: 200,
+    description: "Fetched the learner's level awards successfully",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @HttpCode(HttpStatus.OK)
+  async getStudentAwards(@User() user: Token): Promise<any> {
+    return {
+      data: user.studentid ? await awardsOfStudent(user.studentid) : [],
+      error: false,
+    };
   }
 
   @Post("logintime")

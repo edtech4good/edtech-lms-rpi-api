@@ -30,6 +30,7 @@ import { dbinstance } from "src/services/dbservice";
 import { Logger } from "src/config";
 import { lessonplans } from "src/models/data-models/lessonplan";
 import type { ContentTranslations } from "./content-translations";
+import { awardLevelIfCompleted } from "./level-award";
 import { lessonPassMark, percentCompleted, progressPercent } from "./progress-rules";
 
 interface PracticeCorrectAnswer {
@@ -560,12 +561,15 @@ export class LessonBusiness {
             scores: 0,
             lastupdated: currentdate
           }, {transaction});
+          await awardLevelIfCompleted({ user, levelid: lesson.level.levelid, gradeid: grade.gradeid, curid: grade.curriculumid, wasCompleted: false, isCompleted: Boolean(levelprogress.completed), currentdate }, transaction);
         } else {
+          const levelwascompleted = Boolean(levelprogress.completed);
           levelprogress.points += (points < 0 && levelprogress.points + points < 0) ? 0 : points;
           levelprogress.progress = progressPercent(levelprogress.points, lesson.level.points);
           levelprogress.completed = percentCompleted(levelprogress.progress);
           levelprogress.lastupdated = currentdate;
           await levelprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
+          await awardLevelIfCompleted({ user, levelid: lesson.level.levelid, gradeid: grade.gradeid, curid: grade.curriculumid, wasCompleted: levelwascompleted, isCompleted: Boolean(levelprogress.completed), currentdate }, transaction);
         }
         const gradeprogress = await studentgradesprogress.findOne({
           where: { gradeid: grade.gradeid, studentid: user.studentid },
@@ -606,7 +610,7 @@ export class LessonBusiness {
     });
     if(level && grade && user.studentid) {
       if (!levelprogress) {
-        await studentlevelsprogress.create({
+        const created = await studentlevelsprogress.create({
           studentlevelprogressid: randomUUID(),
           studentid: user.studentid,
           levelid: level.levelid,
@@ -617,12 +621,15 @@ export class LessonBusiness {
           completed: points > 0 && Number((points*100/level.points).toFixed(2)) >= COMPLETED_PERCENTAGE ? true : false,
           lastupdated: currentdate
         }, {transaction});
+        await awardLevelIfCompleted({ user, levelid: level.levelid, gradeid: grade.gradeid, curid: grade.curriculumid, wasCompleted: false, isCompleted: Boolean(created?.completed), currentdate }, transaction);
       } else {
+        const levelwascompleted = Boolean(levelprogress.completed);
         levelprogress.points += (points < 0 && levelprogress.points + points < 0) ? 0 : points;
         levelprogress.progress = Number((levelprogress.points*100/level.points).toFixed(2)) ?? 0;
         levelprogress.completed = levelprogress.progress >= COMPLETED_PERCENTAGE ? true : false;
         levelprogress.lastupdated = currentdate;
         await levelprogress.save({ fields: ["points", "progress", "completed", "lastupdated"], transaction});
+        await awardLevelIfCompleted({ user, levelid: level.levelid, gradeid: grade.gradeid, curid: grade.curriculumid, wasCompleted: levelwascompleted, isCompleted: Boolean(levelprogress.completed), currentdate }, transaction);
       }
       const gradeprogress = await studentgradesprogress.findOne({
         where: { gradeid: grade.gradeid, studentid: user.studentid },

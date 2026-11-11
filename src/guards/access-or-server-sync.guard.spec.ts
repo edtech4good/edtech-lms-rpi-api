@@ -85,6 +85,9 @@ const mockGetStudentLevelProgress = jest
 const mockGetStudentLessonProgress = jest
   .fn()
   .mockResolvedValue({ rows: [], count: 0, student: null });
+const mockGetStudentAwards = jest
+  .fn()
+  .mockResolvedValue({ rows: [], count: 0, student: null });
 const mockGetStudentsOfflineOnline = jest.fn().mockResolvedValue([]);
 
 jest.mock("src/business/report.business", () => ({
@@ -97,6 +100,7 @@ jest.mock("src/business/report.business", () => ({
     getStudentStatus: mockGetStudentStatus,
     getStudentGradeProgress: mockGetStudentGradeProgress,
     getStudentLevelProgress: mockGetStudentLevelProgress,
+    getStudentAwards: mockGetStudentAwards,
     getStudentLessonProgress: mockGetStudentLessonProgress,
     getStudentsOfflineOnline: mockGetStudentsOfflineOnline,
   })),
@@ -229,6 +233,7 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
       ["post", "/report/studentstatus", mockGetStudentStatus],
       ["post", "/report/student-grade-progress", mockGetStudentGradeProgress],
       ["post", "/report/student-level-progress", mockGetStudentLevelProgress],
+      ["post", "/report/student-awards", mockGetStudentAwards],
       ["post", "/report/student-lesson-progress", mockGetStudentLessonProgress],
       ["post", "/report/studentprogress/download", mockGetStudentsScoresData],
       ["post", "/report/studentlastcompletedquiz/download", mockGetStudentLastCompletedQuiz],

@@ -1,6 +1,7 @@
 import {
   rpiuseraccess,
   studentactives,
+  studentawards,
   studentgradesprogress,
   studentlearningprogress,
   studentlessonsprogress,
@@ -66,6 +67,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
   let slpSpy: jest.SpyInstance;
   let sgpSpy: jest.SpyInstance;
   let slvpSpy: jest.SpyInstance;
+  let sawSpy: jest.SpyInstance;
   let slspSpy: jest.SpyInstance;
   let spointsSpy: jest.SpyInstance;
   let spusagesSpy: jest.SpyInstance;
@@ -82,6 +84,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     slpSpy = jest.spyOn(studentlearningprogress, "findAll").mockResolvedValue([] as never);
     sgpSpy = jest.spyOn(studentgradesprogress, "findAll").mockResolvedValue([] as never);
     slvpSpy = jest.spyOn(studentlevelsprogress, "findAll").mockResolvedValue([] as never);
+    sawSpy = jest.spyOn(studentawards, "findAll").mockResolvedValue([] as never);
     slspSpy = jest.spyOn(studentlessonsprogress, "findAll").mockResolvedValue([] as never);
     spointsSpy = jest.spyOn(studentpoints, "findAll").mockResolvedValue([] as never);
     spusagesSpy = jest.spyOn(studentappusages, "findAll").mockResolvedValue([] as never);
@@ -97,6 +100,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     slpSpy.mockRestore();
     sgpSpy.mockRestore();
     slvpSpy.mockRestore();
+    sawSpy.mockRestore();
     slspSpy.mockRestore();
     spointsSpy.mockRestore();
     spusagesSpy.mockRestore();

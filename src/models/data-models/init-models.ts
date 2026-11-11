@@ -96,6 +96,7 @@ import { tokens } from "./tokens";
 import { studentlearningprogress } from "src/models/data-models/studentlearningprogress";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
+import { studentawards } from "src/models/data-models/studentawards";
 import { studentgradesprogress } from "src/models/data-models/studentgradesprogress";
 import { studentactives } from "src/models/data-models/studentactives";
 import { studentpoints } from "src/models/data-models/studentpoints";
@@ -137,6 +138,7 @@ export {
   studentlearningprogress,
   studentlessonsprogress,
   studentlevelsprogress,
+  studentawards,
   studentgradesprogress,
   studentactives,
   studentpoints
@@ -208,6 +210,7 @@ export function initModels(sequelize: Sequelize) {
   studentlearningprogress.initModel(sequelize);
   studentlessonsprogress.initModel(sequelize);
   studentlevelsprogress.initModel(sequelize);
+  studentawards.initModel(sequelize);
   studentgradesprogress.initModel(sequelize);
   studentactives.initModel(sequelize);
   studentpoints.initModel(sequelize);
@@ -413,6 +416,7 @@ export function initModels(sequelize: Sequelize) {
     studentlearningprogress,
     studentgradesprogress,
     studentlevelsprogress,
+    studentawards,
     studentlessonsprogress,
     studentactives,
     studentpoints
