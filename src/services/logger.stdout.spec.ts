@@ -51,7 +51,7 @@ describe("stdout logging with debug off", () => {
     logger.info("an ordinary request");
     await settled();
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/ warn Exception /);
+    expect(lines[0]).toMatch(/ warn "Exception" /);
     expect(lines[0]).toContain('class="RosterRowsError"');
     expect(lines[0]).toContain('code="INVALID_INPUT"');
     expect(lines[0]).toContain("status=400");
