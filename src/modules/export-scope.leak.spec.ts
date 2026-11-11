@@ -236,7 +236,7 @@ const seed = () => {
   put(studentlearningprogress, rowsForEachLearner((studentid, _u, n) => ({ studentlearningprogressid: uid("f4", n), studentid, lastupdated: RECENT() })));
   put(studentgradesprogress, rowsForEachLearner((studentid, _u, n) => ({ studentgradeprogressid: uid("f5", n), studentid, lastupdated: RECENT() })));
   put(studentlevelsprogress, rowsForEachLearner((studentid, _u, n) => ({ studentlevelprogressid: uid("f6", n), studentid, lastupdated: RECENT() })));
-  put(studentawards, rowsForEachLearner((studentid, _u, n) => ({ studentawardid: uid("fb", n), studentid, earnedat: RECENT() })));
+  put(studentawards, rowsForEachLearner((studentid, _u, n) => ({ studentawardid: uid("fb", n), studentid, earnedat: RECENT(), lastupdated: RECENT() })));
   put(studentlessonsprogress, rowsForEachLearner((studentid, _u, n) => ({ studentlessonprogressid: uid("f7", n), studentid, lastupdated: RECENT() })));
   put(studentpoints, rowsForEachLearner((studentid, _u, n) => ({ studentpointid: uid("f8", n), studentid, created_at: RECENT() })));
   put(studentappusages, [

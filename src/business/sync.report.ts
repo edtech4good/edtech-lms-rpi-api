@@ -112,7 +112,7 @@ export class SyncReport {
     const stawards = (
       await studentawards.findAll({
         where: {
-          earnedat: { [Op.gt]: limitdate },
+          lastupdated: { [Op.gt]: limitdate },
           ...byStudent(keys),
         },
       })

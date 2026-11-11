@@ -51,6 +51,7 @@ const ACTIVITY: Array<{ table: string; column: string; id: string }> = [
   { table: "studentgradesprogress", column: "studentid", id: LEARNER_1 },
   { table: "studentlevelsprogress", column: "studentid", id: LEARNER_1 },
   { table: "studentlessonsprogress", column: "studentid", id: LEARNER_1 },
+  { table: "studentawards", column: "studentid", id: LEARNER_1 },
   { table: "studentpoints", column: "studentid", id: LEARNER_1 },
   { table: "studentactives", column: "studentid", id: LEARNER_1 },
   { table: "studenttrash", column: "studentid", id: LEARNER_1 },

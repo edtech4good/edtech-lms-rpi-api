@@ -62,6 +62,7 @@ describe("level awards", () => {
     jest.spyOn(levels, "findAll").mockImplementation((async (options: { where: Row }) => contentlevels.filter((l) => matches(l, options.where))) as never);
     jest.spyOn(grades, "findAll").mockResolvedValue([{ gradeid: "g1", gradename: "Grade one" }] as never);
     jest.spyOn(curriculums, "findAll").mockResolvedValue([{ curriculumid: "c1", curriculumname: "Curriculum one" }] as never);
+    jest.spyOn(studentawards, "findOne").mockImplementation((async (options: { where: Row }) => awards.find((a) => matches(a, options.where)) ?? null) as never);
     jest.spyOn(studentawards, "findAll").mockImplementation((async (options: { where: Row }) => awards.filter((a) => matches(a, options.where))) as never);
     jest.spyOn(studentawards, "bulkCreate").mockImplementation((async (rows: Row[], options: { ignoreDuplicates?: boolean }) => {
       for (const row of rows) {
@@ -166,14 +167,6 @@ describe("level awards", () => {
       await quiz(null, day(6));
       expect(awards).toEqual([]);
     });
-    it("is checked when the award would be earned: a tier that was hidden then, and later is not, is not awarded by a result that completes nothing new", async () => {
-      branding = { hideSingleItemTiers: true };
-      contentlevels = [contentlevels[0]];
-      await reward(85, null, day(3));
-      contentlevels = [{ levelid: "lv1", gradeid: "g1", levelstatus: true, isdeleted: false }, { levelid: "lv2", gradeid: "g1", levelstatus: true, isdeleted: false }];
-      await reward(5, null, day(4));
-      expect(awards).toEqual([]);
-    });
   });
 
   it("7. an offline-queued result submitted later with an older date gives the older date", async () => {
@@ -194,12 +187,60 @@ describe("level awards", () => {
     expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(3).getTime(), false]]);
   });
 
-  it("an award needs a learner, a completion and a write that is the one that completes it", async () => {
+  it("an award needs a learner and a level that is complete after the write", async () => {
     const input = { user, levelid: "lv1", gradeid: "g1", curid: "c1", wasCompleted: false, isCompleted: true, currentdate: day(3) };
     await awardLevelIfCompleted({ ...input, isCompleted: false }, tx);
-    await awardLevelIfCompleted({ ...input, wasCompleted: true }, tx);
+    await awardLevelIfCompleted({ ...input, wasCompleted: true, isCompleted: false }, tx);
     await awardLevelIfCompleted({ ...input, user: {} as never }, tx);
     expect(awards).toEqual([]);
+  });
+
+  it("a. lessons take the level to 50%, then the level quiz takes it past 80% (update path): one award dated by the quiz, not approximate", async () => {
+    await reward(50, null, day(1));
+    expect(levelrow?.completed).toBe(false);
+    await quiz(null, day(6));
+    expect(levelrow?.completed).toBe(true);
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(6).getTime(), false]]);
+  });
+
+  it("b. a progress row exists and a lesson result crosses 80% (update path of updateUserReward): one award dated by it", async () => {
+    await reward(70, null, day(1));
+    await reward(15, null, day(2));
+    expect(levelrow?.completed).toBe(true);
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(2).getTime(), false]]);
+  });
+
+  it("c. a level already complete with no award gets one on the next result: dated by that result, approximate", async () => {
+    levelrow = { studentid: "s1", levelid: "lv1", points: 90, progress: 90, completed: true, save: async () => undefined };
+    await reward(1, null, day(7));
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(7).getTime(), true]]);
+    awards = [];
+    levelrow = { studentid: "s1", levelid: "lv1", points: 90, progress: 90, completed: true, save: async () => undefined };
+    await quiz(null, day(8));
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(8).getTime(), true]]);
+  });
+
+  it("d. a level complete with an award: further results add no row, keep the date, and run neither the school nor the level-count lookup", async () => {
+    await reward(85, null, day(3));
+    const schoolLookups = jest.spyOn(schools, "findOne");
+    const levelCounts = jest.spyOn(levels, "count");
+    schoolLookups.mockClear();
+    levelCounts.mockClear();
+    await reward(5, null, day(4));
+    await quiz(null, day(5));
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(3).getTime(), false]]);
+    expect(schoolLookups).not.toHaveBeenCalled();
+    expect(levelCounts).not.toHaveBeenCalled();
+  });
+
+  it("e. hidden at completion gives none; with the switch turned off, the next result gives an approximate award", async () => {
+    branding = { hideSingleItemTiers: true };
+    contentlevels = [contentlevels[0]];
+    await reward(85, null, day(3));
+    expect(awards).toEqual([]);
+    branding = { hideSingleItemTiers: false };
+    await reward(5, null, day(4));
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(4).getTime(), true]]);
   });
 
   describe("9. awardsOfStudent: one learner's awards, newest first, with names from the content tables", () => {

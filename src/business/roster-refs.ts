@@ -156,7 +156,7 @@ export function withCurriculumLists<T extends { student?: unknown } | null | und
 }
 
 interface ProgressTable {
-  table: "studentgradesprogress" | "studentlevelsprogress" | "studentlessonsprogress";
+  table: "studentgradesprogress" | "studentlevelsprogress" | "studentawards" | "studentlessonsprogress";
   /** column -> what a person calls what it points at */
   refs: Array<{ column: string; word: string; model: Holder; key: string }>;
 }
@@ -170,6 +170,7 @@ const PROGRESS_TABLES: ProgressTable[] = [
   { table: "studentgradesprogress", refs: [CURRICULUM("curriculumid"), GRADE] },
   { table: "studentlevelsprogress", refs: [CURRICULUM("curid"), GRADE, LEVEL] },
   { table: "studentlessonsprogress", refs: [CURRICULUM("curid"), GRADE, LEVEL, LESSON] },
+  { table: "studentawards", refs: [CURRICULUM("curid"), GRADE, LEVEL] },
 ];
 
 /**

@@ -1,4 +1,7 @@
 import { Transaction } from "sequelize";
+import { randomUUID } from "node:crypto";
+import { studentawards, studentawardsAttributes } from "src/models/data-models/studentawards";
+import { awardCompletedLevels } from "./level-award";
 import { schoolusersAttributes } from "src/models/data-models/schoolusers";
 import {
   studentgradesprogress,
@@ -31,6 +34,8 @@ export interface studentpointsprogress {
   studentgradesprogress: studentgradesprogressAttributes[];
   studentlevelsprogress: studentlevelsprogressAttributes[];
   studentlessonsprogress: studentlessonsprogressAttributes[];
+  /** Optional: central sends it once it exports awards; a payload without it changes nothing. */
+  studentawards?: studentawardsAttributes[];
 }
 
 export class StudentProgressBusiness {
@@ -107,7 +112,8 @@ export class StudentProgressBusiness {
 
   importStudentLevelsProgress = async (
     stlp: studentlevelsprogressAttributes[],
-    transaction: Transaction
+    transaction: Transaction,
+    awards?: studentawardsAttributes[]
   ) => {
     await studentlevelsprogress.bulkCreate(stlp, {
       transaction,
@@ -122,6 +128,30 @@ export class StudentProgressBusiness {
         "progress",
       ],
     });
+    // The awards the payload carries come first: an award this server already has for a learner and level wins over
+    // an imported one (the unique key ignores it), and an imported one wins over the approximate one made below.
+    if (Array.isArray(awards) && awards.length > 0) {
+      await this.importStudentAwards(awards, transaction);
+    }
+    // Levels that arrive complete and have no award get an approximate one (the same rule as the backfill), for the
+    // imported learners only.
+    const studentids = [...new Set(stlp.filter((r) => r.completed).map((r) => r.studentid))];
+    await awardCompletedLevels(studentids, transaction);
+  };
+
+  importStudentAwards = async (awards: studentawardsAttributes[], transaction: Transaction) => {
+    await studentawards.bulkCreate(
+      awards.map((a) => ({
+        studentawardid: a.studentawardid ?? randomUUID(),
+        studentid: a.studentid,
+        levelid: a.levelid,
+        gradeid: a.gradeid,
+        curid: a.curid,
+        earnedat: a.earnedat,
+        earnedat_approximate: Boolean(a.earnedat_approximate),
+      })),
+      { transaction, ignoreDuplicates: true }
+    );
   };
 
   importStudentLessonsProgress = async (

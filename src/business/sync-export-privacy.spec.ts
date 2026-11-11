@@ -138,4 +138,21 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     const options = spqSpy.mock.calls[0][0];
     expect(options.attributes).toEqual({ exclude: ["answer"] });
   });
+
+  it("the awards in the export are keyed on when the row was written (lastupdated), so a backfilled award with an old earnedat is exported", async () => {
+    const { Op } = await import("sequelize");
+    const old = new Date("2025-01-01T00:00:00Z");
+    const recent = new Date();
+    const rows = [
+      { studentawardid: "backfilled", earnedat: old, lastupdated: recent },
+      { studentawardid: "written-long-ago", earnedat: recent, lastupdated: old },
+    ];
+    sawSpy.mockImplementation(((options: any) => {
+      const after: Date = options.where.lastupdated?.[Op.gt];
+      if (!after) throw new Error("the awards export is not keyed on lastupdated");
+      return Promise.resolve(rows.filter((r) => r.lastupdated > after).map((r) => ({ get: () => r })));
+    }) as never);
+    const data = await new SyncReport().getstudentdata(null);
+    expect(data.progress.studentawards.map((a: any) => a.studentawardid)).toEqual(["backfilled"]);
+  });
 });
