@@ -13,7 +13,7 @@ import { withRequiredSchoolIds } from "./school-identity";
 
 /**
  * Ends the sessions of every imported account that the import has just disabled, deleted or given a
- * new password. A token issued before the import is checked only against the `tokens` table, so
+ * new password or a different school. A token issued before the import is checked only against the `tokens` table, so
  * removing the account's rows there is what makes its next request answer 401.
  *
  * `before` is what the accounts' rows held before the upsert; the rows are read again here, after it,
@@ -29,7 +29,7 @@ import { withRequiredSchoolIds } from "./school-identity";
  */
 const endSessionsOfChangedAccounts = async (
   rows: Array<{ schooluserid?: string; schoolusername?: string }>,
-  before: Map<string, { hash: string | null }>,
+  before: Map<string, { hash: string | null; schoolid: string | null }>,
   tnx: Transaction,
   ended?: Set<string>
 ): Promise<void> => {
@@ -40,7 +40,11 @@ const endSessionsOfChangedAccounts = async (
         return true;
       }
       const prior = before.get(u.schooluserid);
-      return prior !== undefined && prior.hash !== (u.schooluserpasswordhash ?? null);
+      if (prior === undefined) {
+        return false;
+      }
+      // A different school ends the session too, so the next sign-in carries the new school and class.
+      return prior.hash !== (u.schooluserpasswordhash ?? null) || prior.schoolid !== (u.schoolid ?? null);
     })
     .forEach((u) => ended?.add(u.schooluserid));
 };
@@ -55,7 +59,7 @@ const findImportedAccounts = async (
     return [];
   }
   return schoolusers.findAll({
-    attributes: ["schooluserid", "schooluserpasswordhash", "schooluserstatus", "isdisabled", "isdeleted"],
+    attributes: ["schooluserid", "schooluserpasswordhash", "schoolid", "schooluserstatus", "isdisabled", "isdeleted"],
     where: { [Op.or]: [{ schooluserid: { [Op.in]: ids } }, { schoolusername: { [Op.in]: names } }] },
     transaction: tnx,
   });
@@ -68,7 +72,7 @@ const passwordHashesBefore = async (
   new Map(
     (await findImportedAccounts(rows, tnx)).map((u) => [
       u.schooluserid,
-      { hash: u.schooluserpasswordhash ?? null },
+      { hash: u.schooluserpasswordhash ?? null, schoolid: u.schoolid ?? null },
     ])
   );
 

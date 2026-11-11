@@ -129,8 +129,8 @@ function assertMayImportOrganisation(user: Token | undefined, organisationid: un
 }
 
 /**
- * Ends the sessions of the accounts a committed roster import disabled, deleted or gave a new
- * password. The import has already committed and is answered as it always was: a failure here is
+ * Ends the sessions of the accounts a committed roster import disabled, deleted, gave a new
+ * password or moved to another school. The import has already committed and is answered as it always was: a failure here is
  * logged (class and code only) and does not turn a committed import into an error, because a retry
  * of the same roster would find the accounts already changed and end nothing.
  */
@@ -228,7 +228,7 @@ export class ImportController {
         const st = new StudentBusiness();
         const stp = new StudentProgressBusiness();
         const tnx = await dbinstance.getdbinstance().transaction();
-        // The accounts this import disables, deletes or gives a new password: their sessions end after the commit.
+        // The accounts this import disables, deletes, gives a new password or moves to another school: their sessions end after the commit.
         const sessionsToEnd = new Set<string>();
         try {
           // A roster that names its school (format 3) may only carry that school's rows.
