@@ -413,6 +413,7 @@ const LISTS: Record<string, { url: string; shows?: string[] }> = {
   "GET /Lesson/all": { url: "/Lesson/all", shows: [A.lesson] },
   "GET /student/progress": { url: "/student/progress" },
   "GET /student/progress/summary": { url: "/student/progress/summary", shows: [A.level] },
+  "GET /student/awards/overview": { url: "/student/awards/overview", shows: [A.level] },
 };
 /** Routes that open a piece of content by its id: level A's must answer, level B's must answer as an id that names nothing does. */
 const OPENS: Record<string, { url: (id: string) => string; of: keyof Ids; shows?: string[] }> = {

@@ -1043,6 +1043,26 @@ describe("list routes: the scope is the token's, and what the query names can on
     expect(failures).toEqual([]);
   });
 
+  it("GET /student/awards/overview answers the token's own learner's levels with their awards, and the awards of levels no longer shown apart; never another learner's", async () => {
+    const { failures, check } = scenario();
+    const ask = async (auth: Auth) => {
+      const r = await send("get", "/student/awards/overview", auth);
+      const curricula = (r.body?.data?.curricula ?? []) as Row[];
+      const levelAwards = curricula.flatMap((c) => c.grades.flatMap((g: Row) => g.levels.map((l: Row) => l.award?.studentawardid))).filter(Boolean);
+      return { status: r.status, levelAwards, elsewhere: ((r.body?.data?.earnedelsewhere ?? []) as Row[]).map((a) => a.studentawardid) };
+    };
+    const x = await ask(X_LEARNER);
+    check(`X learner -> ${x.status}, on levels ${JSON.stringify(x.levelAwards)}, elsewhere ${JSON.stringify(x.elsewhere)} (wanted its own two, one on a level, one apart)`,
+      x.status === 200 && JSON.stringify(x.levelAwards) === JSON.stringify([uid("f4", 1)]) && JSON.stringify(x.elsewhere) === JSON.stringify([uid("f4", 2)]));
+    const y = await ask(Y_LEARNER);
+    check(`Y learner -> ${y.status}, on levels ${JSON.stringify(y.levelAwards)}, elsewhere ${JSON.stringify(y.elsewhere)} (wanted exactly its own)`,
+      y.status === 200 && JSON.stringify(y.levelAwards) === JSON.stringify([uid("f4", 3)]) && y.elsewhere.length === 0);
+    const t = await ask(X_TEACHER);
+    check(`X teacher (no learner record of its own) -> ${t.status}, ${JSON.stringify(t.levelAwards)}, ${JSON.stringify(t.elsewhere)} (wanted no awards)`, t.status === 200 && t.levelAwards.length === 0 && t.elsewhere.length === 0);
+    await refusedEverywhere(check, "get", "/student/awards/overview");
+    expect(failures).toEqual([]);
+  });
+
   it("GET /student/progress answers for the token's own learner record, and a token with no proof of its organisation gets nothing", async () => {
     const { failures, check } = scenario();
     for (const [name, auth] of [["X learner", X_LEARNER], ["Y learner", Y_LEARNER], ["X teacher", X_TEACHER]] as Array<[string, Auth]>) {

@@ -26,16 +26,16 @@ pinned in `src/route-policy/pending-enforcement.snapshot.txt`.
 
 Pending refers only to the organisation boundary; every route keeps the authentication and role guards shown in the Guards column.
 
-Of **86** routes, **81** are proved by a spec, **5** are not applicable (public) and **0** are pending.
+Of **87** routes, **82** are proved by a spec, **5** are not applicable (public) and **0** are pending.
 
 | Policy | Routes | Proved | Not applicable | Pending |
 |---|---|---|---|---|
 | public | 5 | 0 | 5 | 0 |
-| learner | 43 | 43 | 0 | 0 |
+| learner | 44 | 44 | 0 | 0 |
 | teacher | 33 | 33 | 0 | 0 |
 | server | 4 | 4 | 0 | 0 |
 | pi-import | 1 | 1 | 0 | 0 |
-| **all** | **86** | **81** | **5** | **0** |
+| **all** | **87** | **82** | **5** | **0** |
 
 ## Policies
 
@@ -133,6 +133,7 @@ Routes admitting the server key: 23.
 | GET | `/school/branding` | SchoolController.getBranding | public | n/a |  |  |  | none | Resolves by school id: the school's own setting, else its organisation's, else the default. |
 | GET | `/student/all` | StudentController.getAllCurriculums | teacher | yes | `src/modules/org-boundary.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN) | The learners are the token's school's; a school in the query can only narrow that. |
 | GET | `/student/awards` | StudentController.getStudentAwards | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | The caller's own awards only; read-only. |
+| GET | `/student/awards/overview` | StudentController.getStudentAwardsOverview | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | The caller's own awards and progress only; read-only. |
 | POST | `/student/logintime` | StudentController.getlogintime | learner | yes | `src/modules/org-boundary.leak.spec.ts` | yes |  | AccessOrServerSyncGuard(ACCESS), ReportScopeGuard | Central calls it with the server key; a learner token gets its own login only. |
 | POST | `/student/profile` | StudentController.updatestudentprofile | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | Updates only the token's own learner record. |
 | GET | `/student/progress` | StudentController.getStudentProgress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) |  |

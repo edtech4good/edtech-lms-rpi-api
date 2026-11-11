@@ -33,22 +33,43 @@ const schoolIdOf = async (user: Token): Promise<string | null> => {
   return learner?.schoolid ?? null;
 };
 
+/** True when the learner's school hides single-item tiers (`brandingconfig.hideSingleItemTiers`). One school lookup. */
+const schoolHidesSingleItemTiers = async (user: Token, transaction?: Transaction): Promise<boolean> => {
+  const schoolid = await schoolIdOf(user);
+  if (!schoolid) {
+    return false;
+  }
+  const school = await schools.findOne({ where: { schoolid }, attributes: ["schoolid", "brandingconfig"], transaction });
+  return resolveTierLabels(school?.brandingconfig).hideSingleItemTiers;
+};
+
 /**
  * True when the learner's school hides a tier that holds a single item (`brandingconfig.hideSingleItemTiers`) and the
  * level's grade holds exactly one live level, counted the way the learner app's level list does (`levelstatus` on,
  * `isdeleted` off, as `LevelBusiness.getlevelsbygradeid`). Such a level is not shown as a level, so it earns nothing.
  */
 export const levelIsHiddenSingleItemTier = async (user: Token, gradeid: string, transaction: Transaction): Promise<boolean> => {
-  const schoolid = await schoolIdOf(user);
-  if (!schoolid) {
-    return false;
-  }
-  const school = await schools.findOne({ where: { schoolid }, attributes: ["schoolid", "brandingconfig"], transaction });
-  if (!resolveTierLabels(school?.brandingconfig).hideSingleItemTiers) {
+  if (!(await schoolHidesSingleItemTiers(user, transaction))) {
     return false;
   }
   const live = await levels.count({ where: { gradeid, levelstatus: true, isdeleted: false }, transaction });
   return live === 1;
+};
+
+/**
+ * The same rule for many grades at once: the ids, among `gradeids`, whose single live level is hidden for this learner.
+ * The school is read once and the live levels of all the grades are counted in one grouped query (never one per level);
+ * a school that does not hide single-item tiers costs no level query.
+ */
+export const hiddenSingleItemTierGradeIds = async (user: Token, gradeids: string[]): Promise<Set<string>> => {
+  if (gradeids.length === 0 || !(await schoolHidesSingleItemTiers(user))) {
+    return new Set();
+  }
+  const counts = (await levels.count({
+    where: { gradeid: { [Op.in]: gradeids }, levelstatus: true, isdeleted: false },
+    group: ["gradeid"],
+  })) as unknown as Array<{ gradeid: string; count: number }>;
+  return new Set(counts.filter((c) => Number(c.count) === 1).map((c) => c.gradeid));
 };
 
 /**
