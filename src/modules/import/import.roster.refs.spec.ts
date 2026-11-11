@@ -1,5 +1,6 @@
 import { grades, curriculums, lessons, levels, schoolusers, studentgradesprogress, studentlessonsprogress, studentlevelsprogress, studentprogress, students } from "src/models/data-models/init-models";
 import { standards } from "src/models/data-models/standards";
+import { studentawards } from "src/models/data-models/studentawards";
 import { schools } from "src/models/data-models/school";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
@@ -59,6 +60,7 @@ beforeEach(() => {
   jest.spyOn(studentgradesprogress, "bulkCreate").mockResolvedValue([] as never);
   jest.spyOn(studentlevelsprogress, "bulkCreate").mockResolvedValue([] as never);
   jest.spyOn(studentlessonsprogress, "bulkCreate").mockResolvedValue([] as never);
+  jest.spyOn(studentawards, "bulkCreate").mockResolvedValue([] as never);
 });
 afterEach(() => {
   jest.restoreAllMocks();
@@ -79,6 +81,7 @@ const nothingWritten = () => {
   expect(studentgradesprogress.bulkCreate).not.toHaveBeenCalled();
   expect(studentlevelsprogress.bulkCreate).not.toHaveBeenCalled();
   expect(studentlessonsprogress.bulkCreate).not.toHaveBeenCalled();
+  expect(studentawards.bulkCreate).not.toHaveBeenCalled();
   expect(tnx.commit).not.toHaveBeenCalled();
   expect(tnx.rollback).toHaveBeenCalledTimes(1);
 };
@@ -203,12 +206,23 @@ describe("PUT /import/students: the curriculum of a learner", () => {
 const lessonRow = (n: number, row: Record<string, unknown> = {}) => ({ studentlessonprogressid: `p${n}`, studentid: "s1", curid: "cur-1", gradeid: "gr-1", levelid: "lv-1", lessonid: "ls-1", ...row });
 const levelRow = (n: number, row: Record<string, unknown> = {}) => ({ studentlevelprogressid: `p${n}`, studentid: "s1", curid: "cur-1", gradeid: "gr-1", levelid: "lv-1", ...row });
 const gradeRow = (n: number, row: Record<string, unknown> = {}) => ({ studentgradeprogressid: `p${n}`, studentid: "s1", curriculumid: "cur-1", curriculumids: ["cur-1"], gradeid: "gr-1", ...row });
-const progress = (rows: { grades?: unknown[]; levels?: unknown[]; lessons?: unknown[] }) => ({
+const awardRow = (n: number, row: Record<string, unknown> = {}) => ({
+  studentawardid: `a${n}`,
+  studentid: "s1",
+  curid: "cur-1",
+  gradeid: "gr-1",
+  levelid: "lv-1",
+  earnedat: "2026-02-03T04:05:06.000Z",
+  earnedat_approximate: false,
+  ...row,
+});
+const progress = (rows: { grades?: unknown[]; levels?: unknown[]; lessons?: unknown[]; awards?: unknown[] }) => ({
   studentprogress: [],
   studentlearningprogress: [],
   studentgradesprogress: rows.grades ?? [],
   studentlevelsprogress: rows.levels ?? [],
   studentlessonsprogress: rows.lessons ?? [],
+  ...(rows.awards ? { studentawards: rows.awards } : {}),
 });
 
 describe("PUT /import/students: the content and the learner of a progress row", () => {
@@ -269,6 +283,42 @@ describe("PUT /import/students: the content and the learner of a progress row", 
   it("checks the class before any login or learner is written, so a bad class leaves no half-written roster", async () => {
     await expect(send({ studentusers: [learner(1, { standard: "nope" })], studentprogresses: progress({ lessons: [lessonRow(1)] }) })).rejects.toMatchObject(refused("students row 1: class"));
     expect(lessons.findAll).not.toHaveBeenCalled();
+    nothingWritten();
+  });
+});
+
+describe("PUT /import/students: the awards a roster carries", () => {
+  it("an award for a level and a learner this server holds is stored, by the route, with the others of its kind", async () => {
+    const payload = { studentusers: [learner(1)], studentprogresses: progress({ awards: [awardRow(1), awardRow(2, { studentid: "old-student" })] }) };
+    await expect(send(payload)).resolves.toEqual({ error: false, data: true });
+    expect(studentawards.bulkCreate).toHaveBeenCalledTimes(1);
+    const [rows, options] = (studentawards.bulkCreate as jest.Mock).mock.calls[0];
+    expect(rows.map((r: { studentawardid: string; studentid: string; levelid: string }) => [r.studentawardid, r.studentid, r.levelid])).toEqual([
+      ["a1", "s1", "lv-1"],
+      ["a2", "old-student", "lv-1"],
+    ]);
+    expect(options).toMatchObject({ ignoreDuplicates: true, transaction: tnx });
+    expect(tnx.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("no studentawards key stores no award", async () => {
+    await expect(send({ studentusers: [learner(1)], studentprogresses: progress({ levels: [levelRow(1)] }) })).resolves.toEqual({ error: false, data: true });
+    expect(studentawards.bulkCreate).not.toHaveBeenCalled();
+  });
+
+  it("an award that names a level this server does not hold refuses the whole file, names the row and the word, and writes nothing", async () => {
+    const error = await send({ studentusers: [learner(1)], studentprogresses: progress({ awards: [awardRow(1), awardRow(2, { levelid: "lv-secret-gone" })] }) }).catch((e) => e);
+    expect(error.status).toBe(400);
+    expect(error.message).toContain("studentawards row 2: level");
+    expect(JSON.stringify(error.response ?? error.message)).not.toMatch(/lv-secret-gone/);
+    nothingWritten();
+  });
+
+  it("an award that names a learner this server does not hold (and the roster does not carry) refuses the whole file and writes nothing", async () => {
+    const error = await send({ studentusers: [learner(1)], studentprogresses: progress({ awards: [awardRow(1, { studentid: "stranger-secret" })] }) }).catch((e) => e);
+    expect(error.status).toBe(400);
+    expect(error.message).toContain("studentawards row 1: learner");
+    expect(JSON.stringify(error.response ?? error.message)).not.toMatch(/stranger-secret/);
     nothingWritten();
   });
 });

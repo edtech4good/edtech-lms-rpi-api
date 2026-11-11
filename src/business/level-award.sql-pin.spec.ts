@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
-import { AWARD_HIDDEN_SQL, awardCandidatesSql } from "./level-award";
+import { Sequelize, Transaction } from "sequelize";
+import { AWARD_HIDDEN_SQL, awardCandidatesSql, awardCompletedLevels } from "./level-award";
 
 /**
  * The backfill migration keeps its own copy of the SQL that picks the levels to award and judges the hidden-tier rule
@@ -24,5 +25,14 @@ describe("the roster import and the backfill migration judge awards by the same 
   });
   it("the gradeid and curid stored are the level's current grade and that grade's curriculum in both", () => {
     expect(squash(migration)).toContain("COALESCE(lv.gradeid, c.gradeid), COALESCE(gr.curriculumid, c.curid), COALESCE(c.lastupdated, CURRENT_TIMESTAMP), 1");
+  });
+  it("awardCompletedLevels (the roster import) runs the same SELECT list as the migration", async () => {
+    const sent: string[] = [];
+    const fake = { query: async (sql: string) => (sent.push(sql), [{ affectedRows: 0 }]) } as unknown as Sequelize;
+    await awardCompletedLevels(["s1"], {} as Transaction, fake);
+    expect(sent).toHaveLength(1);
+    const select = "SELECT UUID(), c.studentid, c.levelid, COALESCE(lv.gradeid, c.gradeid), COALESCE(gr.curriculumid, c.curid), COALESCE(c.lastupdated, CURRENT_TIMESTAMP), 1";
+    expect(squash(sent[0])).toContain(select);
+    expect(squash(migration)).toContain(select);
   });
 });

@@ -2,11 +2,19 @@
  * 20261111110100-backfill-level-awards, run for real against MySQL.
  *
  * The migration's SQL runs on a real MySQL connection against plain `studentlevelsprogress`, `students`, `schools`,
- * `levels`, `grades` and `studentawards` tables the spec creates itself. They cannot be TEMPORARY tables: the SQL reads
- * `levels` twice (the level, and the live levels of its grade) and MySQL refuses a temporary table referenced twice in
- * one statement. So the spec REFUSES to run unless the configured database is empty (no table at all), creates and
- * drops its tables there, and leaves the database empty. Point RPI_DB_NAME at a throwaway database, never a shared one.
- * It runs ONLY when BACKFILL_DB_SPEC=1 is set (it needs a reachable MySQL); otherwise it is skipped.
+ * `levels`, `grades` and `studentawards` tables the spec creates itself, and drops. They cannot be TEMPORARY tables: the
+ * SQL reads `levels` twice (the level, and the live levels of its grade) and MySQL refuses a temporary table referenced
+ * twice in one statement. Because the spec DROPS tables with those names, it is built so that it cannot touch a
+ * database that holds anything:
+ *  - it is skipped unless AWARDS_DB_SPEC=1 is set (this spec's own switch; BACKFILL_DB_SPEC belongs to the grade
+ *    backfill spec, which is meant to run against shared databases and does not apply here);
+ *  - it runs only when AWARDS_DB_SPEC_DATABASE names the configured database (RPI_DB_NAME) exactly; with the first
+ *    switch on and the name missing or different, the suite fails with a message and does nothing else;
+ *  - before anything else it asks MySQL how many tables (and views) the configured database holds, and sets
+ *    `verifiedEmpty` only when the answer is 0. Every statement the spec sends that creates, drops, inserts or runs the
+ *    migration goes through a guard that throws while `verifiedEmpty` is false, so a database that holds a table is
+ *    left exactly as it was (the first guard failure fails the spec; nothing is dropped, not even in afterAll).
+ * Point RPI_DB_NAME at a new, empty throwaway database; the spec leaves it empty.
  *
  * Ids carry no names. School A hides single-item tiers, school B does not (switch off), school C has no setting and
  * school D stores the switch as the text "true" (not the boolean, so not hidden). Grade g-one has one live level (and
@@ -19,21 +27,37 @@ import { awardCompletedLevels } from "src/business/level-award";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const migration = require("./migrations/20261111110100-backfill-level-awards");
 
-const suite = process.env.BACKFILL_DB_SPEC === "1" ? describe : describe.skip;
+const TABLES = ["studentawards", "studentlevelsprogress", "students", "schools", "levels", "grades"];
+const configuredName = (): string => String(Config.fortyk.api.rpi.database.name);
+const switchedOn = process.env.AWARDS_DB_SPEC === "1";
+const namesTheDatabase = process.env.AWARDS_DB_SPEC_DATABASE === configuredName() && configuredName() !== "";
+const suite = switchedOn ? describe : describe.skip;
 
 const LAST = "2026-03-05 10:11:12";
 
 suite("backfill-level-awards", () => {
   let sequelize: Sequelize;
   let logged: string[];
-  const run = (sql: string, replacements: unknown[] = []) =>
-    sequelize.query(sql, { replacements: replacements as never, type: QueryTypes.RAW });
+  // True only after MySQL has said the configured database holds no table at all. Nothing is written before that.
+  let verifiedEmpty = false;
+  const guard = () => {
+    if (!verifiedEmpty) {
+      throw new Error("refusing to touch the database: it was not verified to be empty");
+    }
+  };
+  const run = (sql: string, replacements: unknown[] = []) => {
+    guard();
+    return sequelize.query(sql, { replacements: replacements as never, type: QueryTypes.RAW });
+  };
   const awardsOf = async () =>
     sequelize.query<{ studentid: string; levelid: string; gradeid: string; curid: string; earnedat: Date; earnedat_approximate: number; studentawardid: string }>(
       "SELECT * FROM studentawards ORDER BY studentid, levelid",
       { type: QueryTypes.SELECT },
     );
-  const up = () => migration.up({ sequelize });
+  const up = () => {
+    guard();
+    return migration.up({ sequelize });
+  };
   const progress = (studentid: string, levelid: string, gradeid: string, completed: number | null, lastupdated: string | null = LAST) =>
     run("INSERT INTO studentlevelsprogress (studentlevelprogressid, studentid, levelid, gradeid, curid, completed, lastupdated) VALUES (UUID(), ?, ?, ?, 'c1', ?, ?)", [
       studentid,
@@ -44,8 +68,11 @@ suite("backfill-level-awards", () => {
     ]);
 
   beforeAll(async () => {
+    if (!namesTheDatabase) {
+      return; // verifiedEmpty stays false: every test below fails on the guard and nothing is sent
+    }
     const db = Config.fortyk.api.rpi.database;
-    // One connection, so the temporary tables are seen by every statement, the migration's transaction included.
+    // One connection, so every statement (the migration's transaction included) is seen on the same session.
     sequelize = new Sequelize(db.name, db.user, db.password, {
       host: db.host,
       port: db.port,
@@ -53,21 +80,32 @@ suite("backfill-level-awards", () => {
       logging: false,
       pool: { max: 1, min: 1 },
     });
-    const present = await sequelize.query<{ n: number | string }>("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()", { type: QueryTypes.SELECT });
-    if (Number(present[0].n) !== 0) {
-      await sequelize.close();
-      throw new Error("refusing to run: the configured database is not empty; use an empty throwaway database");
-    }
-  });
+    // The guard query comes before anything else, and only a count of 0 for the configured database lifts the guard.
+    const present = await sequelize.query<{ n: number | string }>("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = ?", {
+      replacements: [db.name],
+      type: QueryTypes.SELECT,
+    });
+    const current = await sequelize.query<{ d: string | null }>("SELECT DATABASE() AS d", { type: QueryTypes.SELECT });
+    verifiedEmpty = Number(present[0].n) === 0 && current[0].d === db.name;
+  }, 30000);
   afterAll(async () => {
-    for (const t of ["studentawards", "studentlevelsprogress", "students", "schools", "levels", "grades"]) {
-      await run(`DROP TABLE IF EXISTS ${t}`);
+    if (verifiedEmpty) {
+      for (const t of TABLES) {
+        await run(`DROP TABLE IF EXISTS ${t}`);
+      }
     }
-    await sequelize.close();
+    if (sequelize) {
+      await sequelize.close();
+    }
+  }, 30000);
+
+  it("the database was named for this spec and verified to be empty", () => {
+    expect({ named: namesTheDatabase, verifiedEmpty }).toEqual({ named: true, verifiedEmpty: true });
   });
 
   beforeEach(async () => {
-    for (const t of ["studentawards", "studentlevelsprogress", "students", "schools", "levels", "grades"]) {
+    guard(); // a database that was not verified empty fails here, before a single statement
+    for (const t of TABLES) {
       await run(`DROP TABLE IF EXISTS ${t}`);
     }
     await run("CREATE TABLE schools (schoolid VARCHAR(36) PRIMARY KEY, brandingconfig JSON NULL)");
@@ -198,7 +236,10 @@ suite("backfill-level-awards", () => {
   });
 
   describe("the roster import's scoped copy (awardCompletedLevels)", () => {
-    const scoped = (ids: string[] | null) => sequelize.transaction((transaction) => awardCompletedLevels(ids, transaction, sequelize));
+    const scoped = (ids: string[] | null) => {
+      guard();
+      return sequelize.transaction((transaction) => awardCompletedLevels(ids, transaction, sequelize));
+    };
 
     it("f. awards approximate rows only to the named learners, by the same rule, and a second call inserts nothing", async () => {
       await progress("s-b", "lv-two-a", "g-two", 1); // imported: awarded

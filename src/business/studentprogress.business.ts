@@ -1,6 +1,7 @@
 import { Transaction } from "sequelize";
 import { randomUUID } from "node:crypto";
 import { studentawards, studentawardsAttributes } from "src/models/data-models/studentawards";
+import { Logger } from "src/config";
 import { awardCompletedLevels } from "./level-award";
 import { schoolusersAttributes } from "src/models/data-models/schoolusers";
 import {
@@ -20,6 +21,17 @@ import {
   studentprogress,
   studentprogressAttributes,
 } from "src/models/data-models/studentprogress";
+
+/** A date a stored award may carry: a Date, or text that parses to one. Missing, empty, null and anything else is not. */
+const hasUsableDate = (value: unknown): boolean => {
+  if (value instanceof Date) {
+    return !Number.isNaN(value.getTime());
+  }
+  return typeof value === "string" && value.trim() !== "" && !Number.isNaN(new Date(value).getTime());
+};
+
+/** A flag as a payload may carry it (true, 1, "1", "true"); anything else, missing included, is false. */
+const isTrue = (value: unknown): boolean => value === true || value === 1 || value === "1" || value === "true";
 
 export interface exportpayload {
   // Set on a roster that names the school it is for (format 3): every row must be that school's.
@@ -139,16 +151,30 @@ export class StudentProgressBusiness {
     await awardCompletedLevels(studentids, transaction);
   };
 
+  /**
+   * Stores the awards a roster carries. An award this server already has for a learner and level wins (the unique key
+   * ignores the imported one). A row with no usable `earnedat` (missing, empty or not a date) is not stored, so the
+   * approximate award the import makes afterwards can cover that pair; only the number of such rows is logged.
+   * `earnedat_approximate` is read as a boolean (missing means false).
+   */
   importStudentAwards = async (awards: studentawardsAttributes[], transaction: Transaction) => {
+    const usable = awards.filter((a) => hasUsableDate(a?.earnedat));
+    const skipped = awards.length - usable.length;
+    if (skipped > 0) {
+      Logger.info(`import students: ${skipped} award row(s) skipped (no valid earnedat)`);
+    }
+    if (usable.length === 0) {
+      return;
+    }
     await studentawards.bulkCreate(
-      awards.map((a) => ({
+      usable.map((a) => ({
         studentawardid: a.studentawardid ?? randomUUID(),
         studentid: a.studentid,
         levelid: a.levelid,
         gradeid: a.gradeid,
         curid: a.curid,
         earnedat: a.earnedat,
-        earnedat_approximate: Boolean(a.earnedat_approximate),
+        earnedat_approximate: isTrue(a.earnedat_approximate),
       })),
       { transaction, ignoreDuplicates: true }
     );

@@ -99,15 +99,7 @@ export const awardLevelIfCompleted = async (input: LevelAwardInput, transaction:
   );
 };
 
-/**
- * The approximate awards for levels that are already complete, for the given learners (every learner when `studentids`
- * is null): one per learner and level with a completed `studentlevelsprogress` row and no award yet, dated by the
- * earliest `lastupdated` of the row, `earnedat_approximate` = 1, skipping a level whose single-item tier is hidden.
- * The level's CURRENT grade and that grade's curriculum are judged and stored (as the runtime helper stores them); the
- * progress row's own are used only when the level row is gone. The migration 20261111110100-backfill-level-awards keeps
- * its own copy of the two SQL fragments below (a migration must not import code that may change later);
- * level-award.sql-pin.spec.ts fails when the two drift apart. Returns the number of awards made.
- */
+/** The hidden-tier condition of the SQL that awards levels already complete: 1 when the level's single-item tier is hidden. Kept in step with the backfill migration by level-award.sql-pin.spec.ts. */
 export const AWARD_HIDDEN_SQL = `COALESCE(
   JSON_TYPE(JSON_EXTRACT(sc.brandingconfig, '$.hideSingleItemTiers')) = 'BOOLEAN'
   AND JSON_EXTRACT(sc.brandingconfig, '$.hideSingleItemTiers') = CAST('true' AS JSON)
@@ -125,6 +117,15 @@ LEFT JOIN grades gr ON gr.gradeid = lv.gradeid
 LEFT JOIN students s ON s.studentid = c.studentid
 LEFT JOIN schools sc ON sc.schoolid = s.schoolid`;
 
+/**
+ * The approximate awards for levels that are already complete, for the given learners (every learner when `studentids`
+ * is null): one per learner and level with a completed `studentlevelsprogress` row and no award yet, dated by the
+ * earliest `lastupdated` of the row, `earnedat_approximate` = 1, skipping a level whose single-item tier is hidden.
+ * The level's CURRENT grade and that grade's curriculum are judged and stored (as the runtime helper stores them); the
+ * progress row's own are used only when the level row is gone. The migration 20261111110100-backfill-level-awards keeps
+ * its own copy of the two SQL fragments below (a migration must not import code that may change later);
+ * level-award.sql-pin.spec.ts fails when the two drift apart. Returns the number of awards made.
+ */
 export const awardCompletedLevels = async (studentids: string[] | null, transaction: Transaction, connection: Sequelize | undefined = studentawards.sequelize): Promise<number> => {
   if (studentids !== null && studentids.length === 0) {
     return 0;
