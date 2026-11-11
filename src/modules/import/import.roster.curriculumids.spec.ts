@@ -1,3 +1,4 @@
+import { curriculums } from "src/models/data-models/init-models";
 import { schoolusers, students } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
@@ -29,6 +30,7 @@ beforeEach(() => {
   tnx.rollback.mockResolvedValue(undefined);
   jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
   jest.spyOn(schools, "findOne").mockImplementation((async () => ({ schoolid: SCHOOL })) as never);
+  jest.spyOn(curriculums, "findAll").mockResolvedValue([{ curriculumid: CUR }, { curriculumid: OTHER }] as never);
   jest.spyOn(standards, "findAll").mockResolvedValue([] as never);
   // The accounts the import finds already here (to tell which had a session to end): none.
   jest.spyOn(schoolusers, "findAll").mockResolvedValue([] as never);

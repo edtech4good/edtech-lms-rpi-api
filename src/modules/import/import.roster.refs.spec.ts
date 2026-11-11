@@ -181,13 +181,15 @@ describe("PUT /import/students: the curriculum of a learner", () => {
     nothingWritten();
   });
 
-  it("a learner with no curriculumid is left to the list rule; an empty or non-text one names no curriculum", async () => {
+  it("a learner with no usable curriculumid (absent, null, empty, spaces, not text) is left to the list rule, not counted here", async () => {
     await expect(send({ studentusers: [learner(1, { curriculumid: undefined }), learner(2, { curriculumid: null })] })).resolves.toEqual({ error: false, data: true });
+    expect(curriculums.findAll).not.toHaveBeenCalled();
     for (const curriculumid of ["", "  ", 7]) {
       jest.clearAllMocks();
       tnx.commit.mockResolvedValue(undefined);
       tnx.rollback.mockResolvedValue(undefined);
-      await expect(send({ studentusers: [learner(1, { curriculumid })] })).rejects.toMatchObject(refused("1 row names a curriculum this server doesn't have"));
+      const error = await send({ studentusers: [learner(1, { curriculumid, curriculumids: undefined })] }).catch((e) => e);
+      expect(error.message).toContain("students row 1: curriculum");
       nothingWritten();
     }
   });

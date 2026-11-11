@@ -91,7 +91,7 @@ export async function assertRosterClassesKnown(rosterRows: ReadonlyArray<{ stude
 /**
  * The curriculum (`students.curriculumid`) of every learner row must be a curriculum this server holds: the column is a
  * foreign key, and a roster naming one that is not here would otherwise fail inside the write. A learner with no
- * `curriculumid` (absent or null) is left to `withCurriculumLists`; an empty or non-text value names no curriculum.
+ * `curriculumid` (absent or null) is left to `withCurriculumLists`; an empty or non-text value names none, and is left to `withCurriculumLists`.
  * Runs before any row is written; asks the database nothing when no learner names one. Counts the rows, never names
  * an id.
  */
@@ -101,11 +101,12 @@ export async function assertRosterCurriculumsKnown(rosterRows: ReadonlyArray<{ s
     const curriculumid = (row?.student as Row | null | undefined)?.curriculumid;
     if (curriculumid === undefined || curriculumid === null) return { given: false, id: null };
     const id = idOf(curriculumid);
-    if (id !== null) named.add(id);
+    if (id === null) return { given: false, id: null };
+    named.add(id);
     return { given: true, id };
   });
-  if (!given.some((g) => g.given)) return;
-  const known = named.size === 0 ? new Set<string>() : await held(curriculums as Holder, "curriculumid", named, transaction);
+  if (named.size === 0) return;
+  const known = await held(curriculums as Holder, "curriculumid", named, transaction);
   const unknown = given.filter((g) => g.given && (g.id === null || !known.has(g.id))).length;
   if (unknown > 0) {
     const message = `${unknown} ${unknown === 1 ? "row names" : "rows name"} a curriculum this server doesn't have. Nothing was written.`;

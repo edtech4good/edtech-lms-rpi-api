@@ -1,3 +1,4 @@
+import { curriculums } from "src/models/data-models/init-models";
 import { schools } from "src/models/data-models/school";
 import { schoolusers, studentprogress, students } from "src/models/data-models/init-models";
 import { Token } from "src/models/token.model";
@@ -47,6 +48,7 @@ beforeEach(() => {
   tnx.commit.mockResolvedValue(undefined);
   tnx.rollback.mockResolvedValue(undefined);
   jest.spyOn(dbinstance.getdbinstance(), "transaction").mockResolvedValue(tnx as never);
+  jest.spyOn(curriculums, "findAll").mockResolvedValue([{ curriculumid: "cur-1" }] as never);
   jest.spyOn(schools, "findAll").mockImplementation((async (opts: { where: { logic: string } }) =>
     schoolRows.filter((s) => s.schoolname.toLowerCase() === opts.where.logic.trim().toLowerCase()).map((s) => ({ isdeleted: false, ...s }))) as never);
   findOne = jest.spyOn(schools, "findOne").mockImplementation((async (opts: { where: { schoolid: string } }) =>

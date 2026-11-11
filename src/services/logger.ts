@@ -304,6 +304,7 @@ export const stdoutLine = (info: any): string => {
 const stdoutTransport = () =>
   new Console({
     level: 'warn',
+    forceConsole: true, // console.log, so it is the same line on stdout however the process is hosted
     silent: process.env.NODE_ENV === 'test',
     format: format.combine(format.timestamp(), format.printf(stdoutLine)),
   });

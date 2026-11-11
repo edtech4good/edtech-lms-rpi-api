@@ -19,6 +19,9 @@ const config = (debug: boolean): LoggerConfig => ({
   SERVERNAME: "spec",
 });
 
+/** The logger is a stream: its transports write a tick later. */
+const settled = () => new Promise<void>((resolve) => setTimeout(resolve, 50));
+
 describe("stdout logging with debug off", () => {
   const original = process.env.NODE_ENV;
   let lines: string[];
@@ -38,7 +41,7 @@ describe("stdout logging with debug off", () => {
     jest.restoreAllMocks();
   });
 
-  it("has a console transport for warn and above, and a warning and an error reach it", () => {
+  it("has a console transport for warn and above, and a warning and an error reach it", async () => {
     const logger = Logger.getlogger(config(false));
     const consoles = logger.transports.filter((t) => t.constructor.name === "Console");
     expect(consoles).toHaveLength(1);
@@ -46,6 +49,7 @@ describe("stdout logging with debug off", () => {
     logger.warn("Exception", { code: "INVALID_INPUT", status: 400, exception: { class: "RosterRowsError", message: "1 row names a curriculum", stack: "STACKTEXT" } });
     logger.error("Exception", { code: "INTERNAL", status: 500, exception: { class: "TypeError", message: "boom", stack: "Error: boom\n    at somewhere" } });
     logger.info("an ordinary request");
+    await settled();
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/ warn Exception /);
     expect(lines[0]).toContain('class="RosterRowsError"');
@@ -54,10 +58,11 @@ describe("stdout logging with debug off", () => {
     expect(lines[0]).toContain('errormessage="1 row names a curriculum"');
   });
 
-  it("a 4xx line has no stack, a 5xx line has one, and each is a single line", () => {
+  it("a 4xx line has no stack, a 5xx line has one, and each is a single line", async () => {
     const logger = Logger.getlogger(config(false));
     logger.warn("Exception", { status: 400, exception: { class: "X", message: "m", stack: "STACKTEXT" } });
     logger.error("Exception", { status: 500, exception: { class: "X", message: "m", stack: "Error: m\n    at here" } });
+    await settled();
     expect(lines).toHaveLength(2);
     expect(lines[0]).not.toContain("STACKTEXT");
     expect(lines[0]).not.toContain("stack=");
@@ -72,7 +77,7 @@ describe("stdout logging with debug off", () => {
     expect(levels).toEqual(["verbose"]);
   });
 
-  it("the filter's refusal reaches stdout as one warn line without a stack, and its response has no stack", () => {
+  it("the filter's refusal reaches stdout as one warn line without a stack, and its response has no stack", async () => {
     const logger = Logger.getlogger(config(false));
     const previous = Config.fortyk.api.rpi.debug;
     Config.fortyk.api.rpi.debug = false;
@@ -80,6 +85,7 @@ describe("stdout logging with debug off", () => {
     const response = { status: jest.fn().mockReturnThis(), json: jest.fn() };
     const host = { switchToHttp: () => ({ getResponse: () => response, getRequest: () => ({ method: "PUT", route: { path: "/import/students" } }) }) };
     new GlobalExceptionFilter().catch(new ApiError(ErrorCode.INVALID_INPUT, { message: "2 rows name a curriculum this server doesn't have. Nothing was written." }), host as never);
+    await settled();
     Config.fortyk.api.rpi.debug = previous;
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("status=400");
