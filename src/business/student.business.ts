@@ -10,6 +10,7 @@ import {
   schoolusers,
   studentlessonsprogress,
   studentlevelsprogress,
+  studentawards,
   students,
   studentsAttributes,
 } from "../models/data-models/init-models";
@@ -482,12 +483,14 @@ WHERE
   // A lesson is "done" when the student's studentlessonsprogress row has
   // completed === true OR progress >= 100 — the same rule the Expo app's
   // Level Detail screen uses; it feeds only the lesson counts.
-  // A level is "completed" when the student's studentlevelsprogress row for
-  // it has completed === true: the flag the server sets when the learner
-  // reaches 80% of the level's points, and the same rule awards use, so My
-  // progress and awards agree. It is not "every lesson done"; no row, or a
-  // false/null flag, means not completed. The flags are read in one extra
-  // query for all counted levels. A level "counts" only when it has at least
+  // A level is "completed" when any of the student's studentlevelsprogress
+  // rows for it has completed === true (the flag the server sets when the
+  // learner reaches 80% of the level's points), or an award was already earned
+  // for the level (awards are never removed, while the flag can drop back when
+  // a later result lowers the points), so the count and the awards always
+  // agree. It is not "every lesson done"; no flag row, no true flag and no
+  // award means not completed. The flags and the awards are each read in one
+  // extra query for all counted levels. A level "counts" only when it has at least
   // one active lesson; a level with zero active lessons is excluded from both
   // levelsCompleted and levelsTotal and stays completed: false even if a flag
   // is set. currentLevel is the first counted level, ordered by grade
@@ -539,6 +542,14 @@ WHERE
     for (const row of levelFlagRows) {
       if (row.completed === true) completedLevelIds.add(row.levelid);
     }
+    // An earned award keeps the level completed even when the flag has since dropped back.
+    const awardRows = countedLevelIds.length
+      ? await studentawards.findAll({
+          where: { studentid: user.studentid, levelid: countedLevelIds },
+          attributes: ["levelid"],
+        })
+      : [];
+    for (const row of awardRows) completedLevelIds.add(row.levelid);
 
     const lessonIdsByLevel = new Map<string, string[]>();
     for (const lesson of activeLessons) {
