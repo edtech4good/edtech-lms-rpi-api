@@ -52,7 +52,9 @@ const refuse = (field: string, message: string): ApiError =>
 
 const lower = (x: string): string => x.toLowerCase();
 const isObject = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
-const isId = (x: unknown): x is string => typeof x === "string" && x.trim() !== "" && x.length <= MAX_ID;
+/** An id as sent must be exact: no leading or trailing space, so a padded id can never pass as a different one. */
+const isId = (x: unknown): x is string => typeof x === "string" && x !== "" && x === x.trim() && x.length <= MAX_ID;
+export const MAX_SNAPSHOT_BYTES = 16 * 1024;
 
 const dateOf = (x: unknown): Date | null => {
   if (typeof x !== "string" || x.length > 40) return null;
@@ -73,7 +75,7 @@ export const parseCertificatesPayload = (raw: unknown): CertificatesPayload => {
     const where = `certificates row ${at + 1}`;
     if (!isObject(entry)) throw refuse(where, "Must be an object.");
     for (const field of ["certificateid", "studentid", "curriculumid", "scopeid"] as const) {
-      if (!isId(entry[field])) throw refuse(`${where} ${field}`, "An id (text, up to 36 characters) is required.");
+      if (!isId(entry[field])) throw refuse(`${where} ${field}`, "An id (text, up to 36 characters, no leading or trailing space) is required.");
     }
     if (typeof entry.shortcode !== "string" || !SHORTCODE_PATTERN.test(entry.shortcode)) {
       throw refuse(`${where} shortcode`, "Must look like XXXX-XXXX.");
@@ -89,6 +91,9 @@ export const parseCertificatesPayload = (raw: unknown): CertificatesPayload => {
       if (revokedat === null) throw refuse(`${where} revokedat`, "Must be a date, or null.");
     }
     if (!isObject(entry.snapshot)) throw refuse(`${where} snapshot`, "An object is required.");
+    if (Buffer.byteLength(JSON.stringify(entry.snapshot), "utf8") > MAX_SNAPSHOT_BYTES) {
+      throw refuse(`${where} snapshot`, `Must be at most ${MAX_SNAPSHOT_BYTES / 1024} KB.`);
+    }
     let checkurl: string | null = null;
     if (entry.checkurl !== undefined && entry.checkurl !== null) {
       if (typeof entry.checkurl !== "string" || entry.checkurl.length > MAX_CHECKURL || !/^https?:\/\/\S+$/i.test(entry.checkurl)) {
@@ -119,7 +124,7 @@ export const parseCertificatesPayload = (raw: unknown): CertificatesPayload => {
       throw refuse("replaceForStudents", `A list of at most ${MAX_REPLACE_STUDENTS} learner ids.`);
     }
     list.forEach((id: unknown, at: number) => {
-      if (!isId(id)) throw refuse(`replaceForStudents entry ${at + 1}`, "An id (text, up to 36 characters) is required.");
+      if (!isId(id)) throw refuse(`replaceForStudents entry ${at + 1}`, "An id (text, up to 36 characters, no leading or trailing space) is required.");
     });
     replaceForStudents = (list as string[]).map((id) => id.trim());
   }

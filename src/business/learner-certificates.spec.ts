@@ -263,6 +263,56 @@ describe("StudentBusiness.getcertificatesoverview", () => {
     expect(itemsOf(await ask(), "c1")[0]).toMatchObject({ status: "ready", quizcount: 2, passedcount: 2 });
   });
 
+  // ----- a held certificate is always listed, from its snapshot ------------------------------------------------------------
+  const snap = (scopename: string, curriculumname: string): Row => ({ learnername: "Learner", curriculumname, scopename, tierlabel: "Module", classname: null, organisationname: "Org", schoolname: "School", quizcount: 1 });
+
+  it("still lists a held certificate whose level has since been switched off, as issued, after the live items of its curriculum", async () => {
+    certificates = [certificate("cert-off", "level", "off", { snapshot: snap("Switched off level", "Design") })];
+    const body = await ask();
+    expect(itemsOf(body, "c1").map((i) => [i.scopeid, i.status])).toEqual([["l1", "not_yet"], ["l2", "not_yet"], ["l3", "not_yet"], ["off", "issued"]]);
+    expect(itemsOf(body, "c1")[3]).toEqual({
+      scope: "level",
+      scopeid: "off",
+      name: "Switched off level",
+      tierlabel: "Level",
+      status: "issued",
+      reasons: [],
+      quizcount: 0,
+      passedcount: 0,
+      certificate: { certificateid: "cert-off", shortcode: "ABCD-1234", issuedat: day(5), checkurl: "https://check.example.org/v/ABCD-1234" },
+    });
+  });
+
+  it("still lists a held certificate when its tier is no longer a certificate tier, making the curriculum's group when it would be absent", async () => {
+    // c3 has no certificate tier, so it has no group; the learner holds a level certificate from when it had one
+    certificates = [certificate("cert-old", "level", "l5", { curriculumid: "c3", snapshot: snap("Plain one", "Plain") })];
+    const body = await ask();
+    expect(body.curricula.map((c) => c.curriculumid)).toEqual(["c2", "c1", "c3"]);
+    expect(body.curricula[2]).toMatchObject({ curriculumname: "Plain", items: [{ scope: "level", scopeid: "l5", name: "Plain one", status: "issued", certificate: { certificateid: "cert-old" } }] });
+    // the not-yet items stay by the current settings: nothing is judged for c3
+    expect(body.curricula[2].items.map((i) => i.scopeid)).toEqual(["l5"]);
+  });
+
+  it("does not list the same held certificate twice when its item is live", async () => {
+    certificates = [certificate("cert-1", "level", "l1", { snapshot: snap("Level one", "Design") })];
+    expect(itemsOf(await ask(), "c1").filter((i) => i.status === "issued")).toHaveLength(1);
+  });
+
+  it("still lists a held certificate of a curriculum the learner is no longer enrolled in, named from its snapshot", async () => {
+    certificates = [certificate("cert-gone", "curriculum", "gone", { curriculumid: "gone", snapshot: snap("Old programme", "Old programme") })];
+    const body = await ask();
+    expect(body.curricula.map((c) => [c.curriculumid, c.curriculumname])).toEqual([["c2", "Craft"], ["c1", "Design"], ["gone", "Old programme"]]);
+    expect(itemsOf(body, "gone")).toEqual([expect.objectContaining({ scope: "curriculum", scopeid: "gone", name: "Old programme", status: "issued" })]);
+  });
+
+  it("lists a held certificate even when the learner is enrolled in nothing, and never a revoked one", async () => {
+    (contentAccess.enrolledCurriculumIds as jest.Mock).mockResolvedValue([]);
+    curs = [];
+    certificates = [certificate("kept", "grade", "gX", { curriculumid: "cX", snapshot: snap("Grade X", "Programme X") }), certificate("withdrawn", "grade", "gY", { curriculumid: "cX", revokedat: day(7), snapshot: snap("Grade Y", "Programme X") })];
+    const body = await ask();
+    expect(body.curricula.map((c) => [c.curriculumname, c.items.map((i) => i.certificate?.certificateid)])).toEqual([["Programme X", ["kept"]]]);
+  });
+
   // ----- (d) only this learner -----------------------------------------------------------------------------------------
   it("never shows another learner's certificate or attempts", async () => {
     certificates = [certificate("theirs", "level", "l1", { studentid: "s2" })];

@@ -232,6 +232,10 @@ describe("PUT /import/certificates", () => {
     ["a shortcode that is not shaped XXXX-XXXX", { shortcode: "ABCD1234" }, "certificates row 2 shortcode"],
     ["a shortcode with a letter central never uses", { shortcode: "ABCI-1234" }, "certificates row 2 shortcode"],
     ["a missing certificateid", { certificateid: "" }, "certificates row 2 certificateid"],
+    ["a certificateid with a trailing space", { certificateid: "cert-2 " }, "certificates row 2 certificateid"],
+    ["a studentid with a leading space", { studentid: " st-a-2" }, "certificates row 2 studentid"],
+    ["a scopeid padded with spaces", { scopeid: " lvl-1 " }, "certificates row 2 scopeid"],
+    ["a snapshot over 16 KB", { snapshot: { text: "x".repeat(16 * 1024) } }, "certificates row 2 snapshot"],
     ["an issuedat that is not a date", { issuedat: "yesterday" }, "certificates row 2 issuedat"],
     ["a revokedat that is not a date", { revokedat: "soon" }, "certificates row 2 revokedat"],
     ["a snapshot that is not an object", { snapshot: "text" }, "certificates row 2 snapshot"],
@@ -242,6 +246,16 @@ describe("PUT /import/certificates", () => {
     expect(res.body.fields).toEqual([{ field: named, message: expect.any(String) }]);
     expect(stored).toEqual([]);
     expect(writes).toBe(0);
+  });
+
+  it("refuses a replaceForStudents entry with a leading or trailing space", async () => {
+    const res = await put({ certificates: [], replaceForStudents: [`${A1} `] }).expect(400);
+    expect(res.body.fields).toEqual([{ field: "replaceForStudents entry 1", message: expect.any(String) }]);
+  });
+
+  it("accepts a snapshot just under 16 KB", async () => {
+    await put({ certificates: [cert(1, A1, { snapshot: { text: "x".repeat(16 * 1024 - 20) } })] }).expect(200);
+    expect(ids(stored)).toEqual(["cert-1"]);
   });
 
   it("refuses a body with no certificates list, a list over 2000 rows, and a certificate named twice", async () => {

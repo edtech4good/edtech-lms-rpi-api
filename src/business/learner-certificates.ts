@@ -30,7 +30,12 @@ import { resolveTierLabels } from "./tier-labels";
  *    not computed for it); a revoked certificate is invisible here, so the item is judged as if it had never been issued;
  *  - any other item has the eligibility of slice 1 (`certificate-eligibility.ts`, the same rule and the same business
  *    code) computed for this learner alone: `ready`, `not_yet` or `cant_check`, with the reasons and the quiz counts;
- *  - `tierlabel` is the learner's school's singular English label for the item's tier, when the school can be found.
+ *  - `tierlabel` is the learner's school's singular English label for the item's tier, when the school can be found;
+ *  - a certificate the learner holds (unrevoked) is ALWAYS listed, even when its level or grade is no longer live, its
+ *    curriculum's tier is no longer 'certificate' or the curriculum is no longer enrolled: it is the learner's record. Such an
+ *    item is built from the certificate's snapshot, comes after the live items of its curriculum's group, and the group is
+ *    made when the curriculum would otherwise be absent. Items not yet earned stay live-only, by the current settings.
+ *  - `hideSingleItemTiers` is deliberately NOT applied to certificates: staff set the certificate tiers explicitly.
  *
  * Read-only, and a fixed number of queries whatever the number of items: the enrolled tree (shared), the recognition
  * columns, the school, the learner's certificates, the quiz content (lessons, quizzes, two question reads), the learner's
@@ -83,15 +88,17 @@ type Draft = { id: string; name: string; scope: CertificateScope };
 
 export async function certificatesOverview(user: Token, tree: EnrolledTree, translations?: ContentTranslations): Promise<CertificatesOverview> {
   const studentid = user.studentid;
-  if (!studentid || tree.curricula.length === 0) {
+  if (!studentid) {
     return { curricula: [] };
   }
 
   // 1. the recognition setting of each curriculum (through the scope that selects it)
-  const recognitionRows = await curriculums.scope("withRecognition").findAll({
-    where: { curriculumid: tree.curricula.map((c) => c.curriculumid) },
-    attributes: ["curriculumid", ...RECOGNITION_FIELDS],
-  });
+  const recognitionRows = tree.curricula.length
+    ? await curriculums.scope("withRecognition").findAll({
+        where: { curriculumid: tree.curricula.map((c) => c.curriculumid) },
+        attributes: ["curriculumid", ...RECOGNITION_FIELDS],
+      })
+    : [];
   const recognitionOf = new Map(recognitionRows.map((row) => [row.curriculumid, row]));
   const tierSetting = (curriculumid: string, field: (typeof RECOGNITION_FIELDS)[number]): string =>
     (recognitionOf.get(curriculumid)?.[field] as string | undefined) ?? DEFAULT_RECOGNITION[field];
@@ -99,6 +106,8 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
   // 2. the items, in content order (level tier, grade tier, curriculum tier), before any status is known
   const gradeCurriculum = new Map(tree.activeGrades.map((g) => [g.gradeid, g.curriculumid]));
   const gradeOrder = new Map(tree.activeGrades.map((g) => [g.gradeid, Number(g.gradeorder ?? 0)]));
+  // grades with the same order keep the tree's own order (its position), so a tie never reorders their levels
+  const gradePosition = new Map(tree.activeGrades.map((g, at) => [g.gradeid, at]));
   const drafts = tree.curricula.map((cur) => {
     const grs: GradeRow[] = tree.activeGrades
       .filter((g) => g.curriculumid === cur.curriculumid)
@@ -106,8 +115,8 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
     const lvs: LevelRow[] = tree.activeLevels
       .filter((l) => gradeCurriculum.get(l.gradeid) === cur.curriculumid)
       .map((l) => ({ levelid: l.levelid, gradeid: l.gradeid, levelname: l.levelname, levelorder: l.levelorder, levelstatus: true, isdeleted: false }))
-      // grade order first; the sort is stable, so the tree's level order holds inside a grade
-      .sort((a, b) => (gradeOrder.get(a.gradeid) ?? 0) - (gradeOrder.get(b.gradeid) ?? 0));
+      // grade order first, then the grade's place in the tree; the sort is stable, so the tree's level order holds inside a grade
+      .sort((a, b) => (gradeOrder.get(a.gradeid) ?? 0) - (gradeOrder.get(b.gradeid) ?? 0) || (gradePosition.get(a.gradeid) ?? 0) - (gradePosition.get(b.gradeid) ?? 0));
     const items: Draft[] = [];
     if (tierSetting(cur.curriculumid, "levelrecognition") === "certificate") {
       for (const level of lvs) items.push({ scope: "level", id: level.levelid, name: level.levelname });
@@ -121,9 +130,6 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
     return { cur, grs, lvs, items };
   });
   const shown = drafts.filter((d) => d.items.length > 0);
-  if (shown.length === 0) {
-    return { curricula: [] };
-  }
 
   // 3. the school's tier labels
   const schoolid = await schoolIdOf(user);
@@ -133,7 +139,7 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
   // 4. the learner's certificates that are still valid (a revoked one is never read)
   const certificateRows = await studentcertificates.findAll({
     where: { studentid, revokedat: null },
-    attributes: ["certificateid", "shortcode", "curriculumid", "scope", "scopeid", "issuedat", "checkurl"],
+    attributes: ["certificateid", "shortcode", "curriculumid", "scope", "scopeid", "issuedat", "checkurl", "snapshot"],
     order: [["issuedat", "DESC"]],
     raw: true,
   });
@@ -186,6 +192,47 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
       return { ...base, status: e.status, reasons: e.reasons, quizcount: e.quizcount, passedcount: e.passedcount, certificate: null };
     }),
   }));
+
+  // 6b. a held certificate whose item is not live (switched off, tier changed, curriculum no longer enrolled) is still listed,
+  // built from its snapshot, after the live items of its curriculum's group
+  const listed = new Set(curricula.flatMap((c) => c.items.filter((i) => i.status === "issued").map((i) => `${lower(c.curriculumid)}|${i.scope}|${lower(i.scopeid)}`)));
+  const enrolledName = new Map(tree.curricula.map((c) => [lower(c.curriculumid), c.curriculumname]));
+  for (const row of certificateRows) {
+    const key = `${lower(row.curriculumid)}|${row.scope}|${lower(row.scopeid)}`;
+    if (listed.has(key) || certificateOf.get(key) !== row) continue;
+    listed.add(key);
+    let stored: unknown = row.snapshot;
+    if (typeof stored === "string") {
+      try {
+        stored = JSON.parse(stored);
+      } catch {
+        stored = {};
+      }
+    }
+    const snap = (typeof stored === "object" && stored !== null ? stored : {}) as { scopename?: unknown; curriculumname?: unknown; tierlabel?: unknown };
+    const text = (x: unknown): string => (typeof x === "string" ? x : "");
+    let group = curricula.find((c) => lower(c.curriculumid) === lower(row.curriculumid));
+    if (!group) {
+      group = { curriculumid: row.curriculumid, curriculumname: enrolledName.get(lower(row.curriculumid)) ?? text(snap.curriculumname), items: [] };
+      curricula.push(group);
+    }
+    const scope = row.scope as CertificateScope;
+    const tierlabel = labels?.[scope].en.one ?? (text(snap.tierlabel) || undefined);
+    group.items.push({
+      scope,
+      scopeid: row.scopeid,
+      name: text(snap.scopename),
+      ...(tierlabel ? { tierlabel } : {}),
+      status: "issued",
+      reasons: [],
+      quizcount: 0,
+      passedcount: 0,
+      certificate: { certificateid: row.certificateid, shortcode: row.shortcode, issuedat: row.issuedat, checkurl: row.checkurl ?? null },
+    });
+  }
+  if (curricula.length === 0) {
+    return { curricula: [] };
+  }
 
   // 7. names translated, one query per table for the whole answer (the field names are the content columns', as the awards overview's)
   if (translations) {
