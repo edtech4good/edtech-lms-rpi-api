@@ -508,7 +508,7 @@ const seedData = () => {
   // X's learner 2 holds one for the same grade, Y's learner 1 holds one for its own grade.
   const certificate = (n: number, studentid: string, tree: Tree, scope: string, scopeid: string, extra: Row = {}): Row => ({
     certificateid: uid("f5", n), shortcode: `AAAA-${String(1000 + n)}`, studentid, curriculumid: tree.curriculum, scope, scopeid,
-    issuedat: new Date("2026-08-01T00:00:00Z"), revokedat: null, snapshot: {}, checkurl: `https://check.example.org/v/AAAA-${1000 + n}`, ...extra,
+    issuedat: new Date("2026-08-01T00:00:00Z"), revokedat: null, snapshot: { classname: `Class ${n}` }, checkurl: `https://check.example.org/v/AAAA-${1000 + n}`, ...extra,
   });
   put(studentcertificates, [
     certificate(1, ST_X1, T_X1, "grade", T_X1.grade),
@@ -1081,10 +1081,10 @@ describe("list routes: the scope is the token's, and what the query names can on
     const ask = async (auth: Auth) => {
       const r = await send("get", "/student/certificates/overview", auth);
       const items = ((r.body?.data?.curricula ?? []) as Row[]).flatMap((c) => c.items as Row[]);
-      return { status: r.status, issued: items.filter((i) => i.status === "issued").map((i) => i.certificate.certificateid), all: items.map((i) => [i.scope, i.status]) };
+      return { status: r.status, issued: items.filter((i) => i.status === "issued").map((i) => i.certificate.certificateid), classes: items.filter((i) => i.status === "issued").map((i) => i.certificate.classname), all: items.map((i) => [i.scope, i.status]) };
     };
     const x = await ask(X_LEARNER);
-    check(`X learner -> ${x.status}, ${JSON.stringify(x.issued)} (wanted exactly its own valid grade certificate)`, x.status === 200 && JSON.stringify(x.issued) === JSON.stringify([uid("f5", 1)]));
+    check(`X learner -> ${x.status}, ${JSON.stringify(x.issued)} (wanted exactly its own valid grade certificate)`, x.status === 200 && JSON.stringify(x.issued) === JSON.stringify([uid("f5", 1)]) && JSON.stringify(x.classes) === JSON.stringify(["Class 1"]));
     const y = await ask(Y_LEARNER);
     check(`Y learner -> ${y.status}, ${JSON.stringify(y.issued)} (wanted exactly its own)`, y.status === 200 && JSON.stringify(y.issued) === JSON.stringify([uid("f5", 4)]));
     const t = await ask(X_TEACHER);

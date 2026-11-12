@@ -198,7 +198,7 @@ describe("StudentBusiness.getcertificatesoverview", () => {
       reasons: [],
       quizcount: 0,
       passedcount: 0,
-      certificate: { certificateid: "cert-1", shortcode: "ABCD-1234", issuedat: day(5), checkurl: "https://check.example.org/v/ABCD-1234" },
+      certificate: { certificateid: "cert-1", shortcode: "ABCD-1234", issuedat: day(5), checkurl: "https://check.example.org/v/ABCD-1234", classname: null },
     });
     // the other levels are judged as ever
     expect(itemsOf(body, "c1").map((i) => i.status)).toEqual(["issued", "not_yet", "not_yet"]);
@@ -206,7 +206,7 @@ describe("StudentBusiness.getcertificatesoverview", () => {
 
   it("gives a null checkurl through when central had none", async () => {
     certificates = [certificate("cert-1", "level", "l1", { checkurl: null })];
-    expect(itemsOf(await ask(), "c1")[0].certificate).toEqual({ certificateid: "cert-1", shortcode: "ABCD-1234", issuedat: day(5), checkurl: null });
+    expect(itemsOf(await ask(), "c1")[0].certificate).toEqual({ certificateid: "cert-1", shortcode: "ABCD-1234", issuedat: day(5), checkurl: null, classname: null });
   });
 
   it("treats a revoked certificate as if there were none: the item is judged by the learner's quizzes, and nothing of the revocation shows", async () => {
@@ -267,7 +267,7 @@ describe("StudentBusiness.getcertificatesoverview", () => {
   const snap = (scopename: string, curriculumname: string): Row => ({ learnername: "Learner", curriculumname, scopename, tierlabel: "Module", classname: null, organisationname: "Org", schoolname: "School", quizcount: 1 });
 
   it("still lists a held certificate whose level has since been switched off, as issued, after the live items of its curriculum", async () => {
-    certificates = [certificate("cert-off", "level", "off", { snapshot: snap("Switched off level", "Design") })];
+    certificates = [certificate("cert-off", "level", "off", { snapshot: { ...snap("Switched off level", "Design"), classname: "Class A" } })];
     const body = await ask();
     expect(itemsOf(body, "c1").map((i) => [i.scopeid, i.status])).toEqual([["l1", "not_yet"], ["l2", "not_yet"], ["l3", "not_yet"], ["off", "issued"]]);
     expect(itemsOf(body, "c1")[3]).toEqual({
@@ -279,8 +279,17 @@ describe("StudentBusiness.getcertificatesoverview", () => {
       reasons: [],
       quizcount: 0,
       passedcount: 0,
-      certificate: { certificateid: "cert-off", shortcode: "ABCD-1234", issuedat: day(5), checkurl: "https://check.example.org/v/ABCD-1234" },
+      certificate: { certificateid: "cert-off", shortcode: "ABCD-1234", issuedat: day(5), checkurl: "https://check.example.org/v/ABCD-1234", classname: "Class A" },
     });
+  });
+
+  it("carries the class the snapshot names on a live issued item, and null when the snapshot has none or a blank one", async () => {
+    certificates = [
+      certificate("c-a", "level", "l1", { snapshot: { classname: "Class B" } }),
+      certificate("c-b", "level", "l2", { snapshot: { classname: "" } }),
+      certificate("c-c", "level", "l3", { snapshot: JSON.stringify({ classname: "Class C" }) }),
+    ];
+    expect(itemsOf(await ask(), "c1").map((i) => i.certificate?.classname)).toEqual(["Class B", null, "Class C"]);
   });
 
   it("still lists a held certificate when its tier is no longer a certificate tier, making the curriculum's group when it would be absent", async () => {

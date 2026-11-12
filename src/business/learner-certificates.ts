@@ -53,7 +53,7 @@ export interface CertificateOverviewItem {
   reasons: Array<Reason | { reason: "no_quizzes" }>;
   quizcount: number;
   passedcount: number;
-  certificate: { certificateid: string; shortcode: string; issuedat: Date; checkurl: string | null } | null;
+  certificate: { certificateid: string; shortcode: string; issuedat: Date; checkurl: string | null; classname: string | null } | null;
   translations?: Translated;
 }
 
@@ -82,6 +82,24 @@ const translationsFor = async (translations: ContentTranslations, table: "curric
   const stand: Array<Record<string, unknown>> = rows.map((r) => ({ [pk]: r.id, [field]: r.name }));
   await translations.decorate(table, stand);
   return stand.map((s) => (s.translations as Translated | undefined) ?? {});
+};
+
+/** A certificate row's snapshot as an object (the driver may hand JSON back as text); `{}` when it is neither. */
+const snapshotOf = (row: { snapshot?: unknown }): Record<string, unknown> => {
+  let stored: unknown = row.snapshot;
+  if (typeof stored === "string") {
+    try {
+      stored = JSON.parse(stored);
+    } catch {
+      stored = {};
+    }
+  }
+  return typeof stored === "object" && stored !== null ? (stored as Record<string, unknown>) : {};
+};
+/** The class the certificate says the learner was in, or null. */
+const classnameOf = (row: { snapshot?: unknown }): string | null => {
+  const name = snapshotOf(row).classname;
+  return typeof name === "string" && name !== "" ? name : null;
 };
 
 type Draft = { id: string; name: string; scope: CertificateScope };
@@ -185,7 +203,7 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
           reasons: [],
           quizcount: 0,
           passedcount: 0,
-          certificate: { certificateid: issued.certificateid, shortcode: issued.shortcode, issuedat: issued.issuedat, checkurl: issued.checkurl ?? null },
+          certificate: { certificateid: issued.certificateid, shortcode: issued.shortcode, issuedat: issued.issuedat, checkurl: issued.checkurl ?? null, classname: classnameOf(issued) },
         };
       }
       const e = eligibilityOf.get(`${d.cur.curriculumid}|${item.scope}|${item.id}`)!;
@@ -201,15 +219,7 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
     const key = `${lower(row.curriculumid)}|${row.scope}|${lower(row.scopeid)}`;
     if (listed.has(key) || certificateOf.get(key) !== row) continue;
     listed.add(key);
-    let stored: unknown = row.snapshot;
-    if (typeof stored === "string") {
-      try {
-        stored = JSON.parse(stored);
-      } catch {
-        stored = {};
-      }
-    }
-    const snap = (typeof stored === "object" && stored !== null ? stored : {}) as { scopename?: unknown; curriculumname?: unknown; tierlabel?: unknown };
+    const snap = snapshotOf(row) as { scopename?: unknown; curriculumname?: unknown; tierlabel?: unknown };
     const text = (x: unknown): string => (typeof x === "string" ? x : "");
     let group = curricula.find((c) => lower(c.curriculumid) === lower(row.curriculumid));
     if (!group) {
@@ -227,7 +237,7 @@ export async function certificatesOverview(user: Token, tree: EnrolledTree, tran
       reasons: [],
       quizcount: 0,
       passedcount: 0,
-      certificate: { certificateid: row.certificateid, shortcode: row.shortcode, issuedat: row.issuedat, checkurl: row.checkurl ?? null },
+      certificate: { certificateid: row.certificateid, shortcode: row.shortcode, issuedat: row.issuedat, checkurl: row.checkurl ?? null, classname: classnameOf(row) },
     });
   }
   if (curricula.length === 0) {
