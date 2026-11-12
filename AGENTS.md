@@ -105,7 +105,7 @@ holds one school. The rules, in `src/business/`:
 - Every route declares an `@OrgPolicy` (`public | learner | teacher | server |
   pi-import`). `npm run routes:policy -- --write` regenerates
   `docs/route-policy-inventory.md`; `route-inventory.spec.ts` fails on an
-  undeclared route. All 83 routes are proved or public.
+  undeclared route. All 85 routes are proved or public.
 - Outward payloads keep their shape; a new column is kept out of every query by
   a default scope on its model and read only through a named scope.
 - A request header a browser client sends to this API (the learner app's

@@ -26,16 +26,16 @@ pinned in `src/route-policy/pending-enforcement.snapshot.txt`.
 
 Pending refers only to the organisation boundary; every route keeps the authentication and role guards shown in the Guards column.
 
-Of **88** routes, **83** are proved by a spec, **5** are not applicable (public) and **0** are pending.
+Of **90** routes, **85** are proved by a spec, **5** are not applicable (public) and **0** are pending.
 
 | Policy | Routes | Proved | Not applicable | Pending |
 |---|---|---|---|---|
 | public | 5 | 0 | 5 | 0 |
-| learner | 44 | 44 | 0 | 0 |
+| learner | 45 | 45 | 0 | 0 |
 | teacher | 34 | 34 | 0 | 0 |
-| server | 4 | 4 | 0 | 0 |
+| server | 5 | 5 | 0 | 0 |
 | pi-import | 1 | 1 | 0 | 0 |
-| **all** | **88** | **83** | **5** | **0** |
+| **all** | **90** | **85** | **5** | **0** |
 
 ## Policies
 
@@ -56,7 +56,7 @@ A route used by both a user token and the server key is classified by its user p
 - **Server key**: `yes` when every authentication guard on the route lets central's server sync key through, so a caller with no user gets in.
 - **Staff only**: `yes` when an authentication guard lists school roles (teacher, admin, super admin), so a learner's token is refused.
 
-Routes admitting the server key: 24.
+Routes admitting the server key: 25.
 
 ## Routes
 
@@ -82,6 +82,7 @@ Routes admitting the server key: 24.
 | GET | `/grade/curriculum/:curriculumid` | GradeController.getgradesbycurriculumid | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) |  |
 | GET | `/grade/progress/curriculum/:curriculumid` | GradeController.getuesrgradesprogess | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(curriculum:curriculumid) |  |
 | GET | `/grade/totalgradeprogress/:gradeid` | GradeController.totalgradeprogress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(grade:gradeid) |  |
+| PUT | `/import/certificates` | ImportController.certificatesimport | server | yes | `src/modules/import/import.certificates.spec.ts` | yes |  | ServerSyncGuard(), ReportScopeGuard | Certificates for the learners of the organisation named in X-Organisation-Id; a row for any other learner refuses the whole payload. |
 | PUT | `/import/master` | ImportController.completesync | pi-import | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | ServerSyncGuard(Role.ADMIN, Role.SUPERADMIN, Role.TEACHER) | Payload header names the organisation; on a Pi it must match the token's claim, and a token with no claim is refused (the payload's rows are proved in src/modules/import). |
 | PUT | `/import/ownership` | ImportController.ownership | server | yes | `src/modules/import/import.ownership.spec.ts` | yes |  | ServerSyncGuard() | Central's ownership push. |
 | PUT | `/import/students` | ImportController.studentsimport | server | yes | `src/modules/import/import.roster.school.spec.ts` | yes |  | ServerSyncGuard() | Roster for one school; refuses rows of any other school (5c). |
@@ -135,6 +136,7 @@ Routes admitting the server key: 24.
 | GET | `/student/all` | StudentController.getAllCurriculums | teacher | yes | `src/modules/org-boundary.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN) | The learners are the token's school's; a school in the query can only narrow that. |
 | GET | `/student/awards` | StudentController.getStudentAwards | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | The caller's own awards only; read-only. |
 | GET | `/student/awards/overview` | StudentController.getStudentAwardsOverview | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | The caller's own awards and progress only; read-only. |
+| GET | `/student/certificates/overview` | StudentController.getStudentCertificatesOverview | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | The caller's own certificates and eligibility only; read-only. |
 | POST | `/student/logintime` | StudentController.getlogintime | learner | yes | `src/modules/org-boundary.leak.spec.ts` | yes |  | AccessOrServerSyncGuard(ACCESS), ReportScopeGuard | Central calls it with the server key; a learner token gets its own login only. |
 | POST | `/student/profile` | StudentController.updatestudentprofile | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) | Updates only the token's own learner record. |
 | GET | `/student/progress` | StudentController.getStudentProgress | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS) |  |

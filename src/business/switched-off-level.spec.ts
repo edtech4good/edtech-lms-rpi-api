@@ -327,7 +327,7 @@ const baseRows = (): Row[] => [
   { _t: "organisations", organisationid: ORG, organisationstatus: true, isdeleted: false, contentlanguage: "en" },
   { _t: "schools", schoolid: SCHOOL, organisationid: ORG, schoolname: "School", curriculums: [CURRICULUM], isdeleted: false },
   { _t: "students", studentid: STUDENT, schooluserid: SCHOOLUSER, schoolid: SCHOOL, schoolname: "School", curriculumid: CURRICULUM, curriculumids: [CURRICULUM], studentfirstname: "Learner", isactive: 1, is_teacher_acc: false },
-  { _t: "curriculums", curriculumid: CURRICULUM, curriculumname: "Programme", curriculumdescription: "d", curriculumstatus: true, organisationid: ORG, subjectid: null, ...live },
+  { _t: "curriculums", curriculumid: CURRICULUM, curriculumname: "Programme", curriculumdescription: "d", curriculumstatus: true, organisationid: ORG, subjectid: null, levelrecognition: "certificate", ...live },
   { _t: "grades", gradeid: GRADE, curriculumid: CURRICULUM, gradename: "Programme", gradedescription: "d", gradeorder: 1, gradestatus: true, points: 100, ...live },
   { _t: "studentgradesprogress", studentgradeprogressid: uid("f4", 91), studentid: STUDENT, gradeid: GRADE, points: 100, scores: 25, completed: true },
 ];
@@ -414,6 +414,8 @@ const LISTS: Record<string, { url: string; shows?: string[] }> = {
   "GET /student/progress": { url: "/student/progress" },
   "GET /student/progress/summary": { url: "/student/progress/summary", shows: [A.level] },
   "GET /student/awards/overview": { url: "/student/awards/overview", shows: [A.level] },
+  // the curriculum's level tier is set to certificate here, so every live level is an item
+  "GET /student/certificates/overview": { url: "/student/certificates/overview", shows: [A.level] },
 };
 /** Routes that open a piece of content by its id: level A's must answer, level B's must answer as an id that names nothing does. */
 const OPENS: Record<string, { url: (id: string) => string; of: keyof Ids; shows?: string[] }> = {

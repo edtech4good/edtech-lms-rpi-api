@@ -31,7 +31,7 @@ const curriculumAwardsLevels = async (curid: string, transaction: Transaction): 
 /**
  * The learner's school as the token names it (a learner token always carries one), else the school on the learner row.
  */
-const schoolIdOf = async (user: Token): Promise<string | null> => {
+export const schoolIdOf = async (user: Token): Promise<string | null> => {
   if (user.schoolid) {
     return user.schoolid;
   }

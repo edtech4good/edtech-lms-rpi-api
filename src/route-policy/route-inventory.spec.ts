@@ -51,9 +51,9 @@ import {
 
 // Pinned on purpose. When you add or remove a route, update these numbers AND run
 // `npm run routes:policy -- --write` to refresh the committed files.
-const EXPECTED_TOTAL = 88;
-const EXPECTED_BY_POLICY = { public: 5, learner: 44, teacher: 34, server: 4, "pi-import": 1 };
-const EXPECTED_PROVED = 83;
+const EXPECTED_TOTAL = 90;
+const EXPECTED_BY_POLICY = { public: 5, learner: 45, teacher: 34, server: 5, "pi-import": 1 };
+const EXPECTED_PROVED = 85;
 const EXPECTED_NOT_APPLICABLE = 5;
 const EXPECTED_PENDING = 0;
 
@@ -106,7 +106,7 @@ describe("route inventory (real application wiring)", () => {
   });
 
   describe("proved and pending", () => {
-    it("divides the routes into 83 proved by a spec, 5 not applicable (public) and none pending", () => {
+    it("divides the routes into 85 proved by a spec, 5 not applicable (public) and none pending", () => {
       const count = (state: string) => routes.filter((r) => enforcementState(r) === state).length;
       expect(count("yes")).toBe(EXPECTED_PROVED);
       expect(count("n/a")).toBe(EXPECTED_NOT_APPLICABLE);
@@ -129,9 +129,10 @@ describe("route inventory (real application wiring)", () => {
       expect(routes.filter((r) => r.policy === "public" && r.enforcedBy !== undefined).map(key)).toEqual([]);
     });
 
-    it("the proving specs are the leak specs, the export spec and the specs of the four server-key routes", () => {
+    it("the proving specs are the leak specs, the export spec and the specs of the five server-key routes", () => {
       expect([...new Set(routes.filter((r) => r.enforcedBy !== undefined).map((r) => r.enforcedBy))].sort()).toEqual([
         "src/modules/export-scope.leak.spec.ts",
+        "src/modules/import/import.certificates.spec.ts",
         "src/modules/import/import.ownership.spec.ts",
         "src/modules/import/import.remove-unused.spec.ts",
         "src/modules/import/import.roster.school.spec.ts",
@@ -177,9 +178,9 @@ describe("route inventory (real application wiring)", () => {
       }
     });
 
-    it("`server` routes are the three imports and the unused-learner removal, which take only central's key", () => {
-      expect(routes.filter((r) => r.policy === "server").map(key).sort()).toEqual(["DELETE /import/students/:schooluserid", "PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
-      expect(routes.filter((r) => r.auth === "server-key-only").map(key).sort()).toEqual(["DELETE /import/students/:schooluserid", "PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
+    it("`server` routes are the four imports and the unused-learner removal, which take only central's key", () => {
+      expect(routes.filter((r) => r.policy === "server").map(key).sort()).toEqual(["DELETE /import/students/:schooluserid", "PUT /import/certificates", "PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
+      expect(routes.filter((r) => r.auth === "server-key-only").map(key).sort()).toEqual(["DELETE /import/students/:schooluserid", "PUT /import/certificates", "PUT /import/ownership", "PUT /import/students", "PUT /import/teachers"]);
     });
 
     it("`pi-import` is the content import alone: the key, and staff tokens on a Pi", () => {
@@ -222,7 +223,7 @@ describe("route inventory (real application wiring)", () => {
       expect(unguarded.map(key)).toEqual([]);
       // every route central proxies has the report scope in front of it
       expect(withGuard("ReportScopeGuard").length).toBe(
-        routes.filter((r) => r.path.startsWith("/report/")).length + 6, // + /student/logintime, the baseline results, the three exports and the unused-learner removal
+        routes.filter((r) => r.path.startsWith("/report/")).length + 7, // + /student/logintime, the baseline results, the three exports, the unused-learner removal and the certificates import
       );
     });
   });

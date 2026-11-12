@@ -43,6 +43,7 @@ import { SERVER_SYNC_USER_ID, ServerSyncGuard } from "src/guards/server-sync.gua
 import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
 import { ReportScope } from "src/business/report-scope";
 import { RemoveUnusedLearnerBusiness, RemoveUnusedResult } from "src/business/remove-unused-learner";
+import { importCertificates, parseCertificatesPayload } from "src/business/certificates-import";
 import type { Response } from "express";
 import { LOGTYPE } from "src/models/enums/logaccess.enum";
 import { SchoolRole } from "src/models/enums/school.role.enum";
@@ -340,6 +341,31 @@ export class ImportController {
       Logger.info(`<${user.schoolusername}> removed an unused learner`, { userid: user.schooluserid, schooluserid });
     }
     return result;
+  }
+
+  // Central's certificates for this server's learners (see business/certificates-import.ts). The server sync key only,
+  // with the organisation central acts for in X-Organisation-Id (the platform marker is refused): a row for a learner that
+  // is not a learner of that organisation here refuses the whole payload (400 naming the row) and nothing is written.
+  @Put("certificates")
+  @OrgPolicy("server", { note: "Certificates for the learners of the organisation named in X-Organisation-Id; a row for any other learner refuses the whole payload.", enforcedBy: "src/modules/import/import.certificates.spec.ts" })
+  @UseGuards(ServerSyncGuard(), ReportScopeGuard)
+  @ApiResponse({ status: 200, description: "The certificates were written: `{ upserted, deleted }`" })
+  @ApiResponse({ status: 400, description: "The organisation header is missing or names the platform, a row is not valid, or a learner is not one of the organisation's; nothing was written" })
+  @HttpCode(HttpStatus.OK)
+  async certificatesimport(
+    @Body() body: unknown,
+    @ReportScopeOf() scope: ReportScope | null,
+    @User() user: Token
+  ): Promise<{ error: false; data: { upserted: number; deleted: number } }> {
+    if (!scope) {
+      throw new ApiError(ErrorCode.INVALID_INPUT, {
+        message: "The organisation header is missing or not valid.",
+        fields: [{ field: "x-organisation-id", message: "An organisation id is required." }],
+      });
+    }
+    const result = await importCertificates(parseCertificatesPayload(body), scope);
+    Logger.info(`<${user.schoolusername}> import certificates`, { userid: user.schooluserid, upserted: result.upserted, deleted: result.deleted });
+    return { error: false, data: result };
   }
 
   @Put("teachers")

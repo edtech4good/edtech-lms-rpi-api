@@ -111,10 +111,10 @@ export const learnerEligibility = (studentid: string, quizzes: ScopeQuiz[], atte
   return { studentid, status, reasons, quizcount: quizzes.length, passedcount };
 };
 
-interface GradeRow { gradeid: string; gradename: string; gradeorder: number; gradestatus: boolean; isdeleted: boolean }
-interface LevelRow { levelid: string; gradeid: string; levelname: string; levelorder: number; levelstatus: boolean; isdeleted: boolean }
-interface LessonRow { lessonid: string; levelid: string; lessonname: string; lessonorder: number }
-interface LessonQuizRow { lessonquizid: string; lessonid: string; lessonquizname: string; lessonquizorder: number }
+export interface GradeRow { gradeid: string; gradename: string; gradeorder: number; gradestatus: boolean; isdeleted: boolean }
+export interface LevelRow { levelid: string; gradeid: string; levelname: string; levelorder: number; levelstatus: boolean; isdeleted: boolean }
+export interface LessonRow { lessonid: string; levelid: string; lessonname: string; lessonorder: number }
+export interface LessonQuizRow { lessonquizid: string; lessonid: string; lessonquizname: string; lessonquizorder: number }
 
 const lower = (x: unknown): string => String(x ?? "").toLowerCase();
 const byOrder = (a: number | null | undefined, b: number | null | undefined, ida: string, idb: string): number =>
@@ -230,6 +230,89 @@ const raw = { raw: true } as const;
 const asBool = (x: unknown): boolean => x === true || Number(x) === 1;
 
 /**
+ * The live lessons of the levels, their lesson quizzes, and which quizzes have an active question (the same filter the
+ * quiz is scored and served with, quizscore.ts): four queries at most, whatever the number of levels. Shared with the
+ * learner's certificates overview, which asks for every level of every curriculum at once.
+ */
+export async function loadQuizContent(levelids: string[]): Promise<{
+  lessonRows: LessonRow[];
+  quizRows: LessonQuizRow[];
+  activeLessonQuizIds: Set<string>;
+  levelsWithQuiz: Set<string>;
+}> {
+  const lessonRows = levelids.length
+    ? ((await lessons.findAll({
+        where: { levelid: { [Op.in]: levelids }, lessonstatus: true, isdeleted: false },
+        attributes: ["lessonid", "levelid", "lessonname", "lessonorder"],
+        ...raw,
+      })) as unknown as LessonRow[])
+    : [];
+  const quizRows = lessonRows.length
+    ? ((await lessonquizzes.findAll({
+        where: { lessonid: { [Op.in]: lessonRows.map((l) => l.lessonid) }, lessonquizstatus: true },
+        attributes: ["lessonquizid", "lessonid", "lessonquizname", "lessonquizorder"],
+        ...raw,
+      })) as unknown as LessonQuizRow[])
+    : [];
+  const activeQuestion = { association: "question", attributes: [], required: true, where: { templatetypeid: { [Op.notIn]: UNRENDERED_TEMPLATE_TYPES } } };
+  const lessonQuizQuestionRows = quizRows.length
+    ? ((await lessonquizquestions.findAll({
+        where: { lessonquizid: { [Op.in]: quizRows.map((q) => q.lessonquizid) }, lessonquizquestionstatus: true },
+        attributes: ["lessonquizid"],
+        include: [activeQuestion],
+        ...raw,
+      })) as unknown as Array<{ lessonquizid: string }>)
+    : [];
+  const levelQuizQuestionRows = levelids.length
+    ? ((await levelquizquestions.findAll({
+        where: { levelid: { [Op.in]: levelids }, levelquizquestionstatus: true },
+        attributes: ["levelid"],
+        include: [activeQuestion],
+        ...raw,
+      })) as unknown as Array<{ levelid: string }>)
+    : [];
+  return {
+    lessonRows,
+    quizRows,
+    activeLessonQuizIds: new Set(lessonQuizQuestionRows.map((r) => lower(r.lessonquizid))),
+    levelsWithQuiz: new Set(levelQuizQuestionRows.map((r) => lower(r.levelid))),
+  };
+}
+
+type AttemptRow = { studentid: string; progresstype: number; studentprogressreferenceid: string; resultpercentage: number | string | null; verified: unknown };
+
+/** Every attempt of the learners at the quizzes, from `studentprogress` rows, by `studentid|quizid` (both lower case). */
+export async function loadAttempts(studentids: string[], quizzes: ScopeQuiz[]): Promise<Map<string, Attempt[]>> {
+  const attempts = new Map<string, Attempt[]>();
+  if (studentids.length === 0 || quizzes.length === 0) {
+    return attempts;
+  }
+  const attemptRows = (await studentprogress.findAll({
+    where: {
+      studentid: { [Op.in]: studentids },
+      progresstype: { [Op.in]: [Progress.LESSONQUIZ, Progress.LEVELQUIZ] },
+      studentprogressreferenceid: { [Op.in]: [...new Set(quizzes.map((q) => q.id))] },
+    },
+    attributes: ["studentid", "progresstype", "studentprogressreferenceid", "resultpercentage", "verified"],
+    ...raw,
+  })) as unknown as AttemptRow[];
+  const kindOf = new Map(quizzes.map((q) => [lower(q.id), q.kind === "lesson" ? Progress.LESSONQUIZ : Progress.LEVELQUIZ]));
+  for (const row of attemptRows) {
+    // a row with no result is not an attempt
+    if (row.resultpercentage === null || row.resultpercentage === undefined) {
+      continue;
+    }
+    // a lesson quiz is stored with progresstype 2 and a level quiz with 3, both under the quiz's own id
+    if (kindOf.get(lower(row.studentprogressreferenceid)) !== Number(row.progresstype)) {
+      continue;
+    }
+    const key = `${lower(row.studentid)}|${lower(row.studentprogressreferenceid)}`;
+    attempts.set(key, [...(attempts.get(key) ?? []), { verified: asBool(row.verified), percentage: Number(row.resultpercentage) || 0 }]);
+  }
+  return attempts;
+}
+
+/**
  * The eligibility of the learners the caller may see, in the order the caller gave them. A learner id that is not a learner
  * in the scope (unknown, or of another organisation or school) is left out, exactly as an unknown id is.
  *
@@ -262,45 +345,13 @@ export async function certificateEligibility(request: EligibilityRequest, scope:
   }
   const levelids = scopeLevels.map((l) => l.levelid);
 
-  // 4-5. live lessons, and their lesson quizzes
-  const lessonRows = levelids.length
-    ? ((await lessons.findAll({
-        where: { levelid: { [Op.in]: levelids }, lessonstatus: true, isdeleted: false },
-        attributes: ["lessonid", "levelid", "lessonname", "lessonorder"],
-        ...raw,
-      })) as unknown as LessonRow[])
-    : [];
-  const quizRows = lessonRows.length
-    ? ((await lessonquizzes.findAll({
-        where: { lessonid: { [Op.in]: lessonRows.map((l) => l.lessonid) }, lessonquizstatus: true },
-        attributes: ["lessonquizid", "lessonid", "lessonquizname", "lessonquizorder"],
-        ...raw,
-      })) as unknown as LessonQuizRow[])
-    : [];
-
-  // 6-7. which quizzes have an active question: the same filter the quiz is scored and served with (quizscore.ts)
-  const activeQuestion = { association: "question", attributes: [], required: true, where: { templatetypeid: { [Op.notIn]: UNRENDERED_TEMPLATE_TYPES } } };
-  const lessonQuizQuestionRows = quizRows.length
-    ? ((await lessonquizquestions.findAll({
-        where: { lessonquizid: { [Op.in]: quizRows.map((q) => q.lessonquizid) }, lessonquizquestionstatus: true },
-        attributes: ["lessonquizid"],
-        include: [activeQuestion],
-        ...raw,
-      })) as unknown as Array<{ lessonquizid: string }>)
-    : [];
-  const levelQuizQuestionRows = levelids.length
-    ? ((await levelquizquestions.findAll({
-        where: { levelid: { [Op.in]: levelids }, levelquizquestionstatus: true },
-        attributes: ["levelid"],
-        include: [activeQuestion],
-        ...raw,
-      })) as unknown as Array<{ levelid: string }>)
-    : [];
+  // 4-7. live lessons, their lesson quizzes, and which quizzes have an active question
+  const { lessonRows, quizRows, activeLessonQuizIds, levelsWithQuiz } = await loadQuizContent(levelids);
   const quizzes = quizzesInScope(
     { grades: gradeRows, levels: levelRows, lessons: lessonRows, lessonquizzes: quizRows },
     scopeLevels,
-    new Set(lessonQuizQuestionRows.map((r) => lower(r.lessonquizid))),
-    new Set(levelQuizQuestionRows.map((r) => lower(r.levelid))),
+    activeLessonQuizIds,
+    levelsWithQuiz,
   );
 
   // 8. the learners the caller may see
@@ -316,28 +367,6 @@ export async function certificateEligibility(request: EligibilityRequest, scope:
   }
 
   // 9. every attempt of those learners at those quizzes
-  const attemptRows = (await studentprogress.findAll({
-    where: {
-      studentid: { [Op.in]: learners },
-      progresstype: { [Op.in]: [Progress.LESSONQUIZ, Progress.LEVELQUIZ] },
-      studentprogressreferenceid: { [Op.in]: quizzes.map((q) => q.id) },
-    },
-    attributes: ["studentid", "progresstype", "studentprogressreferenceid", "resultpercentage", "verified"],
-    ...raw,
-  })) as unknown as Array<{ studentid: string; progresstype: number; studentprogressreferenceid: string; resultpercentage: number | string | null; verified: unknown }>;
-  const kindOf = new Map(quizzes.map((q) => [lower(q.id), q.kind === "lesson" ? Progress.LESSONQUIZ : Progress.LEVELQUIZ]));
-  const attempts = new Map<string, Attempt[]>();
-  for (const row of attemptRows) {
-    // a row with no result is not an attempt
-    if (row.resultpercentage === null || row.resultpercentage === undefined) {
-      continue;
-    }
-    // a lesson quiz is stored with progresstype 2 and a level quiz with 3, both under the quiz's own id
-    if (kindOf.get(lower(row.studentprogressreferenceid)) !== Number(row.progresstype)) {
-      continue;
-    }
-    const key = `${lower(row.studentid)}|${lower(row.studentprogressreferenceid)}`;
-    attempts.set(key, [...(attempts.get(key) ?? []), { verified: asBool(row.verified), percentage: Number(row.resultpercentage) || 0 }]);
-  }
+  const attempts = await loadAttempts(learners, quizzes);
   return learners.map((id) => learnerEligibility(id, quizzes, (quizid) => attempts.get(`${lower(id)}|${lower(quizid)}`) ?? []));
 }
