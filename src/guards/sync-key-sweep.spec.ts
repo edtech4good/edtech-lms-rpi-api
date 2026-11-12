@@ -38,7 +38,7 @@ type RouteKey = `${string} ${string}`;
 const routeKey = (method: string, path: string): RouteKey =>
   `${method.toUpperCase()} ${path}` as RouteKey;
 
-// The 16 report/* routes central proxies with the sync key (`offlineonline`
+// The 17 report/* routes central proxies with the sync key (`offlineonline`
 // is deliberately excluded: central's call to it is commented out, so it
 // keeps the plain AccessGuard and refuses the key), plus
 // curriculum/:id/getstudentresult, student/logintime, and the 3 import/*
@@ -55,6 +55,7 @@ const ALLOWLIST: Array<RouteKey> = [
   routeKey("POST", "/report/student-grade-progress"),
   routeKey("POST", "/report/student-level-progress"),
   routeKey("POST", "/report/student-awards"),
+  routeKey("POST", "/report/certificate-eligibility"),
   routeKey("POST", "/report/student-lesson-progress"),
   routeKey("POST", "/report/studentprogress/download"),
   routeKey("POST", "/report/studentlastcompletedquiz/download"),
@@ -109,6 +110,7 @@ const ALLOWLIST_HANDLERS: Record<RouteKey, [any, string]> = {
     "getStudentLevelProgress",
   ],
   [routeKey("POST", "/report/student-awards")]: [ReportController, "getStudentAwards"],
+  [routeKey("POST", "/report/certificate-eligibility")]: [ReportController, "getCertificateEligibility"],
   [routeKey("POST", "/report/student-lesson-progress")]: [
     ReportController,
     "getStudentLessonProgress",

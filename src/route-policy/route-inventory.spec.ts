@@ -51,9 +51,9 @@ import {
 
 // Pinned on purpose. When you add or remove a route, update these numbers AND run
 // `npm run routes:policy -- --write` to refresh the committed files.
-const EXPECTED_TOTAL = 87;
-const EXPECTED_BY_POLICY = { public: 5, learner: 44, teacher: 33, server: 4, "pi-import": 1 };
-const EXPECTED_PROVED = 82;
+const EXPECTED_TOTAL = 88;
+const EXPECTED_BY_POLICY = { public: 5, learner: 44, teacher: 34, server: 4, "pi-import": 1 };
+const EXPECTED_PROVED = 83;
 const EXPECTED_NOT_APPLICABLE = 5;
 const EXPECTED_PENDING = 0;
 
@@ -106,7 +106,7 @@ describe("route inventory (real application wiring)", () => {
   });
 
   describe("proved and pending", () => {
-    it("divides the routes into 82 proved by a spec, 5 not applicable (public) and none pending", () => {
+    it("divides the routes into 83 proved by a spec, 5 not applicable (public) and none pending", () => {
       const count = (state: string) => routes.filter((r) => enforcementState(r) === state).length;
       expect(count("yes")).toBe(EXPECTED_PROVED);
       expect(count("n/a")).toBe(EXPECTED_NOT_APPLICABLE);
@@ -189,9 +189,10 @@ describe("route inventory (real application wiring)", () => {
       expect(pi[0].rolesRequired).toBe(true);
     });
 
-    it("the routes that admit central's server key besides the imports are the 16 proxied reports, login time and the baseline results", () => {
+    it("the routes that admit central's server key besides the imports are the 17 proxied reports, login time and the baseline results", () => {
       expect(routes.filter((r) => r.admitsServerKey && r.policy !== "server").map(key).sort()).toEqual([
         "GET /curriculum/:curriculumbaselineid/getstudentresult",
+        "POST /report/certificate-eligibility",
         "POST /report/student-awards",
         "POST /report/student-grade-progress",
         "POST /report/student-lesson-progress",

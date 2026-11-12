@@ -1771,6 +1771,54 @@ describe("report-style routes: the scope is X's header (central), or the token's
     }
     expect(failures).toEqual([]);
   });
+  it("POST /report/certificate-eligibility answers only the scope's learners and curricula, and writes nothing", async () => {
+    const { failures, check } = scenario();
+    // one quiz with one active question in each organisation's curriculum; the first learner of each passed it, marked by the server
+    tables.set(lessonquizquestions, [
+      ...rowsOf(lessonquizquestions),
+      { lessonquizquestionid: uid("f5", 1), lessonquizid: T_X1.quiz, lessonquizquestionstatus: true },
+      { lessonquizquestionid: uid("f5", 2), lessonquizid: T_Y1.quiz, lessonquizquestionstatus: true },
+    ]);
+    const attempt = (n: number, studentid: string, quizid: string): Row => ({
+      studentprogressid: uid("f6", n), studentid, studentprogressreferenceid: quizid, progresstype: 2, resultpercentage: 90, verified: true, ispass: 1,
+    });
+    tables.set(studentprogress, [...rowsOf(studentprogress), attempt(1, ST_X1, T_X1.quiz), attempt(2, ST_Y1, T_Y1.quiz)]);
+    const before = snapshot();
+    const body = (t: Tree, studentids: string[]) => ({ curriculumid: t.curriculum, scope: "curriculum", scopeid: t.curriculum, studentids });
+    const ask = async (auth: Auth, b: unknown, headers: Record<string, string> = {}) => {
+      const r = await send("post", "/report/certificate-eligibility", auth, b, headers);
+      return { status: r.status, rows: (r.body?.data ?? []) as Row[] };
+    };
+    const brief = (rows: Row[]) => rows.map((r) => `${r.studentid}:${r.status}`);
+    for (const [name, auth] of [["server key + X's header", SERVER_X], ["X teacher", X_TEACHER]] as Array<[string, Auth]>) {
+      const own = await ask(auth, body(T_X1, [ST_X2, ST_Y1, ST_X1, ST_X2]));
+      check(`${name}, X's curriculum, learners of X and Y -> ${own.status} ${JSON.stringify(brief(own.rows))} (wanted 200, X's two only, in the order given)`,
+        own.status === 200 && JSON.stringify(brief(own.rows)) === JSON.stringify([`${ST_X2}:not_yet`, `${ST_X1}:ready`]));
+      const other = await ask(auth, body(T_Y1, [ST_Y1, ST_X1]));
+      check(`${name}, Y's curriculum -> ${other.status} (wanted 404, as one that does not exist)`, other.status === 404);
+      const nothing = await ask(auth, body(T_X1, [ST_Y1]));
+      check(`${name}, only Y's learner -> ${nothing.status} ${JSON.stringify(nothing.rows)} (wanted 200, nothing)`, nothing.status === 200 && nothing.rows.length === 0);
+    }
+    let r = await ask(Y_TEACHER, body(T_X1, [ST_X1]));
+    check(`Y teacher, X's curriculum -> ${r.status} (wanted 404)`, r.status === 404);
+    r = await ask(X_TEACHER, body(T_Y1, [ST_Y1]), { "X-Organisation-Id": ORG_Y });
+    check(`X teacher, Y's curriculum, with a header naming Y (ignored) -> ${r.status} (wanted 404)`, r.status === 404);
+    r = await ask(SERVER_PLATFORM, body(T_Y1, [ST_Y1, ST_X1]));
+    check(`server key + header platform, Y's curriculum -> ${r.status} ${JSON.stringify(brief(r.rows))} (pinned: unscoped)`, r.status === 200 && JSON.stringify(brief(r.rows)) === JSON.stringify([`${ST_Y1}:ready`, `${ST_X1}:not_yet`]));
+    r = await ask(SERVER_NOHEADER, body(T_X1, [ST_X1]));
+    check(`server key, no header -> ${r.status} (wanted 400)`, r.status === 400);
+    for (const bad of BAD_HEADERS) {
+      r = await ask({ key: true, org: bad }, body(T_X1, [ST_X1]));
+      check(`server key + header "${bad}" -> ${r.status} (wanted 400)`, r.status === 400);
+    }
+    r = await ask({ key: true, org: uid("99", 1) }, body(T_X1, [ST_X1]));
+    check(`server key + a header for an organisation that is not here, X's curriculum -> ${r.status} (wanted 404)`, r.status === 404);
+    r = await ask(X_LEARNER, body(T_X1, [ST_X1]));
+    check(`X learner -> ${r.status} (wanted 403: staff only)`, r.status === 403);
+    await refusedEverywhere(check, "post", "/report/certificate-eligibility", body(T_X1, [ST_X1]));
+    check("nothing was written", snapshot() === before);
+    expect(failures).toEqual([]);
+  });
   it("POST /report/student-lesson-progress reads only learners in the scope: X's header or X's school, whatever the body names", async () => {
     expect(await runReport(REPORTS["POST /report/student-lesson-progress"])).toEqual([]);
   });
