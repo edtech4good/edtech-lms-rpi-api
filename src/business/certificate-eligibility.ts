@@ -130,11 +130,13 @@ export const levelsOfScope = (
   const liveGrade = (g: GradeRow) => Boolean(g.gradestatus) && !g.isdeleted;
   if (scope === "level") {
     const level = content.levels.find((l) => lower(l.levelid) === lower(scopeid));
-    return level ? (live(level) ? [level] : []) : null;
+    // a level whose grade is switched off or deleted is not live either
+    const parent = level ? content.grades.find((g) => lower(g.gradeid) === lower(level.gradeid)) : undefined;
+    return level ? (live(level) && parent !== undefined && liveGrade(parent) ? [level] : []) : null;
   }
   if (scope === "grade") {
     const grade = content.grades.find((g) => lower(g.gradeid) === lower(scopeid));
-    return grade ? content.levels.filter((l) => lower(l.gradeid) === lower(grade.gradeid) && live(l)) : null;
+    return grade ? (liveGrade(grade) ? content.levels.filter((l) => lower(l.gradeid) === lower(grade.gradeid) && live(l)) : []) : null;
   }
   if (lower(scopeid) !== lower(content.curriculumid)) {
     return null;
@@ -326,12 +328,16 @@ export async function certificateEligibility(request: EligibilityRequest, scope:
   const kindOf = new Map(quizzes.map((q) => [lower(q.id), q.kind === "lesson" ? Progress.LESSONQUIZ : Progress.LEVELQUIZ]));
   const attempts = new Map<string, Attempt[]>();
   for (const row of attemptRows) {
+    // a row with no result is not an attempt
+    if (row.resultpercentage === null || row.resultpercentage === undefined) {
+      continue;
+    }
     // a lesson quiz is stored with progresstype 2 and a level quiz with 3, both under the quiz's own id
     if (kindOf.get(lower(row.studentprogressreferenceid)) !== Number(row.progresstype)) {
       continue;
     }
     const key = `${lower(row.studentid)}|${lower(row.studentprogressreferenceid)}`;
-    attempts.set(key, [...(attempts.get(key) ?? []), { verified: asBool(row.verified), percentage: Number(row.resultpercentage ?? 0) || 0 }]);
+    attempts.set(key, [...(attempts.get(key) ?? []), { verified: asBool(row.verified), percentage: Number(row.resultpercentage) || 0 }]);
   }
   return learners.map((id) => learnerEligibility(id, quizzes, (quizid) => attempts.get(`${lower(id)}|${lower(quizid)}`) ?? []));
 }

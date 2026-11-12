@@ -268,6 +268,10 @@ const Q_L3 = uid("c5", 7);
 const Q_GOFF = uid("c5", 8);
 const Q_UNRENDERED = uid("c5", 9); // its only question is of a kind the app cannot show
 const LS_UNR = uid("c4", 9);
+const LS_SW = uid("c4", 10); // a switched-off lesson of L1
+const LS_QOFF = uid("c4", 11); // a live lesson of L1 whose quiz is switched off
+const Q_SW = uid("c5", 10);
+const Q_QOFF = uid("c5", 11);
 const S = (n: number) => uid("d1", n);
 const SCOPE: ReportScope = { organisationid: ORG, schoolids: [SCH] };
 
@@ -302,13 +306,15 @@ const seedWorld = () => {
   const lesson = (lessonid: string, levelid: string, lessonorder: number, extra: Row = {}) =>
     add({ name: "lessons" }, { lessonid, levelid, lessonname: `Lesson ${lessonorder}`, lessonorder, lessonstatus: true, isdeleted: false, ...extra });
   lesson(LS1, L1, 1); lesson(LS2, L1, 2); lesson(LS_DEL, L1, 3, { isdeleted: true }); lesson(LS_NOQ, L1, 4); lesson(LS_UNR, L1, 5);
-  lesson(LS_L2, L2, 1); lesson(LS_OFF, L_OFF, 1); lesson(LS_L3, L3, 1); lesson(LS_GOFF, L_GOFF, 1);
+  lesson(LS_SW, L1, 6, { lessonstatus: false }); lesson(LS_QOFF, L1, 7); lesson(LS_L2, L2, 1); lesson(LS_OFF, L_OFF, 1); lesson(LS_L3, L3, 1); lesson(LS_GOFF, L_GOFF, 1);
   const quiz = (lessonquizid: string, lessonid: string, name: string) =>
     add({ name: "lessonquizzes" }, { lessonquizid, lessonid, lessonquizname: name, lessonquizorder: 1, lessonquizstatus: true });
   quiz(Q1, LS1, "Quiz one"); quiz(Q2, LS2, "Quiz two"); quiz(Q_DEL, LS_DEL, "Quiz of a deleted lesson"); quiz(Q_NOQ, LS_NOQ, "Quiz with nothing to ask");
   quiz(Q_UNRENDERED, LS_UNR, "Quiz of unshowable questions"); quiz(Q_L2, LS_L2, "Quiz L2"); quiz(Q_OFF, LS_OFF, "Quiz of a switched-off level");
+  quiz(Q_SW, LS_SW, "Quiz of a switched-off lesson"); 
+  add({ name: "lessonquizzes" }, { lessonquizid: Q_QOFF, lessonid: LS_QOFF, lessonquizname: "Quiz switched off", lessonquizorder: 1, lessonquizstatus: false });
   quiz(Q_L3, LS_L3, "Quiz L3"); quiz(Q_GOFF, LS_GOFF, "Quiz of a switched-off grade");
-  for (const q of [Q1, Q2, Q_DEL, Q_L2, Q_OFF, Q_L3, Q_GOFF]) lessonQuizQuestion(q);
+  for (const q of [Q_SW, Q_QOFF, Q1, Q2, Q_DEL, Q_L2, Q_OFF, Q_L3, Q_GOFF]) lessonQuizQuestion(q);
   lessonQuizQuestion(Q_NOQ, false); // its only question is switched off
   lessonQuizQuestion(Q_UNRENDERED, true, 9); // its only question has no renderer
   levelQuizQuestion(L1); levelQuizQuestion(L_OFF);
@@ -398,6 +404,15 @@ describe("the rule on one level: two lesson quizzes and the level quiz", () => {
     expect(row.reasons.map((r) => ("state" in r ? [r.quiz.id, r.state, r.bestpercent] : null))).toEqual([[Q1, "unverified", 92], [Q2, "below", 50]]);
   });
 
+  it("a result with no percentage is not an attempt: with only such rows the quiz is not_taken, and beside a real attempt it changes nothing", async () => {
+    attempt(S(1), Q1, 2, null as never, true);
+    attempt(S(1), Q2, 2, 90, true); attempt(S(1), Q2, 2, null as never, false);
+    attempt(S(1), L1, 3, 85, true);
+    const [row] = await ask({ studentids: [S(1)] });
+    expect(row.reasons).toEqual([reasonOf(quizOne, lesson1, "not_taken", null)]);
+    expect(row.passedcount).toBe(2);
+  });
+
   it("f. several attempts: 70 then 85 marked passes; 85 marked then 40 unmarked still passes", async () => {
     attempt(S(6), Q1, 2, 70, true); attempt(S(6), Q1, 2, 85, true);
     attempt(S(6), Q2, 2, 85, true); attempt(S(6), Q2, 2, 40, false);
@@ -446,6 +461,23 @@ describe("which quizzes are in a scope", () => {
     expect(await ask({ scope: "level", scopeid: L_EMPTY, studentids: [S(8)] })).toEqual([
       { studentid: S(8), status: "not_yet", reasons: [{ reason: "no_quizzes" }], quizcount: 0, passedcount: 0 },
     ]);
+  });
+
+  it("g. a switched-off grade, or a deleted one, makes its levels not live: grade scope and level scope answer no_quizzes, as the curriculum scope leaves them out", async () => {
+    const none = (studentid: string) => [{ studentid, status: "not_yet", reasons: [{ reason: "no_quizzes" }], quizcount: 0, passedcount: 0 }];
+    expect(await ask({ scope: "grade", scopeid: G_OFF, studentids: [S(8)] })).toEqual(none(S(8)));
+    expect(await ask({ scope: "level", scopeid: L_GOFF, studentids: [S(8)] })).toEqual(none(S(8)));
+    expect(await quizIds("curriculum", C)).not.toContain(Q_GOFF);
+    tables.set("grades", (tables.get("grades") ?? []).map((g) => (g.gradeid === G2 ? { ...g, isdeleted: true } : g)));
+    expect(await ask({ scope: "grade", scopeid: G2, studentids: [S(8)] })).toEqual(none(S(8)));
+    expect(await ask({ scope: "level", scopeid: L3, studentids: [S(8)] })).toEqual(none(S(8)));
+  });
+
+  it("g. a switched-off lesson and a lesson quiz that is switched off are left out", async () => {
+    const all = await quizIds("level", L1);
+    expect(all).not.toContain(Q_SW);
+    expect(all).not.toContain(Q_QOFF);
+    expect(all.sort()).toEqual([L1, Q1, Q2].sort());
   });
 
   it("h. a grade covers its live levels; the curriculum covers every live grade's live levels", async () => {
