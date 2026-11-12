@@ -13,12 +13,13 @@ import { ResultController } from "./result.controller";
  * The studentprogress table is faked: count() honours `verified` in the
  * where clause, so this exercises the real clause the code builds.
  */
-const saves = { quiz: jest.fn(), level: jest.fn() };
+const saves = { quiz: jest.fn(), level: jest.fn(), held: jest.fn() };
 jest.mock("src/business/result.business", () => {
   const actual = jest.requireActual("src/business/result.business");
   class TestResultBusiness extends actual.ResultBusiness {
     createlessonquizprogress = saves.quiz;
     createlevelquizprogress = saves.level;
+    storeheldattempt = saves.held;
     updateQuizPoints = jest.fn().mockResolvedValue(undefined);
     updateLevelQuizPoints = jest.fn().mockResolvedValue(undefined);
     updatePracticePoints = jest.fn().mockResolvedValue(undefined);
@@ -52,6 +53,7 @@ describe.each(COMBOS)("earlier pass, GRADING_MODE=$mode REQUIRE_GRADED_ANSWERS=$
     rows = [];
     saves.quiz.mockReset().mockResolvedValue(undefined);
     saves.level.mockReset().mockResolvedValue(undefined);
+    saves.held.mockReset().mockResolvedValue(undefined);
     jest.spyOn(studentprogress, "count").mockImplementation((async (o: any) =>
       rows.filter((r) => r.ispass === !!o.where.ispass && (o.where.verified === undefined || r.verified === !!o.where.verified)).length) as any);
     jest.spyOn(lessonquizquestions, "findAll").mockResolvedValue([{ lessonquizquestionid: "q1" }] as never);
@@ -81,15 +83,17 @@ describe.each(COMBOS)("earlier pass, GRADING_MODE=$mode REQUIRE_GRADED_ANSWERS=$
       await run(new ResultController());
       expect(save()).toHaveBeenCalledTimes(1);
     });
-    it("earlier UNVERIFIED pass: short-circuits, except under enforce+REQUIRE where the new attempt is saved", async () => {
+    it("earlier UNVERIFIED pass: earns nothing more but the attempt is stored; under enforce+REQUIRE the pass does not count and the attempt is saved in full", async () => {
       rows = [{ ispass: true, verified: false }];
       await run(new ResultController());
       expect(save()).toHaveBeenCalledTimes(gated ? 1 : 0);
+      expect(saves.held).toHaveBeenCalledTimes(gated ? 0 : 1);
     });
     it("earlier VERIFIED pass: always short-circuits", async () => {
       rows = [{ ispass: true, verified: true }];
       await run(new ResultController());
       expect(save()).not.toHaveBeenCalled();
+      expect(saves.held).not.toHaveBeenCalled();
     });
   });
 

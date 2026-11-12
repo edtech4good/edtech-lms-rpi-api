@@ -80,6 +80,53 @@ export class ResultBusiness {
         return count > 0;
     }
 
+    /** True when the learner has a pass of this activity that the server marked itself (`verified`). */
+    hasverifiedpass = async (studentid: string, studentprogressreferenceid: string) => {
+        const count = await studentprogress.count({
+            where: { studentid, studentprogressreferenceid, ispass: true, verified: true }
+        });
+        return count > 0;
+    }
+
+    /**
+     * Stores one more attempt at a quiz the learner already holds a (not server-marked) pass of, and nothing else: no
+     * points, progress, stars or award. The row carries the points, full points and stars of the newest stored attempt, so
+     * every sum that reads the newest row (the lesson's quiz points, the daily points) ends as if the attempt had been
+     * stopped; its own result, pass flag and `verified` flag are the attempt's. A replay of the same submission (same
+     * learner, quiz and start time) is stored once.
+     */
+    storeheldattempt = async (progress: any, progresstype: Progress, questionkey: string, user: Token) => {
+        const { actualanswers } = progress;
+        const held = await this.getnewestattempt(user.studentid, progress?.studentprogressreferenceid);
+        const row = {
+            ...progress,
+            progresstype,
+            studentprogressid: randomUUID(),
+            resultpercentage: progress.passpercentage,
+            actualanswers: undefined,
+            starttime: progress.starttime ?? new Date(),
+            points: held ? held.points : progress.points,
+            fullpoints: held ? held.fullpoints : progress.fullpoints,
+            scores: held ? held.scores : 0,
+        };
+        const tnx = await dbinstance.getdbinstance().transaction();
+        try {
+            const [result, created] = await studentprogress.findOrCreate({
+                where: { studentid: row.studentid, studentprogressreferenceid: row.studentprogressreferenceid, starttime: row.starttime },
+                defaults: { ...row },
+                transaction: tnx,
+            });
+            if (created) {
+                await insertquestion(result.studentprogressid, actualanswers, questionkey, tnx);
+            }
+            await tnx.commit();
+            return result;
+        } catch (err: any) {
+            await tnx.rollback();
+            throw err;
+        }
+    }
+
     hasTried = async (user: Token, studentprogressreferenceid: string) => {
         const progress = await studentprogress.findOne({
             where: { studentprogressreferenceid, studentid: user?.studentid }
