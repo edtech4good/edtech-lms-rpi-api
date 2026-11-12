@@ -90,12 +90,14 @@ export class ResultBusiness {
 
     /**
      * Stores one more attempt at a quiz the learner already holds a (not server-marked) pass of, and nothing else: no
-     * points, progress, stars or award. The row carries the points, full points and stars of the newest stored attempt, so
-     * every sum that reads the newest row (the lesson's quiz points, the daily points) ends as if the attempt had been
-     * stopped; its own result, pass flag and `verified` flag are the attempt's. A replay of the same submission (same
-     * learner, quiz and start time) is stored once.
+     * points, progress, stars or award. `credit` is what the settle step has just written to the pass row
+     * (`updateQuizPoints` / `updateLevelQuizPoints`): the row carries it, so the newest row, which `getoldpoints` reads,
+     * always holds the credit the quiz holds and a later submission never credits a difference twice. Stars are copied from
+     * the newest stored attempt, not set to 0: a row with 0 stars would change the star totals that read a quiz's rows.
+     * Its own result, pass flag and `verified` flag are the attempt's. A replay of the same submission (same learner, quiz
+     * and start time) is stored once.
      */
-    storeheldattempt = async (progress: any, progresstype: Progress, questionkey: string, user: Token) => {
+    storeheldattempt = async (progress: any, progresstype: Progress, questionkey: string, user: Token, credit?: { points: number; fullpoints: number } | null) => {
         const { actualanswers } = progress;
         const held = await this.getnewestattempt(user.studentid, progress?.studentprogressreferenceid);
         const row = {
@@ -105,17 +107,14 @@ export class ResultBusiness {
             resultpercentage: progress.passpercentage,
             actualanswers: undefined,
             starttime: progress.starttime ?? new Date(),
-            points: held ? held.points : progress.points,
-            fullpoints: held ? held.fullpoints : progress.fullpoints,
+            points: credit ? credit.points : held ? held.points : progress.points,
+            fullpoints: credit ? credit.fullpoints : held ? held.fullpoints : progress.fullpoints,
             scores: held ? held.scores : 0,
         };
+        const natural = { studentid: row.studentid, studentprogressreferenceid: row.studentprogressreferenceid, starttime: row.starttime };
         const tnx = await dbinstance.getdbinstance().transaction();
         try {
-            const [result, created] = await studentprogress.findOrCreate({
-                where: { studentid: row.studentid, studentprogressreferenceid: row.studentprogressreferenceid, starttime: row.starttime },
-                defaults: { ...row },
-                transaction: tnx,
-            });
+            const [result, created] = await studentprogress.findOrCreate({ where: natural, defaults: { ...row }, transaction: tnx });
             if (created) {
                 await insertquestion(result.studentprogressid, actualanswers, questionkey, tnx);
             }
@@ -123,6 +122,13 @@ export class ResultBusiness {
             return result;
         } catch (err: any) {
             await tnx.rollback();
+            if (err instanceof UniqueConstraintError) {
+                // two requests racing on the same submission: the unique key did its job, so read the winner's row
+                const existing = await studentprogress.findOne({ where: natural });
+                if (existing) {
+                    return existing;
+                }
+            }
             throw err;
         }
     }
@@ -403,10 +409,15 @@ export class ResultBusiness {
         return result;
     }
     
+    /**
+     * Brings the credit a passed quiz holds up to the quiz's current points. Every counting pass row is updated, and the
+     * newest stored attempt too (whatever it is), because `getoldpoints` reads the newest row: a row left at the old value
+     * would be credited again on the next submission. Answers the values written, or null when there is no counting pass.
+     */
     updateQuizPoints = async (lessonquiz: lessonquizzes, user: Token, transaction: Transaction) => {
         const lesson = await lessonquiz.getLesson();
         const points = lessonquiz.points ?? 0;
-        const studentquizprogress = await studentprogress.findOne({
+        const passes = await studentprogress.findAll({
             where: {
                 studentid: user.studentid,
                 studentprogressreferenceid: lessonquiz.lessonquizid,
@@ -414,10 +425,23 @@ export class ResultBusiness {
                 ...countedpassclause()
             }
         });
-        if(studentquizprogress){
-            studentquizprogress.points = points;
-            studentquizprogress.fullpoints = lesson.quizzes_points;
-            await studentquizprogress.save({fields: ['points', 'fullpoints'], transaction});
+        if (passes.length === 0) {
+            return null;
+        }
+        const fullpoints = lesson.quizzes_points;
+        await this.syncrows(passes, lessonquiz.lessonquizid, user, points, fullpoints, transaction);
+        return { points, fullpoints };
+    }
+    private syncrows = async (passes: studentprogress[], referenceid: string, user: Token, points: number, fullpoints: number, transaction: Transaction) => {
+        const newest = await this.getnewestattempt(user.studentid, referenceid);
+        const rows = [...passes];
+        if (newest && !rows.some((r) => r.studentprogressid === newest.studentprogressid)) {
+            rows.push(newest);
+        }
+        for (const row of rows) {
+            row.points = points;
+            row.fullpoints = fullpoints;
+            await row.save({fields: ['points', 'fullpoints'], transaction});
         }
     }
     updatePracticePoints = async (lessonpractice: lessonpractices, user: Token, transaction: Transaction) => {
@@ -438,7 +462,7 @@ export class ResultBusiness {
     }
     updateLevelQuizPoints = async (level: levels, user: Token, transaction: Transaction) => {
         const points = level.quiz_points ?? 0;
-        const studentlevelquizprogress = await studentprogress.findOne({
+        const passes = await studentprogress.findAll({
             where: {
                 studentid: user.studentid,
                 studentprogressreferenceid: level.levelid,
@@ -446,11 +470,11 @@ export class ResultBusiness {
                 ...countedpassclause()
             }
         });
-        if(studentlevelquizprogress){
-            studentlevelquizprogress.points = points;
-            studentlevelquizprogress.fullpoints = level.points;
-            await studentlevelquizprogress.save({fields: ['points', 'fullpoints'], transaction});
+        if (passes.length === 0) {
+            return null;
         }
+        await this.syncrows(passes, level.levelid, user, points, level.points, transaction);
+        return { points, fullpoints: level.points };
     }
 
     getoldpoints = async (studentid: string | undefined, referenceid: string, newpoints: number) => {

@@ -188,7 +188,10 @@ export class ResultController {
     const counted = await rb.ispass(user.studentid || "", lessonquizid);
     // A counting pass that the server did not mark (and no marked one): the credit is settled exactly as below, but the new
     // attempt is also stored (further down) so that a marked pass can still be recorded. A marked pass stops the submission.
-    const heldunverified = counted && !(await rb.hasverifiedpass(user.studentid || "", lessonquizid));
+    // Only where the server grades (enforce): in shadow no result is ever marked, so every pass is unverified and nothing could
+    // ever be stored as marked; there the early stop is unchanged.
+    const heldunverified = gradingMode() === "enforce" && counted && !(await rb.hasverifiedpass(user.studentid || "", lessonquizid));
+    let credit: { points: number; fullpoints: number } | null | undefined;
     if (counted) {
       const lessonquiz = await lessonbusiness.getlessonquiz(lessonquizid);
       // Rule on: the credit this quiz already holds is the pass row's, not that of the newest row (which can be an
@@ -198,7 +201,7 @@ export class ResultController {
         : await rb.getoldpoints(user.studentid, lessonquiz.lessonquizid, lessonquiz.points)) ?? null;
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
-        await rb.updateQuizPoints(lessonquiz, user, tnx);
+        credit = await rb.updateQuizPoints(lessonquiz, user, tnx);
         if(oldpoints !== null){
           await lessonbusiness.updateUserReward(user, lessonquiz.lessonid, lessonquiz.points, oldpoints, tnx, result.starttime);
         }
@@ -271,7 +274,7 @@ export class ResultController {
       verified: graded.verified,
     };
     if (heldunverified) {
-      await rb.storeheldattempt(progress, Progress.LESSONQUIZ, "lessonquizquestionid", user);
+      await rb.storeheldattempt(progress, Progress.LESSONQUIZ, "lessonquizquestionid", user, credit);
       const heldquiz = await lessonbusiness.getlessonquiz(lessonquizid);
       await lessonbusiness.updateuserdailypoints(heldquiz.lessonid, user, result.starttime);
       return { data: true, error: false };
@@ -310,13 +313,14 @@ export class ResultController {
     const lessonbusiness = new LessonBusiness();
     const counted = await rb.ispass(user.studentid || "", levelid);
     // As for the lesson quiz: a pass that is not marked by the server holds the credit but does not stop the attempt being stored.
-    const heldunverified = counted && !(await rb.hasverifiedpass(user.studentid || "", levelid));
+    const heldunverified = gradingMode() === "enforce" && counted && !(await rb.hasverifiedpass(user.studentid || "", levelid));
+    let credit: { points: number; fullpoints: number } | null | undefined;
     if (counted) {
       const levelquiz = await lessonbusiness.getlevelquiz(levelid);
       const oldpoints = await rb.getoldpoints(user.studentid, levelquiz.levelid, levelquiz.quiz_points) ?? null;
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
-        await rb.updateLevelQuizPoints(levelquiz, user, tnx);
+        credit = await rb.updateLevelQuizPoints(levelquiz, user, tnx);
         if(oldpoints !== null){
           await lessonbusiness.updateLevelQuizReward(user, levelquiz, oldpoints, tnx, result.starttime);
         }
@@ -382,7 +386,7 @@ export class ResultController {
       verified: graded.verified,
     };
     if (heldunverified) {
-      await rb.storeheldattempt(progress, Progress.LEVELQUIZ, "levelquizquestionid", user);
+      await rb.storeheldattempt(progress, Progress.LEVELQUIZ, "levelquizquestionid", user, credit);
       await lessonbusiness.updateuserdailypointsBylevelquiz(levelid, user, result.starttime);
       return { data: true, error: false };
     }

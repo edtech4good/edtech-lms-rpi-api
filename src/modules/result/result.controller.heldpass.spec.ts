@@ -146,10 +146,21 @@ describe.each([
     expect(eligibility()).toEqual({ state: "passed", bestpercent: 100 });
   });
 
-  it("(a) the stored row copies the credit the quiz already holds, not the attempt's own points", async () => {
+  it("(a) the stored row carries the credit the settle step has just written (not the attempt's own points), and the newest row's stars", async () => {
     rows = [pass(false, 1, { points: 25, fullpoints: 30, scores: 1 })];
+    fns.quizpoints.mockResolvedValue({ points: 50, fullpoints: 60 });
+    fns.levelpoints.mockResolvedValue({ points: 50, fullpoints: 60 });
     await submit(true); // the attempt itself scored 40 points
-    expect(rows[1]).toMatchObject({ points: 25, fullpoints: 30, scores: 1 });
+    expect(rows[1]).toMatchObject({ points: 50, fullpoints: 60, scores: 1 });
+  });
+
+  it("shadow grading (the default): no result is ever marked, so the early stop is unchanged: no row, no attempt", async () => {
+    process.env.GRADING_MODE = "shadow";
+    rows = [pass(false, 1)];
+    await submit(true);
+    expect(rows).toHaveLength(1);
+    expect(held).not.toHaveBeenCalled();
+    expect(full).not.toHaveBeenCalled();
   });
 
   it("(b) a new failing attempt is stored and nothing else changes: the unverified pass stays the best unmarked result", async () => {

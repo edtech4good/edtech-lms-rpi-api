@@ -83,11 +83,12 @@ describe.each(COMBOS)("earlier pass, GRADING_MODE=$mode REQUIRE_GRADED_ANSWERS=$
       await run(new ResultController());
       expect(save()).toHaveBeenCalledTimes(1);
     });
-    it("earlier UNVERIFIED pass: earns nothing more but the attempt is stored; under enforce+REQUIRE the pass does not count and the attempt is saved in full", async () => {
+    it("earlier UNVERIFIED pass: under enforce the attempt is stored and earns nothing more (shadow: short-circuits as before); under enforce+REQUIRE the pass does not count and the attempt is saved in full", async () => {
       rows = [{ ispass: true, verified: false }];
       await run(new ResultController());
       expect(save()).toHaveBeenCalledTimes(gated ? 1 : 0);
-      expect(saves.held).toHaveBeenCalledTimes(gated ? 0 : 1);
+      // only where the server grades: in shadow no result is ever marked, so the early stop is unchanged
+      expect(saves.held).toHaveBeenCalledTimes(mode === "enforce" && !gated ? 1 : 0);
     });
     it("earlier VERIFIED pass: always short-circuits", async () => {
       rows = [{ ispass: true, verified: true }];
