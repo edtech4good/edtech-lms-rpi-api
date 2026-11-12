@@ -11,6 +11,7 @@ import {
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiBody, ApiQuery } from "@nestjs/swagger";
 import { ReportBusiness } from "src/business/report.business";
+import { certificateEligibility, parseEligibilityRequest } from "src/business/certificate-eligibility";
 import { AccessGuard } from "src/guards/access.guard";
 import { AccessOrServerSyncGuard } from "src/guards/access-or-server-sync.guard";
 import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
@@ -393,6 +394,35 @@ export class ReportController {
         pagesize: body?.pagesize || 0,
       },
     };
+  }
+
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    ),
+    ReportScopeGuard
+  )
+  @Post('certificate-eligibility')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @ApiResponse({
+    status: 200,
+    description: "Worked out which of the learners have passed every quiz in the scope (read-only)",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "A field is not valid (the answer names it)",
+  })
+  @ApiResponse({
+    status: 404,
+    description: "The curriculum is not one the caller may see",
+  })
+  @HttpCode(HttpStatus.OK)
+  async getCertificateEligibility(@Body() body: unknown, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await certificateEligibility(parseEligibilityRequest(body), scope);
+    return { error: false, data };
   }
 
   @UseGuards(

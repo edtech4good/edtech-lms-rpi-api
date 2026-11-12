@@ -6,6 +6,7 @@ import {
   UseGuards,
   UseInterceptors
 } from "@nestjs/common";
+import { Progress } from "src/models/enums/progress.enum";
 import { OrgPolicy } from "src/decorators/orgPolicy.decorator";
 import {
   ApiBearerAuth,
@@ -184,7 +185,14 @@ export class ResultController {
     const lessonbusiness = new LessonBusiness();
     // Per-organisation rule (settingsconfig.requireLessonQuizPass, off unless strictly true), read once per submission.
     const passrule = await lessonQuizPassRequired(user);
-    if (await rb.ispass(user.studentid || "", lessonquizid)) {
+    const counted = await rb.ispass(user.studentid || "", lessonquizid);
+    // A counting pass that the server did not mark (and no marked one): the credit is settled exactly as below, but the new
+    // attempt is also stored (further down) so that a marked pass can still be recorded. A marked pass stops the submission.
+    // Only where the server grades (enforce): in shadow no result is ever marked, so every pass is unverified and nothing could
+    // ever be stored as marked; there the early stop is unchanged.
+    const heldunverified = gradingMode() === "enforce" && counted && !(await rb.hasverifiedpass(user.studentid || "", lessonquizid));
+    let credit: { points: number; fullpoints: number } | null | undefined;
+    if (counted) {
       const lessonquiz = await lessonbusiness.getlessonquiz(lessonquizid);
       // Rule on: the credit this quiz already holds is the pass row's, not that of the newest row (which can be an
       // older-dated failed attempt that earned nothing), so a pass is never credited twice.
@@ -193,7 +201,7 @@ export class ResultController {
         : await rb.getoldpoints(user.studentid, lessonquiz.lessonquizid, lessonquiz.points)) ?? null;
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
-        await rb.updateQuizPoints(lessonquiz, user, tnx);
+        credit = await rb.updateQuizPoints(lessonquiz, user, tnx);
         if(oldpoints !== null){
           await lessonbusiness.updateUserReward(user, lessonquiz.lessonid, lessonquiz.points, oldpoints, tnx, result.starttime);
         }
@@ -204,11 +212,13 @@ export class ResultController {
         await tnx.rollback();
         throw err;
       }
-      await lessonbusiness.updateuserdailypoints(lessonquiz.lessonid, user, result.starttime);
-      return {
-        data: true,
-        error: false,
-      };
+      if (!heldunverified) {
+        await lessonbusiness.updateuserdailypoints(lessonquiz.lessonid, user, result.starttime);
+        return {
+          data: true,
+          error: false,
+        };
+      }
     }
     // Only items that answer one of this quiz's own questions are part of the result (see result-items.ts).
     const submitted = await confineToContainer("lesson-quiz", "lessonquiz", lessonquizid, "lessonquizquestionid", result.result);
@@ -263,6 +273,12 @@ export class ResultController {
       fullpoints,
       verified: graded.verified,
     };
+    if (heldunverified) {
+      await rb.storeheldattempt(progress, Progress.LESSONQUIZ, "lessonquizquestionid", user, credit);
+      const heldquiz = await lessonbusiness.getlessonquiz(lessonquizid);
+      await lessonbusiness.updateuserdailypoints(heldquiz.lessonid, user, result.starttime);
+      return { data: true, error: false };
+    }
     await rb.createlessonquizprogress(progress, lesson, user, passrule);
     Logger.info(`<${user.studentfirstname}> submits a quiz <${lessonquizid}>`, {logaccesstype: LOGTYPE.SUBMITQUIZ, userid: user.schooluserid});
     return {
@@ -295,12 +311,16 @@ export class ResultController {
   async savelevelquizresult(@Param('levelid') levelid: string, @Body() result: LevelQuizResultBody, @User() user: Token): Promise<ResponseBoolean> {
     const rb = new ResultBusiness();
     const lessonbusiness = new LessonBusiness();
-    if (await rb.ispass(user.studentid || "", levelid)) {
+    const counted = await rb.ispass(user.studentid || "", levelid);
+    // As for the lesson quiz: a pass that is not marked by the server holds the credit but does not stop the attempt being stored.
+    const heldunverified = gradingMode() === "enforce" && counted && !(await rb.hasverifiedpass(user.studentid || "", levelid));
+    let credit: { points: number; fullpoints: number } | null | undefined;
+    if (counted) {
       const levelquiz = await lessonbusiness.getlevelquiz(levelid);
       const oldpoints = await rb.getoldpoints(user.studentid, levelquiz.levelid, levelquiz.quiz_points) ?? null;
       const tnx = await dbinstance.getdbinstance().transaction();
       try {
-        await rb.updateLevelQuizPoints(levelquiz, user, tnx);
+        credit = await rb.updateLevelQuizPoints(levelquiz, user, tnx);
         if(oldpoints !== null){
           await lessonbusiness.updateLevelQuizReward(user, levelquiz, oldpoints, tnx, result.starttime);
         }
@@ -311,11 +331,13 @@ export class ResultController {
         await tnx.rollback();
         throw err;
       }
-      await lessonbusiness.updateuserdailypointsBylevelquiz(levelquiz.levelid, user, result.starttime);
-      return {
-        data: true,
-        error: false,
-      };
+      if (!heldunverified) {
+        await lessonbusiness.updateuserdailypointsBylevelquiz(levelquiz.levelid, user, result.starttime);
+        return {
+          data: true,
+          error: false,
+        };
+      }
     }
     // Only items that answer one of this level quiz's own questions are part of the result (see result-items.ts).
     const submitted = await confineToContainer("level-quiz", "levelquiz", levelid, "levelquizquestionid", result.result);
@@ -363,6 +385,11 @@ export class ResultController {
       fullpoints,
       verified: graded.verified,
     };
+    if (heldunverified) {
+      await rb.storeheldattempt(progress, Progress.LEVELQUIZ, "levelquizquestionid", user, credit);
+      await lessonbusiness.updateuserdailypointsBylevelquiz(levelid, user, result.starttime);
+      return { data: true, error: false };
+    }
     await rb.createlevelquizprogress(progress, level, user);
     Logger.info(`<${user.studentfirstname}> submits a level quiz <${levelid}>`, {logaccesstype: LOGTYPE.SUBMITLEVELQUIZ, userid: user.schooluserid});
     return {

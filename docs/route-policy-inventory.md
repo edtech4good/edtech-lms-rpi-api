@@ -26,16 +26,16 @@ pinned in `src/route-policy/pending-enforcement.snapshot.txt`.
 
 Pending refers only to the organisation boundary; every route keeps the authentication and role guards shown in the Guards column.
 
-Of **87** routes, **82** are proved by a spec, **5** are not applicable (public) and **0** are pending.
+Of **88** routes, **83** are proved by a spec, **5** are not applicable (public) and **0** are pending.
 
 | Policy | Routes | Proved | Not applicable | Pending |
 |---|---|---|---|---|
 | public | 5 | 0 | 5 | 0 |
 | learner | 44 | 44 | 0 | 0 |
-| teacher | 33 | 33 | 0 | 0 |
+| teacher | 34 | 34 | 0 | 0 |
 | server | 4 | 4 | 0 | 0 |
 | pi-import | 1 | 1 | 0 | 0 |
-| **all** | **87** | **82** | **5** | **0** |
+| **all** | **88** | **83** | **5** | **0** |
 
 ## Policies
 
@@ -56,7 +56,7 @@ A route used by both a user token and the server key is classified by its user p
 - **Server key**: `yes` when every authentication guard on the route lets central's server sync key through, so a caller with no user gets in.
 - **Staff only**: `yes` when an authentication guard lists school roles (teacher, admin, super admin), so a learner's token is refused.
 
-Routes admitting the server key: 23.
+Routes admitting the server key: 24.
 
 ## Routes
 
@@ -109,6 +109,7 @@ Routes admitting the server key: 23.
 | GET | `/question/level/:levelid/answers` | QuestionController.getlevelquestionanswers | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(level:levelid) |  |
 | GET | `/question/practice/:lessonpracticeid` | QuestionController.getpracticequestion | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(lessonpractice:lessonpracticeid) |  |
 | GET | `/question/quiz/:lessonquizid` | QuestionController.getquizquestion | learner | yes | `src/modules/org-boundary.leak.spec.ts` |  |  | AccessGuard(ACCESS), ContentAccessGuard(lessonquiz:lessonquizid) |  |
+| POST | `/report/certificate-eligibility` | ReportController.getCertificateEligibility | teacher | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | AccessOrServerSyncGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | Central calls it with the server key and X-Organisation-Id; a token's scope is its school. |
 | GET | `/report/offlineonline` | ReportController.getStudentsOfflineOnline | teacher | yes | `src/modules/org-boundary.leak.spec.ts` |  | yes | AccessGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard |  |
 | POST | `/report/student-awards` | ReportController.getStudentAwards | teacher | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | AccessOrServerSyncGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | Central calls it with the server key and X-Organisation-Id; a token's scope is its school. |
 | POST | `/report/student-grade-progress` | ReportController.getStudentGradeProgress | teacher | yes | `src/modules/org-boundary.leak.spec.ts` | yes | yes | AccessOrServerSyncGuard(ACCESS, Role.ADMIN, Role.SUPERADMIN, Role.TEACHER), ReportScopeGuard | Central calls it with the server key and X-Organisation-Id; a token's scope is its school. |

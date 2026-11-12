@@ -127,6 +127,7 @@ describe("savelessonquizresult stores the points the organisation's rule allows"
       const rbproto = (ResultBusiness as unknown as { prototype: Record<string, unknown> }).prototype;
       const lbproto = (LessonBusiness as unknown as { prototype: Record<string, unknown> }).prototype;
       rbproto.ispass = jest.fn().mockResolvedValue(true);
+      rbproto.hasverifiedpass = jest.fn().mockResolvedValue(true); // a marked pass stops the submission
       getoldpoints = jest.fn().mockResolvedValue(0);
       getpassoldpoints = jest.fn().mockResolvedValue(null);
       rbproto.getoldpoints = getoldpoints;

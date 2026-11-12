@@ -25,10 +25,12 @@ describe("which past passes count", () => {
   const saved = { m: process.env.GRADING_MODE, r: process.env.REQUIRE_GRADED_ANSWERS };
   let countSpy: jest.SpyInstance;
   let findOneSpy: jest.SpyInstance;
+  let findAllSpy: jest.SpyInstance;
 
   beforeEach(() => {
     countSpy = jest.spyOn(studentprogress, "count").mockResolvedValue(0 as never);
     findOneSpy = jest.spyOn(studentprogress, "findOne").mockResolvedValue(null as never);
+    findAllSpy = jest.spyOn(studentprogress, "findAll").mockResolvedValue([] as never); // the quiz updaters read every counting pass
   });
   afterEach(() => {
     jest.restoreAllMocks();
@@ -64,14 +66,14 @@ describe("which past passes count", () => {
 
     it("updateQuizPoints", async () => {
       await new ResultBusiness().updateQuizPoints(lesson, user, tx);
-      const where = findOneSpy.mock.calls[0][0].where;
+      const where = findAllSpy.mock.calls[0][0].where;
       expect(where).toEqual(expectedWhere({ studentid: "s1", ispass: 1 }));
       expect("verified" in where).toBe(gated);
     });
 
     it("updateLevelQuizPoints", async () => {
       await new ResultBusiness().updateLevelQuizPoints({ levelid: "l1", points: 1 } as any, user, tx);
-      const where = findOneSpy.mock.calls[0][0].where;
+      const where = findAllSpy.mock.calls[0][0].where;
       expect(where).toEqual(expectedWhere({ studentid: "s1", studentprogressreferenceid: "l1", ispass: 1 }));
       expect("verified" in where).toBe(gated);
     });
