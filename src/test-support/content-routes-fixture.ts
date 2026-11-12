@@ -20,6 +20,7 @@ import { students } from "src/models/data-models/students";
 import { studentgradesprogress } from "src/models/data-models/studentgradesprogress";
 import { studentlearningprogress } from "src/models/data-models/studentlearningprogress";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
+import { studentawards } from "src/models/data-models/studentawards";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { CurriculumController } from "src/modules/curriculum/curriculum.controller";
@@ -195,6 +196,7 @@ const EMPTY: Array<[string, any]> = [ // eslint-disable-line @typescript-eslint/
   ["lessonlearningdocuments", lessonlearningdocuments],
   ["studentgradesprogress", studentgradesprogress],
   ["studentlevelsprogress", studentlevelsprogress],
+  ["studentawards", studentawards],
   ["studentlessonsprogress", studentlessonsprogress],
   ["studentlearningprogress", studentlearningprogress],
   ["studentprogress", studentprogress],

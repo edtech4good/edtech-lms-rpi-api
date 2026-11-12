@@ -25,6 +25,7 @@ import { Default_Test_Student_ID } from "src/models/enums/user.enum";
 import { IMultiPaging } from "src/models/IPaging";
 import { buildCustomWhere } from "src/services/util.service";
 import { findSchoolIdByName, resolveSchoolScope, schoolOfStudent, studentsOfSchool } from "./school-identity";
+import { awardsOfStudent } from "./level-award";
 import { contentFiltersInScope, learnersInScope, ReportScope } from "./report-scope";
 
 export interface ChartItemFormat {
@@ -1001,6 +1002,50 @@ export class ReportBusiness {
             return levelscount;
         });
         return {...studentlevelprogresses, student};
+    }
+
+    /**
+     * One learner's level awards, the learner found and scoped exactly as `getStudentLevelProgress` does (the
+     * `studentid` filter, the platform's test learner when none is given, `learnersInScope`, `contentFiltersInScope`).
+     * A `gradeid` filter narrows the awards to that grade. Newest first, names from the content tables even when the
+     * level or grade has since been deleted. Each row carries the fields of `GET /student/awards`; the learner is the
+     * same `student` the level progress report returns.
+     */
+    getStudentAwards = async (paging: IMultiPaging, scope?: ReportScope | null) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0, student: null };
+        const mine = learnersInScope(scope);
+        const limit = paging.pagesize || 20;
+        let offset = 0;
+        if ((paging.pageindex || 1) > 1) {
+            offset = limit * ((paging.pageindex || 1) - 1);
+        }
+        const where:any = {};
+        const awardwhere:any = {};
+        buildCustomWhere(paging.filter ?? [], {fields: 'studentid', where: where});
+        buildCustomWhere(paging.filter ?? [], {fields: 'gradeid', where: awardwhere});
+        if(!where.studentid) {
+            where.studentid = Default_Test_Student_ID;
+        }
+        const student = await students.findOne({
+            where: {
+                studentid: where.studentid,
+                ...mine
+            },
+            attributes: ['studentid', 'studentfirstname'],
+            include: [
+                {
+                    model: curriculums,
+                    required: true,
+                    as: 'curriculum',
+                    attributes: ['curriculumid']
+                }
+            ]
+        });
+        if(!student) return { rows: [], count: 0, student: null };
+        const studentid = student.studentid;
+        pinStudent(where, student, true);
+        const all = await awardsOfStudent(studentid, awardwhere);
+        return { rows: all.slice(offset, offset + limit), count: all.length, student };
     }
 
     getStudentLessonProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {

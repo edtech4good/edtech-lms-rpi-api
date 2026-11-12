@@ -1,4 +1,8 @@
 import { Transaction } from "sequelize";
+import { randomUUID } from "node:crypto";
+import { studentawards, studentawardsAttributes } from "src/models/data-models/studentawards";
+import { Logger } from "src/config";
+import { awardCompletedLevels } from "./level-award";
 import { schoolusersAttributes } from "src/models/data-models/schoolusers";
 import {
   studentgradesprogress,
@@ -18,6 +22,17 @@ import {
   studentprogressAttributes,
 } from "src/models/data-models/studentprogress";
 
+/** A date a stored award may carry: a Date, or text that parses to one. Missing, empty, null and anything else is not. */
+const hasUsableDate = (value: unknown): boolean => {
+  if (value instanceof Date) {
+    return !Number.isNaN(value.getTime());
+  }
+  return typeof value === "string" && value.trim() !== "" && !Number.isNaN(new Date(value).getTime());
+};
+
+/** A flag as a payload may carry it (true, 1, "1", "true"); anything else, missing included, is false. */
+const isTrue = (value: unknown): boolean => value === true || value === 1 || value === "1" || value === "true";
+
 export interface exportpayload {
   // Set on a roster that names the school it is for (format 3): every row must be that school's.
   schoolid?: string;
@@ -31,6 +46,8 @@ export interface studentpointsprogress {
   studentgradesprogress: studentgradesprogressAttributes[];
   studentlevelsprogress: studentlevelsprogressAttributes[];
   studentlessonsprogress: studentlessonsprogressAttributes[];
+  /** Optional: central sends it once it exports awards; a payload without it changes nothing. */
+  studentawards?: studentawardsAttributes[];
 }
 
 export class StudentProgressBusiness {
@@ -107,7 +124,8 @@ export class StudentProgressBusiness {
 
   importStudentLevelsProgress = async (
     stlp: studentlevelsprogressAttributes[],
-    transaction: Transaction
+    transaction: Transaction,
+    awards?: studentawardsAttributes[]
   ) => {
     await studentlevelsprogress.bulkCreate(stlp, {
       transaction,
@@ -122,6 +140,44 @@ export class StudentProgressBusiness {
         "progress",
       ],
     });
+    // The awards the payload carries come first: an award this server already has for a learner and level wins over
+    // an imported one (the unique key ignores it), and an imported one wins over the approximate one made below.
+    if (Array.isArray(awards) && awards.length > 0) {
+      await this.importStudentAwards(awards, transaction);
+    }
+    // Levels that arrive complete and have no award get an approximate one (the same rule as the backfill), for the
+    // imported learners only.
+    const studentids = [...new Set(stlp.filter((r) => r.completed).map((r) => r.studentid))];
+    await awardCompletedLevels(studentids, transaction);
+  };
+
+  /**
+   * Stores the awards a roster carries. An award this server already has for a learner and level wins (the unique key
+   * ignores the imported one). A row with no usable `earnedat` (missing, empty or not a date) is not stored, so the
+   * approximate award the import makes afterwards can cover that pair; only the number of such rows is logged.
+   * `earnedat_approximate` is read as a boolean (missing means false).
+   */
+  importStudentAwards = async (awards: studentawardsAttributes[], transaction: Transaction) => {
+    const usable = awards.filter((a) => hasUsableDate(a?.earnedat));
+    const skipped = awards.length - usable.length;
+    if (skipped > 0) {
+      Logger.info(`import students: ${skipped} award row(s) skipped (no valid earnedat)`);
+    }
+    if (usable.length === 0) {
+      return;
+    }
+    await studentawards.bulkCreate(
+      usable.map((a) => ({
+        studentawardid: a.studentawardid ?? randomUUID(),
+        studentid: a.studentid,
+        levelid: a.levelid,
+        gradeid: a.gradeid,
+        curid: a.curid,
+        earnedat: a.earnedat,
+        earnedat_approximate: isTrue(a.earnedat_approximate),
+      })),
+      { transaction, ignoreDuplicates: true }
+    );
   };
 
   importStudentLessonsProgress = async (

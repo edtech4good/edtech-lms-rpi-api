@@ -16,7 +16,8 @@ import { ContentTranslations, withContentLanguage } from "src/business/content-t
 import { ApiTags, ApiBearerAuth, ApiResponse, ApiQuery } from "@nestjs/swagger";
 import { ReportScope } from "src/business/report-scope";
 import { schoolScopeFromToken } from "src/business/school-identity";
-import { StudentBusiness } from "src/business/student.business";
+import { awardsOfStudent } from "src/business/level-award";
+import { StudentBusiness, decorateAwardNames } from "src/business/student.business";
 import { ReportScopeGuard, ReportScopeOf } from "src/guards/report-scope.guard";
 import { User } from "src/decorators/user.decorator";
 import { AccessGuard } from "src/guards/access.guard";
@@ -160,6 +161,53 @@ export class StudentController {
     const translations = ContentTranslations.from(translationsheader, user);
     return withContentLanguage(translations, {
       data: await new StudentBusiness().getprogresssummary(user, translations),
+      error: false,
+    });
+  }
+
+  @Get("awards")
+  @OrgPolicy("learner", { note: "The caller's own awards only; read-only.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @ApiResponse({
+    status: 200,
+    description: "Fetched the learner's level awards successfully",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @HttpCode(HttpStatus.OK)
+  async getStudentAwards(
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
+  ): Promise<any> {
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: user.studentid ? await decorateAwardNames(translations, await awardsOfStudent(user.studentid)) : [],
+      error: false,
+    });
+  }
+
+  // Declared after "awards" and before any parameterised route (this controller has none).
+  @Get("awards/overview")
+  @OrgPolicy("learner", { note: "The caller's own awards and progress only; read-only.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @ApiResponse({
+    status: 200,
+    description: "Fetched the learner's awards overview successfully",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @HttpCode(HttpStatus.OK)
+  async getStudentAwardsOverview(
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
+  ): Promise<any> {
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: await new StudentBusiness().getawardsoverview(user, translations),
       error: false,
     });
   }

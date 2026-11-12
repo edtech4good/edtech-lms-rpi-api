@@ -37,6 +37,7 @@ import { studentgradesprogress } from "src/models/data-models/studentgradesprogr
 import { studentlearningprogress } from "src/models/data-models/studentlearningprogress";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
+import { studentawards } from "src/models/data-models/studentawards";
 import { studentpoints } from "src/models/data-models/studentpoints";
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { studentprogressquestions } from "src/models/data-models/studentprogressquestions";
@@ -213,7 +214,7 @@ const MODELS = [
   organisations, schools, students, schoolusers, standards, curriculums, grades, levels, lessons, lessonlearnings, lessonlearningdocuments, lessonplans,
   lessonpractices, lessonquizzes, curriculumbaseline, lessonpracticequestions, lessonquizquestions, levelquizquestions,
   baselinequestion, documents, studentappusages, studentprogress, studentprogressquestions, studentlessonsprogress,
-  studentlevelsprogress, studentgradesprogress, studentlearningprogress, studentpoints, studentactives, studenttrash,
+  studentlevelsprogress, studentawards, studentgradesprogress, studentlearningprogress, studentpoints, studentactives, studenttrash,
   rpiuseraccess, questions, countries,
 ] as unknown as Array<typeof Model & { name: string }>;
 const rowsOf = (model: unknown): Row[] => tables.get(model) ?? [];
@@ -495,6 +496,12 @@ const seedData = () => {
     { studentlevelprogressid: uid("f2", 1), studentid: ST_X2, levelid: T_X1.level, points: 10 },
     { studentlevelprogressid: uid("f2", 2), studentid: ST_Y1, levelid: T_Y1.level, points: 20 },
     { studentlevelprogressid: uid("f2", 3), studentid: ST_Y1, levelid: T_X1.level, points: 30 },
+  ]);
+  // Awards: X's learner 1 has two (the newer one on a level that is no longer in the content tables), Y's learner 1 has one.
+  put(studentawards, [
+    { studentawardid: uid("f4", 1), studentid: ST_X1, levelid: T_X1.level, gradeid: T_X1.grade, curid: T_X1.curriculum, earnedat: new Date("2026-05-01T00:00:00Z"), earnedat_approximate: false },
+    { studentawardid: uid("f4", 2), studentid: ST_X1, levelid: uid("f4", 90), gradeid: T_X1.grade, curid: T_X1.curriculum, earnedat: new Date("2026-06-01T00:00:00Z"), earnedat_approximate: true },
+    { studentawardid: uid("f4", 3), studentid: ST_Y1, levelid: T_Y1.level, gradeid: T_Y1.grade, curid: T_Y1.curriculum, earnedat: new Date("2026-07-01T00:00:00Z"), earnedat_approximate: false },
   ]);
   put(studentlessonsprogress, [
     { studentlessonprogressid: uid("f3", 1), studentid: ST_X2, lessonid: T_X1.lesson, points: 10 },
@@ -1015,6 +1022,45 @@ describe("list routes: the scope is the token's, and what the query names can on
         ["X teacher", X_TEACHER, []],
       ],
     })).toEqual([]);
+  });
+
+  it("GET /student/awards answers the token's own learner's awards only, newest first, with the names of their level, grade and curriculum", async () => {
+    const { failures, check } = scenario();
+    const ask = async (auth: Auth) => {
+      const r = await send("get", "/student/awards", auth);
+      return { status: r.status, rows: (r.body?.data ?? []) as Row[] };
+    };
+    const x = await ask(X_LEARNER);
+    check(`X learner -> ${x.status}, ${JSON.stringify(x.rows.map((r) => r.studentawardid))} (wanted exactly its two awards, newest first)`,
+      x.status === 200 && JSON.stringify(x.rows.map((r) => r.studentawardid)) === JSON.stringify([uid("f4", 2), uid("f4", 1)]));
+    check(`X learner: the answer carries no learner id and has the named fields (${JSON.stringify(Object.keys(x.rows[1] ?? {}).sort())})`,
+      Object.keys(x.rows[1] ?? {}).sort().join() === ["curid", "curriculumname", "earnedat", "earnedat_approximate", "gradeid", "gradename", "levelid", "levelname", "levelorder", "studentawardid"].join());
+    const y = await ask(Y_LEARNER);
+    check(`Y learner -> ${y.status}, ${JSON.stringify(y.rows.map((r) => r.studentawardid))} (wanted exactly its own)`, y.status === 200 && JSON.stringify(y.rows.map((r) => r.studentawardid)) === JSON.stringify([uid("f4", 3)]));
+    const t = await ask(X_TEACHER);
+    check(`X teacher (no learner record of its own) -> ${t.status}, ${JSON.stringify(t.rows)} (wanted none)`, t.status === 200 && t.rows.length === 0);
+    await refusedEverywhere(check, "get", "/student/awards");
+    expect(failures).toEqual([]);
+  });
+
+  it("GET /student/awards/overview answers the token's own learner's levels with their awards, and the awards of levels no longer shown apart; never another learner's", async () => {
+    const { failures, check } = scenario();
+    const ask = async (auth: Auth) => {
+      const r = await send("get", "/student/awards/overview", auth);
+      const curricula = (r.body?.data?.curricula ?? []) as Row[];
+      const levelAwards = curricula.flatMap((c) => c.grades.flatMap((g: Row) => g.levels.map((l: Row) => l.award?.studentawardid))).filter(Boolean);
+      return { status: r.status, levelAwards, elsewhere: ((r.body?.data?.earnedelsewhere ?? []) as Row[]).map((a) => a.studentawardid) };
+    };
+    const x = await ask(X_LEARNER);
+    check(`X learner -> ${x.status}, on levels ${JSON.stringify(x.levelAwards)}, elsewhere ${JSON.stringify(x.elsewhere)} (wanted its own two, one on a level, one apart)`,
+      x.status === 200 && JSON.stringify(x.levelAwards) === JSON.stringify([uid("f4", 1)]) && JSON.stringify(x.elsewhere) === JSON.stringify([uid("f4", 2)]));
+    const y = await ask(Y_LEARNER);
+    check(`Y learner -> ${y.status}, on levels ${JSON.stringify(y.levelAwards)}, elsewhere ${JSON.stringify(y.elsewhere)} (wanted exactly its own)`,
+      y.status === 200 && JSON.stringify(y.levelAwards) === JSON.stringify([uid("f4", 3)]) && y.elsewhere.length === 0);
+    const t = await ask(X_TEACHER);
+    check(`X teacher (no learner record of its own) -> ${t.status}, ${JSON.stringify(t.levelAwards)}, ${JSON.stringify(t.elsewhere)} (wanted no awards)`, t.status === 200 && t.levelAwards.length === 0 && t.elsewhere.length === 0);
+    await refusedEverywhere(check, "get", "/student/awards/overview");
+    expect(failures).toEqual([]);
   });
 
   it("GET /student/progress answers for the token's own learner record, and a token with no proof of its organisation gets nothing", async () => {
@@ -1659,6 +1705,7 @@ describe("report-style routes: the scope is X's header (central), or the token's
     "POST /report/studentstatus/download": { path: "/report/studentstatus/download", reads: ["schoolid"] },
     "POST /report/student-grade-progress": { path: "/report/student-grade-progress", reads: ["standard"] },
     "POST /report/student-level-progress": { path: "/report/student-level-progress", reads: ["studentid"] },
+    "POST /report/student-awards": { path: "/report/student-awards", reads: ["studentid"] },
     "POST /report/student-lesson-progress": { path: "/report/student-lesson-progress", reads: ["studentid"] },
   };
 
@@ -1703,6 +1750,26 @@ describe("report-style routes: the scope is X's header (central), or the token's
   });
   it("POST /report/student-level-progress reads only learners in the scope: X's header or X's school, whatever the body names", async () => {
     expect(await runReport(REPORTS["POST /report/student-level-progress"])).toEqual([]);
+  });
+  it("POST /report/student-awards reads only learners in the scope: X's header or X's school, whatever the body names", async () => {
+    expect(await runReport(REPORTS["POST /report/student-awards"])).toEqual([]);
+  });
+  it("POST /report/student-awards answers one learner's awards, newest first, and none of another organisation's learners", async () => {
+    const { failures, check } = scenario();
+    const awardsOf = async (auth: Auth, studentid: string) => {
+      const r = await send("post", "/report/student-awards", auth, { pageindex: 1, pagesize: 50, filter: [{ key: "studentid", value: studentid }] });
+      return { status: r.status, rows: (r.body?.data?.data ?? []) as Row[], total: r.body?.data?.total };
+    };
+    for (const [name, auth] of [["server key + X's header", SERVER_X], ["X teacher", X_TEACHER]] as Array<[string, Auth]>) {
+      const own = await awardsOf(auth, ST_X1);
+      check(`${name}, X's learner -> ${own.status}, ${JSON.stringify(own.rows.map((r) => r.studentawardid))} (wanted 200, the two awards newest first)`,
+        own.status === 200 && JSON.stringify(own.rows.map((r) => r.studentawardid)) === JSON.stringify([uid("f4", 2), uid("f4", 1)]) && own.total === 2);
+      check(`${name}, X's learner: the award on the level still in the content tables carries its names`,
+        own.rows[1]?.levelname === "Level" && own.rows[1]?.earnedat_approximate === false && own.rows[0]?.earnedat_approximate === true);
+      const other = await awardsOf(auth, ST_Y1);
+      check(`${name}, Y's learner -> ${other.status}, ${JSON.stringify(other.rows)} (wanted 200, no awards)`, other.status === 200 && other.rows.length === 0);
+    }
+    expect(failures).toEqual([]);
   });
   it("POST /report/student-lesson-progress reads only learners in the scope: X's header or X's school, whatever the body names", async () => {
     expect(await runReport(REPORTS["POST /report/student-lesson-progress"])).toEqual([]);
@@ -1980,6 +2047,19 @@ describe("progress reads carry the resolved learner's id", () => {
     const answer = await new ReportBusiness()[method](listOf("studentid", ST_Y1), scopeX);
     expect(answer.rows).toEqual([]);
     expect(progressReads(table)).toEqual([]);
+  });
+
+  it("POST /report/student-awards (business, scope check set aside): awards are read for the resolved learner only, and another school's learner named alone is nobody's", async () => {
+    jest.spyOn(reportScope, "contentFiltersInScope").mockResolvedValue(true);
+    reset();
+    const answer = await new ReportBusiness().getStudentAwards(listOf("studentid", [ST_X1, ST_Y1]), scopeX);
+    const asked = reads.filter((r) => r.model === "studentawards").map((r) => r.options?.where?.studentid);
+    expect(asked).toEqual([ST_X1]);
+    expect(answer.rows.map((r) => r.studentawardid)).toEqual([uid("f4", 2), uid("f4", 1)]);
+    reset();
+    const other = await new ReportBusiness().getStudentAwards(listOf("studentid", ST_Y1), scopeX);
+    expect(other.rows).toEqual([]);
+    expect(reads.filter((r) => r.model === "studentawards")).toEqual([]);
   });
 
   it("POST /report/studentprogress (business, scope check set aside): the lesson-progress join of the scores report carries the resolved learner's id", async () => {

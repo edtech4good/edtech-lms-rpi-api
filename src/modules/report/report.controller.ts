@@ -361,6 +361,49 @@ export class ReportController {
     ),
     ReportScopeGuard
   )
+  @Post('student-awards')
+  @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @ApiResponse({
+    status: 200,
+    description: "Fetched student awards successfully",
+  })
+  @ApiResponse({
+    status: 400,
+    description: "Error fetching student awards",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @ApiBody({ required: false, type: IMultiPaging })
+  @HttpCode(HttpStatus.OK)
+  async getStudentAwards(@Body() body: IMultiPaging, @ReportScopeOf() scope: ReportScope | null): Promise<any> {
+    const data = await new ReportBusiness().getStudentAwards({
+      pageindex: body?.pageindex || 0,
+      pagesize: body?.pagesize || 0,
+      filter: body?.filter || [],
+    }, scope);
+    return {
+      error: false,
+      data: {
+        data: data.rows,
+        total: data.count,
+        student: data.student,
+        pageindex: body?.pageindex || 0,
+        pagesize: body?.pagesize || 0,
+      },
+    };
+  }
+
+  @UseGuards(
+    AccessOrServerSyncGuard(
+      TokenType.ACCESS,
+    SchoolRole.ADMIN,
+    SchoolRole.SUPERADMIN,
+    SchoolRole.TEACHER
+    ),
+    ReportScopeGuard
+  )
   @Post('student-lesson-progress')
   @OrgPolicy("teacher", { note: "Central calls it with the server key and X-Organisation-Id; a token's scope is its school.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({

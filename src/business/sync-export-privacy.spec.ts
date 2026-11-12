@@ -1,6 +1,7 @@
 import {
   rpiuseraccess,
   studentactives,
+  studentawards,
   studentgradesprogress,
   studentlearningprogress,
   studentlessonsprogress,
@@ -66,6 +67,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
   let slpSpy: jest.SpyInstance;
   let sgpSpy: jest.SpyInstance;
   let slvpSpy: jest.SpyInstance;
+  let sawSpy: jest.SpyInstance;
   let slspSpy: jest.SpyInstance;
   let spointsSpy: jest.SpyInstance;
   let spusagesSpy: jest.SpyInstance;
@@ -82,6 +84,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     slpSpy = jest.spyOn(studentlearningprogress, "findAll").mockResolvedValue([] as never);
     sgpSpy = jest.spyOn(studentgradesprogress, "findAll").mockResolvedValue([] as never);
     slvpSpy = jest.spyOn(studentlevelsprogress, "findAll").mockResolvedValue([] as never);
+    sawSpy = jest.spyOn(studentawards, "findAll").mockResolvedValue([] as never);
     slspSpy = jest.spyOn(studentlessonsprogress, "findAll").mockResolvedValue([] as never);
     spointsSpy = jest.spyOn(studentpoints, "findAll").mockResolvedValue([] as never);
     spusagesSpy = jest.spyOn(studentappusages, "findAll").mockResolvedValue([] as never);
@@ -97,6 +100,7 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     slpSpy.mockRestore();
     sgpSpy.mockRestore();
     slvpSpy.mockRestore();
+    sawSpy.mockRestore();
     slspSpy.mockRestore();
     spointsSpy.mockRestore();
     spusagesSpy.mockRestore();
@@ -133,5 +137,22 @@ describe("sync/export payloads never carry the raw learner answer (workspace#79 
     }
     const options = spqSpy.mock.calls[0][0];
     expect(options.attributes).toEqual({ exclude: ["answer"] });
+  });
+
+  it("the awards in the export are keyed on when the row was written (lastupdated), so a backfilled award with an old earnedat is exported", async () => {
+    const { Op } = await import("sequelize");
+    const old = new Date("2025-01-01T00:00:00Z");
+    const recent = new Date();
+    const rows = [
+      { studentawardid: "backfilled", earnedat: old, lastupdated: recent },
+      { studentawardid: "written-long-ago", earnedat: recent, lastupdated: old },
+    ];
+    sawSpy.mockImplementation(((options: any) => {
+      const after: Date = options.where.lastupdated?.[Op.gt];
+      if (!after) throw new Error("the awards export is not keyed on lastupdated");
+      return Promise.resolve(rows.filter((r) => r.lastupdated > after).map((r) => ({ get: () => r })));
+    }) as never);
+    const data = await new SyncReport().getstudentdata(null);
+    expect(data.progress.studentawards.map((a: any) => a.studentawardid)).toEqual(["backfilled"]);
   });
 });

@@ -413,6 +413,7 @@ const LISTS: Record<string, { url: string; shows?: string[] }> = {
   "GET /Lesson/all": { url: "/Lesson/all", shows: [A.lesson] },
   "GET /student/progress": { url: "/student/progress" },
   "GET /student/progress/summary": { url: "/student/progress/summary", shows: [A.level] },
+  "GET /student/awards/overview": { url: "/student/awards/overview", shows: [A.level] },
 };
 /** Routes that open a piece of content by its id: level A's must answer, level B's must answer as an id that names nothing does. */
 const OPENS: Record<string, { url: (id: string) => string; of: keyof Ids; shows?: string[] }> = {
@@ -462,6 +463,7 @@ const EXCLUDED: Record<string, string> = {
   "POST /access": "records the caller's own usage",
   "POST /student/logintime": "the caller's own login time",
   "POST /student/profile": "the caller's own profile",
+  "GET /student/awards": "the caller's own awards: a record of a level completed, kept when the level is later switched off or deleted (awards outlive their level); it lists no module content and a switched-off level cannot be completed",
   "POST /curriculum/baseline/:curriculumid/:schoolname/:studentid": "a baseline hangs from the curriculum, not from a level; a module is a level",
   "GET /question/baseline/:curriculumbaselineid": "a baseline hangs from the curriculum, not from a level; a module is a level",
   "POST /result/baseline/question/:curriculumbaselineid": "a baseline hangs from the curriculum, not from a level; a module is a level",

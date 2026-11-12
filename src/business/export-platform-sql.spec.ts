@@ -37,7 +37,7 @@ describe("the platform view of the data exports sends the statements it always d
     await sequelize.close();
   });
 
-  it("GET /export/report-data for the platform: the logins and the nine progress reads are byte for byte the previous statements, in order", async () => {
+  it("GET /export/report-data for the platform: the logins and the ten progress reads are byte for byte the previous statements, in order", async () => {
     await new SyncReport().getreportdata(null);
     expect(sent).toEqual(GOLDEN);
   });

@@ -9,17 +9,94 @@ import {
   levels,
   schoolusers,
   studentlessonsprogress,
+  studentlevelsprogress,
+  studentawards,
   students,
   studentsAttributes,
 } from "../models/data-models/init-models";
 import { CurriculumBusiness } from "./curriculum.business";
 import type { ContentTranslations } from "./content-translations";
 import { GradeBusiness } from "./grade.business";
+import { AwardView, awardsOfStudent, hiddenSingleItemTierGradeIds } from "./level-award";
 import { learnersInScope, ReportScope } from "./report-scope";
 import { schoolRefIsOwn, SchoolScope, studentsOfSchool, withRequiredSchoolIds } from "./school-identity";
 
 /** `{ "<language>": { "<field>": text } }`, present only when the request asked for translations. */
 export type StudentProgressSummaryTranslations = Record<string, Record<string, string>>;
+
+/** One earned award, as the awards overview lists it on its level. */
+export interface AwardsOverviewAward {
+  studentawardid: string;
+  earnedat: Date;
+  earnedat_approximate: boolean;
+}
+
+export interface AwardsOverviewLevel {
+  levelid: string;
+  levelname: string;
+  levelorder: number;
+  /** The level progress row's points percentage, 0 without a row. */
+  progress: number;
+  /** False on a hidden single-item tier: the level earns no award. An award it already has is still shown. */
+  awardable: boolean;
+  award: AwardsOverviewAward | null;
+  translations?: StudentProgressSummaryTranslations;
+}
+
+export interface AwardsOverviewGrade {
+  gradeid: string;
+  gradename: string;
+  levels: AwardsOverviewLevel[];
+  translations?: StudentProgressSummaryTranslations;
+}
+
+export interface AwardsOverviewCurriculum {
+  curid: string;
+  curriculumname: string;
+  grades: AwardsOverviewGrade[];
+  translations?: StudentProgressSummaryTranslations;
+}
+
+export interface AwardsOverview {
+  curricula: AwardsOverviewCurriculum[];
+  earnedelsewhere: Array<AwardView & { translations?: StudentProgressSummaryTranslations }>;
+}
+
+type NamedRow = Record<string, unknown>;
+
+/** Merges per-language field maps; the fields of different tables never share a name, so nothing is overwritten. */
+const mergeTranslations = (...sources: Array<StudentProgressSummaryTranslations | undefined>): StudentProgressSummaryTranslations => {
+  const merged: StudentProgressSummaryTranslations = {};
+  for (const source of sources) {
+    for (const [language, fields] of Object.entries(source ?? {})) merged[language] = { ...merged[language], ...fields };
+  }
+  return merged;
+};
+
+/**
+ * Decorates rows that name a content row by `idkey` (not by the table's own key) and carry its name in `field`: the
+ * translations are read for stand-in rows keyed the table's way, and handed back as the row's `translations`.
+ */
+const translationsOf = async (translations: ContentTranslations, table: "curriculums" | "grades" | "levels", pk: string, rows: NamedRow[], idkey: string, field: string) => {
+  const stand = rows.map((row) => ({ [pk]: row[idkey], [field]: row[field] }));
+  await translations.decorate(table, stand);
+  return stand.map((s) => (s as { translations?: StudentProgressSummaryTranslations }).translations ?? {});
+};
+
+/**
+ * Adds `translations` to each award row (the level, grade and curriculum names it carries, merged into one map), as
+ * the progress summary does for its current level. A name the row does not carry (its content row is gone) has none.
+ */
+export const decorateAwardNames = async <T extends AwardView>(translations: ContentTranslations | undefined, rows: T[]): Promise<Array<T & { translations?: StudentProgressSummaryTranslations }>> => {
+  if (!translations || rows.length === 0) return rows;
+  const raw = rows as unknown as NamedRow[];
+  const [lv, gr, cu] = await Promise.all([
+    translationsOf(translations, "levels", "levelid", raw, "levelid", "levelname"),
+    translationsOf(translations, "grades", "gradeid", raw, "gradeid", "gradename"),
+    translationsOf(translations, "curriculums", "curriculumid", raw, "curid", "curriculumname"),
+  ]);
+  return rows.map((row, i) => ({ ...row, translations: mergeTranslations(lv[i], gr[i], cu[i]) }));
+};
 
 export interface StudentProgressSummaryCurrentLevel {
   levelid: string;
@@ -366,32 +443,14 @@ WHERE
     return 0;
   }
 
-  // Single call backing the app's "My progress" screen: overall lesson/level
-  // completion per enrolled curriculum plus totals, in a fixed number of
-  // queries (no per-curriculum/per-level query loop) so it stays cheap
-  // regardless of how many curricula or levels the student has, and is
-  // cacheable offline as one payload.
-  //
-  // "Enrolled curricula" is exactly what GET curriculum/subjects resolves
-  // (CurriculumBusiness.getEnrolledCurriculums): active, non-deleted
-  // curricula in the student's curriculumids, in curriculumname order.
-  //
-  // A lesson is "done" when the student's studentlessonsprogress row has
-  // completed === true OR progress >= 100 — the same rule the Expo app's
-  // Level Detail screen uses. A level "counts" only when it has at least one
-  // active lesson; a level with zero active lessons is excluded from both
-  // levelsCompleted and levelsTotal (it can never be "done" and would
-  // otherwise silently deflate the denominator). currentLevel is the first
-  // level, ordered by grade gradeorder then level levelorder, that has at
-  // least one active lesson and is not yet completed; it is null once every
-  // level is completed, or when the curriculum has no active lessons at all.
-  getprogresssummary = async (user: Token, translations?: ContentTranslations): Promise<StudentProgressSummary> => {
-    const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
+  // The curricula, active grades and active levels the learner sees, in the order every learner screen shows them:
+  // shared by "My progress" (getprogresssummary) and the awards overview so the two always agree on what exists.
+  // No grade or level query is made when there is no enrolled curriculum (or no active grade).
+  private getenrolledtree = async (user: Token) => {
     const curricula = await new CurriculumBusiness().getEnrolledCurriculums(user);
     if (curricula.length === 0) {
-      return { curricula: [], totals: emptyTotals };
+      return { curricula, activeGrades: [] as grades[], activeLevels: [] as levels[] };
     }
-
     const curriculumids = curricula.map((cur) => cur.curriculumid);
 
     const activeGrades = await grades.findAll({
@@ -408,6 +467,45 @@ WHERE
           order: [["levelorder", "ASC"], ["levelname", "ASC"], ["levelid", "ASC"]],
         })
       : [];
+    return { curricula, activeGrades, activeLevels };
+  };
+
+  // Single call backing the app's "My progress" screen: overall lesson/level
+  // completion per enrolled curriculum plus totals, in a fixed number of
+  // queries (no per-curriculum/per-level query loop) so it stays cheap
+  // regardless of how many curricula or levels the student has, and is
+  // cacheable offline as one payload.
+  //
+  // "Enrolled curricula" is exactly what GET curriculum/subjects resolves
+  // (CurriculumBusiness.getEnrolledCurriculums): active, non-deleted
+  // curricula in the student's curriculumids, in curriculumname order.
+  //
+  // A lesson is "done" when the student's studentlessonsprogress row has
+  // completed === true OR progress >= 100 — the same rule the Expo app's
+  // Level Detail screen uses; it feeds only the lesson counts.
+  // A level is "completed" when any of the student's studentlevelsprogress
+  // rows for it has completed === true (the flag the server sets when the
+  // learner reaches 80% of the level's points), or an award was already earned
+  // for the level (awards are never removed, while the flag can drop back when
+  // a later result lowers the points), so the count and the awards always
+  // agree. It is not "every lesson done"; no flag row, no true flag and no
+  // award means not completed. The flags and the awards are each read in one
+  // extra query for all counted levels. A level "counts" only when it has at least
+  // one active lesson; a level with zero active lessons is excluded from both
+  // levelsCompleted and levelsTotal and stays completed: false even if a flag
+  // is set. currentLevel is the first counted level, ordered by grade
+  // gradeorder then level levelorder, that is not completed; it is null once
+  // every counted level is completed, or when the curriculum has no active
+  // lessons at all. Its lessonsCompleted/lessonsTotal remain lesson counts.
+  getprogresssummary = async (user: Token, translations?: ContentTranslations): Promise<StudentProgressSummary> => {
+    const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
+    const tree = await this.getenrolledtree(user);
+    const { curricula } = tree;
+    if (curricula.length === 0) {
+      return { curricula: [], totals: emptyTotals };
+    }
+
+    const { activeGrades, activeLevels } = tree;
     const levelids = activeLevels.map((level) => level.levelid);
 
     const activeLessons = levelids.length
@@ -431,6 +529,27 @@ WHERE
         doneLessonIds.add(p.lessonid);
       }
     }
+
+    // The stored 80% flag, one query for every counted level (a level with active lessons).
+    const countedLevelIds = [...new Set(activeLessons.map((lesson) => lesson.levelid))];
+    const levelFlagRows = countedLevelIds.length
+      ? await studentlevelsprogress.findAll({
+          where: { studentid: user.studentid, levelid: countedLevelIds },
+          attributes: ["levelid", "completed"],
+        })
+      : [];
+    const completedLevelIds = new Set<string>();
+    for (const row of levelFlagRows) {
+      if (row.completed === true) completedLevelIds.add(row.levelid);
+    }
+    // An earned award keeps the level completed even when the flag has since dropped back.
+    const awardRows = countedLevelIds.length
+      ? await studentawards.findAll({
+          where: { studentid: user.studentid, levelid: countedLevelIds },
+          attributes: ["levelid"],
+        })
+      : [];
+    for (const row of awardRows) completedLevelIds.add(row.levelid);
 
     const lessonIdsByLevel = new Map<string, string[]>();
     for (const lesson of activeLessons) {
@@ -499,7 +618,7 @@ WHERE
 
           levelsTotal += 1;
           gradeLevelsTotal += 1;
-          const levelComplete = levelLessonsCompleted === levelLessonsTotal;
+          const levelComplete = completedLevelIds.has(level.levelid);
           if (levelComplete) {
             levelsCompleted += 1;
             gradeLevelsCompleted += 1;
@@ -572,6 +691,71 @@ WHERE
       }
     }
     return { curricula: curriculaOut, totals };
+  };
+
+  // Single call backing the learner app's Awards screen: the same curricula, grades and levels as "My progress" (one
+  // shared selection, getenrolledtree), each level with the learner's progress, whether it can be awarded and the award
+  // earned for it. An award is kept for good, so a level that is now on a hidden single-item tier still shows the
+  // award it already has, and an award whose level is no longer one of those levels is listed in `earnedelsewhere`.
+  // A fixed number of queries: the curriculum tree, the school, one grouped count of live levels per grade, the level
+  // progress rows and the awards, whatever the number of levels.
+  getawardsoverview = async (user: Token, translations?: ContentTranslations): Promise<AwardsOverview> => {
+    const studentid = user.studentid;
+    const { curricula, activeGrades, activeLevels } = await this.getenrolledtree(user);
+    const awards = studentid ? await awardsOfStudent(studentid) : [];
+    const shown = new Set(activeLevels.map((level) => level.levelid));
+    const awardOf = new Map<string, AwardView>();
+    for (const award of awards) if (shown.has(award.levelid) && !awardOf.has(award.levelid)) awardOf.set(award.levelid, award);
+
+    const progressrows = studentid && shown.size
+      ? await studentlevelsprogress.findAll({ where: { studentid, levelid: [...shown] }, attributes: ["levelid", "progress"] })
+      : [];
+    const progressOf = new Map<string, number>();
+    for (const row of progressrows) progressOf.set(row.levelid, Math.max(progressOf.get(row.levelid) ?? 0, Number(row.progress ?? 0)));
+
+    const hidden = await hiddenSingleItemTierGradeIds(user, activeGrades.map((grade) => grade.gradeid));
+
+    const levelsByGrade = new Map<string, AwardsOverviewLevel[]>();
+    for (const level of activeLevels) {
+      const award = awardOf.get(level.levelid);
+      const list = levelsByGrade.get(level.gradeid) ?? [];
+      list.push({
+        levelid: level.levelid,
+        levelname: level.levelname,
+        levelorder: level.levelorder,
+        progress: progressOf.get(level.levelid) ?? 0,
+        awardable: !hidden.has(level.gradeid),
+        award: award ? { studentawardid: award.studentawardid, earnedat: award.earnedat, earnedat_approximate: award.earnedat_approximate } : null,
+      });
+      levelsByGrade.set(level.gradeid, list);
+    }
+    const gradesByCurriculum = new Map<string, AwardsOverviewGrade[]>();
+    for (const grade of activeGrades) {
+      const list = gradesByCurriculum.get(grade.curriculumid) ?? [];
+      list.push({ gradeid: grade.gradeid, gradename: grade.gradename, levels: levelsByGrade.get(grade.gradeid) ?? [] });
+      gradesByCurriculum.set(grade.curriculumid, list);
+    }
+    const curriculaOut: AwardsOverviewCurriculum[] = curricula.map((cur) => ({
+      curid: cur.curriculumid,
+      curriculumname: cur.curriculumname,
+      grades: gradesByCurriculum.get(cur.curriculumid) ?? [],
+    }));
+
+    if (translations) {
+      // As the summary: one query per table for the whole payload.
+      const gradeRows = curriculaOut.flatMap((cur) => cur.grades);
+      const levelRows = gradeRows.flatMap((grade) => grade.levels);
+      const [cu, gr, lv] = await Promise.all([
+        translationsOf(translations, "curriculums", "curriculumid", curriculaOut as unknown as NamedRow[], "curid", "curriculumname"),
+        translationsOf(translations, "grades", "gradeid", gradeRows as unknown as NamedRow[], "gradeid", "gradename"),
+        translationsOf(translations, "levels", "levelid", levelRows as unknown as NamedRow[], "levelid", "levelname"),
+      ]);
+      curriculaOut.forEach((row, i) => (row.translations = cu[i]));
+      gradeRows.forEach((row, i) => (row.translations = gr[i]));
+      levelRows.forEach((row, i) => (row.translations = lv[i]));
+    }
+    const elsewhere = awards.filter((award) => !shown.has(award.levelid));
+    return { curricula: curriculaOut, earnedelsewhere: await decorateAwardNames(translations, elsewhere) };
   };
 
   // `scope` (see report-scope.ts): only logins of learners and staff in the scope are answered; the rest are left

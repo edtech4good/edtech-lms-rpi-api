@@ -20,6 +20,7 @@ import { studentgradesprogress } from "src/models/data-models/studentgradesprogr
 import { studentlearningprogress } from "src/models/data-models/studentlearningprogress";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
+import { studentawards } from "src/models/data-models/studentawards";
 import { studentpoints } from "src/models/data-models/studentpoints";
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { studentprogressquestions } from "src/models/data-models/studentprogressquestions";
@@ -165,7 +166,7 @@ const wrap = (row: Row, options?: { attributes?: { exclude?: string[] } | string
 const install = () => {
   const models: unknown[] = [
     organisations, schools, students, schoolusers, studentprogress, studentprogressquestions, rpiuseraccess, studentactives,
-    studentlearningprogress, studentgradesprogress, studentlevelsprogress, studentlessonsprogress, studentpoints, studentappusages,
+    studentlearningprogress, studentgradesprogress, studentlevelsprogress, studentawards, studentlessonsprogress, studentpoints, studentappusages,
   ];
   for (const model of models as Array<typeof schools>) {
     const filtered = (options: any) => rowsOf(model).filter((r) => matchesWhere(r, options?.where)); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -235,6 +236,7 @@ const seed = () => {
   put(studentlearningprogress, rowsForEachLearner((studentid, _u, n) => ({ studentlearningprogressid: uid("f4", n), studentid, lastupdated: RECENT() })));
   put(studentgradesprogress, rowsForEachLearner((studentid, _u, n) => ({ studentgradeprogressid: uid("f5", n), studentid, lastupdated: RECENT() })));
   put(studentlevelsprogress, rowsForEachLearner((studentid, _u, n) => ({ studentlevelprogressid: uid("f6", n), studentid, lastupdated: RECENT() })));
+  put(studentawards, rowsForEachLearner((studentid, _u, n) => ({ studentawardid: uid("fb", n), studentid, earnedat: RECENT(), lastupdated: RECENT() })));
   put(studentlessonsprogress, rowsForEachLearner((studentid, _u, n) => ({ studentlessonprogressid: uid("f7", n), studentid, lastupdated: RECENT() })));
   put(studentpoints, rowsForEachLearner((studentid, _u, n) => ({ studentpointid: uid("f8", n), studentid, created_at: RECENT() })));
   put(studentappusages, [
@@ -349,7 +351,7 @@ describe("the data exports are confined to the caller's scope (organisations pac
       const payload = json(res.body, "syncfile.ini");
       expect(Object.keys(payload).sort()).toEqual(["students", "studentaccess", "studentprogress", "studentresult"].sort());
       expect(Object.keys(payload.studentprogress).sort()).toEqual(
-        ["studentactives", "studentappusages", "studentgradesprogress", "studentlearningprogress", "studentlessonsprogress", "studentlevelsprogress", "studentpoints"],
+        ["studentactives", "studentappusages", "studentawards", "studentgradesprogress", "studentlearningprogress", "studentlessonsprogress", "studentlevelsprogress", "studentpoints"],
       );
       expect(idsIn(payload)).toEqual(sorted(SCHOOL_X));
       // the six-month window still applies, and the password hash still never leaves

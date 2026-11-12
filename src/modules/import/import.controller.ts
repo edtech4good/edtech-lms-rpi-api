@@ -272,7 +272,7 @@ export class ImportController {
             await stp.importStudentProgress(studentprogresses.studentprogress, tnx);
             await stp.importStudentLearningProgress(studentprogresses.studentlearningprogress, tnx);
             await stp.importStudentGradesProgress(studentprogresses.studentgradesprogress, tnx);
-            await stp.importStudentLevelsProgress(studentprogresses.studentlevelsprogress, tnx);
+            await stp.importStudentLevelsProgress(studentprogresses.studentlevelsprogress, tnx, studentprogresses.studentawards);
             await stp.importStudentLessonsProgress(studentprogresses.studentlessonsprogress, tnx);
           }
           await tnx.commit();
