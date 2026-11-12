@@ -27,6 +27,7 @@ import { schools } from "src/models/data-models/school";
 import { standards } from "src/models/data-models/standards";
 import { subjects } from "src/models/data-models/subjects";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
+import { RECOGNITION_FIELDS, RecognitionField } from "src/constants/recognition";
 import { DEFAULT_DOCUMENT_LICENCE, normaliseDocumentAttribution, normaliseDocumentTitle } from "src/constants/media-library";
 import { dbinstance } from "src/services/dbservice";
 import { CONTENT_TABLES, OrganisationContent, Row, TABLE_KEYS, TableKey } from "src/modules/import/organisation-content.validator";
@@ -180,6 +181,18 @@ const OWNED_UPDATE: Partial<Record<TableKey, string[]>> = {
   ],
   subjects: ["subjectname", "subjectdescription", "subjectstatus", "isdeleted", "organisationid"],
   contenttranslations: ["organisationid", "tablename", "rowid", "field", "subkey", "language", "text", "sourcehash", "lastupdated"],
+};
+
+/** The rows split by which recognition keys they carry (the keys are optional), in first-seen order; each group's keys. */
+const groupByRecognitionKeys = (rows: Row[]): Array<[RecognitionField[], Row[]]> => {
+  const groups = new Map<string, [RecognitionField[], Row[]]>();
+  for (const row of rows) {
+    const keys = RECOGNITION_FIELDS.filter((field) => row[field] !== undefined);
+    const id = keys.join(",");
+    const group = groups.get(id) ?? groups.set(id, [keys, []]).get(id)!;
+    group[1].push(row);
+  }
+  return [...groups.values()];
 };
 
 /**
@@ -683,8 +696,15 @@ export class OrganisationContentImport {
     const model = MODELS[key];
     switch (key) {
       // The tables with an owner are written here (the old writers do not know the column).
-      case "schools":
       case "curriculums":
+        // The recognition setting is optional on a row: a row without it must leave a stored value alone and let a
+        // new row take the column default, so rows are written in groups that carry the same recognition keys, and a
+        // group updates only the keys it carries.
+        for (const [keys, group] of groupByRecognitionKeys(part)) {
+          await model.bulkCreate(group as never, { transaction: this.transaction, updateOnDuplicate: [...(update ?? []), ...keys] as never });
+        }
+        return;
+      case "schools":
       case "questions":
       case "documents":
       case "subjects":

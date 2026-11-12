@@ -187,6 +187,22 @@ describe("validatePayload", () => {
 });
 
 describe("rehomeContent", () => {
+  it("carries a curriculum's recognition setting through to the payload that is imported, and refuses an unknown value", () => {
+    const withSetting = sample();
+    const cur = (withSetting.curriculums as Row[])[0];
+    Object.assign(cur, { levelrecognition: "certificate", graderecognition: "none", curriculumrecognition: "certificate" });
+    const { body, content } = rehomeContent(validatePayload(withSetting), identity());
+    const expected = { levelrecognition: "certificate", graderecognition: "none", curriculumrecognition: "certificate" };
+    expect(content.tables.curriculums[0]).toMatchObject(expected);
+    expect((body.curriculums as Row[])[0]).toMatchObject(expected);
+    // a payload without the keys stays without them (the import then keeps or defaults them)
+    const plain = rehomeContent(validatePayload(sample()), identity());
+    expect(Object.keys(plain.content.tables.curriculums[0])).not.toEqual(expect.arrayContaining(["levelrecognition"]));
+    const bad = sample();
+    (bad.curriculums as Row[])[0].graderecognition = "award";
+    expect(() => validatePayload(bad)).toThrow(/graderecognition/);
+  });
+
   it("makes the payload the local organisation's, rewriting owners and the header and nothing of the content", () => {
     const original = validatePayload(sample());
     const { body, content, summary } = rehomeContent(original, identity());

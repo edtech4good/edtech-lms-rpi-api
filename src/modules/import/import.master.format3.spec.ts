@@ -83,6 +83,7 @@ const TABLES: Array<[string, any, string]> = [ // eslint-disable-line @typescrip
   ["students", students, "studentid"],
   ["schoolusers", schoolusers, "schooluserid"],
 ];
+const CURRICULUM_RECOGNITION_DEFAULTS = { levelrecognition: "award", graderecognition: "certificate", curriculumrecognition: "none" };
 const OWNED_TABLES = ["schools", "curriculums", "questions", "documents", "subjects"];
 /** What the fake stores an owner for: the five above, and translations (owned too, but a payload need not carry any). */
 const FAKE_OWNED_TABLES = [...OWNED_TABLES, "contenttranslations"];
@@ -188,7 +189,8 @@ const install = (initial: Store) => {
           // ON DUPLICATE KEY UPDATE: only the listed columns change
           for (const column of opts.updateOnDuplicate ?? []) if (column in r) existing[column] = r[column];
         } else {
-          store[name].push({ ...cloneDeep(r), ...(FAKE_OWNED_TABLES.includes(name) ? { organisationid: r.organisationid ?? null } : {}) });
+          // a column the INSERT leaves out takes its database default (curriculums.*recognition, VARCHAR NOT NULL DEFAULT)
+          store[name].push({ ...(name === "curriculums" ? CURRICULUM_RECOGNITION_DEFAULTS : {}), ...cloneDeep(r), ...(FAKE_OWNED_TABLES.includes(name) ? { organisationid: r.organisationid ?? null } : {}) });
         }
       }
       return [];
@@ -1832,5 +1834,103 @@ describe("translations: contenttranslations and organisations.contentlanguage", 
     // and the same payload with the key (empty) and no column is a main-shaped payload that imports
     const withKey = payloadOf(content("x", 1, ORG_X), { contenttranslations: [] });
     await expect(importIt(withKey)).resolves.toMatchObject({ error: false, organisationid: ORG_X });
+  });
+});
+
+// ---------------------------------------------------------------- per-tier recognition (curriculums)
+
+describe("curriculums: the per-tier recognition setting", () => {
+  const RECOGNITION_KEYS = ["levelrecognition", "graderecognition", "curriculumrecognition"];
+  const withRecognition = (extra: Row, tag = "x", n = 1): Store => {
+    const data = content(tag, n, ORG_X);
+    data.curriculums[0] = { ...data.curriculums[0], ...extra };
+    return data;
+  };
+  const curriculumRow = (id = "x-cur-1") => store.curriculums.find((r) => r.curriculumid === id)!;
+  const stored = (id = "x-cur-1") => RECOGNITION_KEYS.map((k) => curriculumRow(id)[k]);
+
+  it("a row carrying the three keys is stored with them; a re-import without the keys leaves them as they were", async () => {
+    install({});
+    await importIt(payloadOf(withRecognition({ levelrecognition: "certificate", graderecognition: "none", curriculumrecognition: "certificate" })));
+    expect(stored()).toEqual(["certificate", "none", "certificate"]);
+    await importIt(payloadOf(content("x", 1, ORG_X)));
+    expect(stored()).toEqual(["certificate", "none", "certificate"]);
+    expect(store.curriculums.filter((r) => r.organisationid === ORG_X)).toHaveLength(1);
+  });
+
+  it("the upsert of a row without the keys does not list them (an upsert overwrites exactly the columns listed)", async () => {
+    install({});
+    await importIt(payloadOf(content("x", 1, ORG_X)));
+    const without = (curriculums.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate;
+    expect(without).toEqual(["curriculumname", "curriculumstatus", "curriculumdescription", "isdeleted", "subjectid", "organisationid"]);
+    (curriculums.bulkCreate as jest.Mock).mockClear();
+    await importIt(payloadOf(withRecognition({ graderecognition: "none" })));
+    const some = (curriculums.bulkCreate as jest.Mock).mock.calls[0][1].updateOnDuplicate;
+    expect(some).toEqual([...without, "graderecognition"]);
+  });
+
+  it("a new curriculum without the keys takes the column defaults: award, certificate, none", async () => {
+    install({});
+    await importIt(payloadOf(content("x", 1, ORG_X)));
+    expect(stored()).toEqual(["award", "certificate", "none"]);
+    // and the INSERT did not name the columns at all
+    expect((curriculums.bulkCreate as jest.Mock).mock.calls[0][0][0]).not.toHaveProperty("levelrecognition");
+  });
+
+  it("rows with and without the keys in one payload are written in separate groups, each keeping the right values", async () => {
+    install({});
+    const data = content("x", 1, ORG_X);
+    data.curriculums = [
+      { ...data.curriculums[0], levelrecognition: "none" },
+      { ...data.curriculums[0], curriculumid: "x-cur-2" },
+      { ...data.curriculums[0], curriculumid: "x-cur-3", levelrecognition: "certificate", graderecognition: "none", curriculumrecognition: "certificate" },
+    ];
+    await importIt(payloadOf(data));
+    expect(stored("x-cur-1")).toEqual(["none", "certificate", "none"]); // only the key it carried; the others are the defaults
+    expect(stored("x-cur-2")).toEqual(["award", "certificate", "none"]);
+    expect(stored("x-cur-3")).toEqual(["certificate", "none", "certificate"]);
+    // a second import of the first two without keys leaves them
+    const again = content("x", 1, ORG_X);
+    again.curriculums = [{ ...again.curriculums[0] }, { ...again.curriculums[0], curriculumid: "x-cur-2" }];
+    await importIt(payloadOf(again));
+    expect(stored("x-cur-1")).toEqual(["none", "certificate", "none"]);
+  });
+
+  describe("a value the tier does not allow is a 400 naming the field, and nothing is written", () => {
+    it.each([
+      ["graderecognition", "award"],
+      ["graderecognition", "AWARD"],
+      ["levelrecognition", "Award"],
+      ["levelrecognition", " award"],
+      ["levelrecognition", ""],
+      ["levelrecognition", null],
+      ["levelrecognition", 1],
+      ["curriculumrecognition", "award"],
+      ["curriculumrecognition", "Certificate"],
+    ])("%s = %p", async (field, value) => {
+      install({});
+      const before = cloneDeep(store);
+      const attempt = importIt(payloadOf(withRecognition({ [field]: value })));
+      await expect(attempt).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringContaining(field),
+        fields: [expect.objectContaining({ field: `curriculums.${field}` })],
+      });
+      expect(writes).toEqual([]);
+      expect(store).toEqual(before);
+    });
+
+    it("an unknown value on a row of a second import leaves the stored values as they were", async () => {
+      install({});
+      await importIt(payloadOf(withRecognition({ levelrecognition: "certificate" })));
+      await expect(importIt(payloadOf(withRecognition({ levelrecognition: "certificate", graderecognition: "AWARD" })))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("graderecognition") });
+      expect(stored()).toEqual(["certificate", "certificate", "none"]);
+    });
+
+    it("every allowed value of every tier is accepted", () => {
+      for (const level of ["none", "award", "certificate"]) for (const grade of ["none", "certificate"]) for (const cur of ["none", "certificate"]) {
+        expect(() => validateOrganisationContent(payloadOf(withRecognition({ levelrecognition: level, graderecognition: grade, curriculumrecognition: cur })))).not.toThrow();
+      }
+    });
   });
 });

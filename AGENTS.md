@@ -93,6 +93,15 @@ holds one school. The rules, in `src/business/`:
   `contentlanguage` (it may have been changed after the row was stored). A token with no organisation gets an undecorated
   response (no `translations`, no `contentlanguage`), not `{}`. Without the header the answers are byte-identical
   (`content-routes.snapshot.spec.ts`, snapshots taken from `main`).
+- Recognition (`src/constants/recognition.ts`). Each curriculum carries `levelrecognition` (`none`, `award`, `certificate`),
+  `graderecognition` and `curriculumrecognition` (`none`, `certificate`): VARCHAR(16) NOT NULL, defaults `award`,
+  `certificate`, `none`, left out of every query by the model's default scope (`withRecognition` reads them). Central
+  decides them; a `curriculums` row of the content payload MAY carry the three keys: each is checked when present
+  (400 naming the field), an existing row keeps its values when they are absent, a new row takes the defaults.
+  A level award is earned only when the level's curriculum has `levelrecognition = 'award'` (read once, after the
+  already-awarded check); awards already earned are never removed or hidden. `student/awards/overview` gives each
+  curriculum `recognition: { level, grade, curriculum }`, and a level is not `awardable` unless its curriculum awards
+  levels. The grade and curriculum settings are stored only (certificates are not built).
 - Every route declares an `@OrgPolicy` (`public | learner | teacher | server |
   pi-import`). `npm run routes:policy -- --write` regenerates
   `docs/route-policy-inventory.md`; `route-inventory.spec.ts` fails on an

@@ -22,6 +22,12 @@ export interface LevelAwardInput {
   currentdate: Date;
 }
 
+/** True when the curriculum's level recognition is 'award' (a missing curriculum row awards nothing). One lookup. */
+const curriculumAwardsLevels = async (curid: string, transaction: Transaction): Promise<boolean> => {
+  const row = await curriculums.scope("withRecognition").findOne({ where: { curriculumid: curid }, attributes: ["curriculumid", "levelrecognition"], transaction });
+  return row?.levelrecognition === "award";
+};
+
 /**
  * The learner's school as the token names it (a learner token always carries one), else the school on the learner row.
  */
@@ -82,15 +88,18 @@ export const hiddenSingleItemTierGradeIds = async (user: Token, gradeids: string
  *  1. the level is not complete after this write: nothing;
  *  2. the learner already has an award for the level: nothing (one indexed query, made before any other lookup, so the
  *     common case costs one query and an earned award is never read for its date, updated or deleted);
- *  3. the learner's school hides single-item tiers and the level's grade holds one live level: nothing (this is
+ *  3. the level's curriculum does not have `levelrecognition = 'award'` (`certificate` and `none` give no award; one
+ *     extra lookup, made only here, after the already-awarded check): nothing;
+ *  4. the learner's school hides single-item tiers and the level's grade holds one live level: nothing (this is
  *     checked when the award is about to be made, and a level hidden then is awarded on the learner's next result once
  *     it is shown);
- *  4. otherwise the award is inserted with `earnedat` = the result's own date. `earnedat_approximate` is false when this
+ *  5. otherwise the award is inserted with `earnedat` = the result's own date. `earnedat_approximate` is false when this
  *     write is the one that took the level from not complete to complete, and TRUE when the level was already complete
  *     before it (it arrived complete from a roster import or a recalculation, or was completed by code that made no
  *     award): the award is late, so its date is an upper bound.
  *
- * An award is never updated or deleted here: a level that later drops below the pass mark keeps it.
+ * An award is never updated or deleted here: a level that later drops below the pass mark keeps it, and so does one
+ * whose curriculum is later switched away from 'award'.
  */
 export const awardLevelIfCompleted = async (input: LevelAwardInput, transaction: Transaction): Promise<void> => {
   const { user, levelid, gradeid, curid, wasCompleted, isCompleted, currentdate } = input;
@@ -99,6 +108,9 @@ export const awardLevelIfCompleted = async (input: LevelAwardInput, transaction:
   }
   const existing = await studentawards.findOne({ where: { studentid: user.studentid, levelid }, attributes: ["studentawardid"], transaction });
   if (existing) {
+    return;
+  }
+  if (!(await curriculumAwardsLevels(curid, transaction))) {
     return;
   }
   if (await levelIsHiddenSingleItemTier(user, gradeid, transaction)) {

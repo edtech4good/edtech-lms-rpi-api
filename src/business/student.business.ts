@@ -3,7 +3,9 @@ import { Op, QueryTypes, WhereOptions } from "sequelize";
 import { Transaction } from "sequelize/types";
 import { Token } from "src/models/token.model";
 import { dbinstance } from "src/services/dbservice";
+import { DEFAULT_RECOGNITION, RECOGNITION_FIELDS } from "src/constants/recognition";
 import {
+  curriculums,
   grades,
   lessons,
   levels,
@@ -50,9 +52,17 @@ export interface AwardsOverviewGrade {
   translations?: StudentProgressSummaryTranslations;
 }
 
+/** What a learner receives for completing each tier of a curriculum (see constants/recognition.ts). */
+export interface AwardsOverviewRecognition {
+  level: string;
+  grade: string;
+  curriculum: string;
+}
+
 export interface AwardsOverviewCurriculum {
   curid: string;
   curriculumname: string;
+  recognition: AwardsOverviewRecognition;
   grades: AwardsOverviewGrade[];
   translations?: StudentProgressSummaryTranslations;
 }
@@ -714,6 +724,30 @@ WHERE
     for (const row of progressrows) progressOf.set(row.levelid, Math.max(progressOf.get(row.levelid) ?? 0, Number(row.progress ?? 0)));
 
     const hidden = await hiddenSingleItemTierGradeIds(user, activeGrades.map((grade) => grade.gradeid));
+    // The recognition setting of each curriculum: one query, through the scope that selects it.
+    const recognitionRows = curricula.length
+      ? await curriculums.scope("withRecognition").findAll({
+          where: { curriculumid: curricula.map((cur) => cur.curriculumid) },
+          attributes: ["curriculumid", ...RECOGNITION_FIELDS],
+        })
+      : [];
+    const recognitionOf = new Map<string, AwardsOverviewRecognition>(
+      recognitionRows.map((row) => [
+        row.curriculumid,
+        {
+          level: row.levelrecognition ?? DEFAULT_RECOGNITION.levelrecognition,
+          grade: row.graderecognition ?? DEFAULT_RECOGNITION.graderecognition,
+          curriculum: row.curriculumrecognition ?? DEFAULT_RECOGNITION.curriculumrecognition,
+        },
+      ]),
+    );
+    const recognitionFor = (curriculumid: string): AwardsOverviewRecognition =>
+      recognitionOf.get(curriculumid) ?? {
+        level: DEFAULT_RECOGNITION.levelrecognition,
+        grade: DEFAULT_RECOGNITION.graderecognition,
+        curriculum: DEFAULT_RECOGNITION.curriculumrecognition,
+      };
+    const curriculumOfGrade = new Map(activeGrades.map((grade) => [grade.gradeid, grade.curriculumid]));
 
     const levelsByGrade = new Map<string, AwardsOverviewLevel[]>();
     for (const level of activeLevels) {
@@ -724,7 +758,7 @@ WHERE
         levelname: level.levelname,
         levelorder: level.levelorder,
         progress: progressOf.get(level.levelid) ?? 0,
-        awardable: !hidden.has(level.gradeid),
+        awardable: !hidden.has(level.gradeid) && recognitionFor(curriculumOfGrade.get(level.gradeid) ?? "").level === "award",
         award: award ? { studentawardid: award.studentawardid, earnedat: award.earnedat, earnedat_approximate: award.earnedat_approximate } : null,
       });
       levelsByGrade.set(level.gradeid, list);
@@ -738,6 +772,7 @@ WHERE
     const curriculaOut: AwardsOverviewCurriculum[] = curricula.map((cur) => ({
       curid: cur.curriculumid,
       curriculumname: cur.curriculumname,
+      recognition: recognitionFor(cur.curriculumid),
       grades: gradesByCurriculum.get(cur.curriculumid) ?? [],
     }));
 
