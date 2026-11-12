@@ -103,8 +103,10 @@ export class curriculums
           type: DataTypes.STRING(36),
           allowNull: false,
         },
-        // The per-tier recognition setting (see constants/recognition.ts). The database holds the defaults, so the
-        // model declares none: a row written without them leaves them out of the INSERT.
+        // The per-tier recognition setting (see constants/recognition.ts). allowNull: false with NO model
+        // defaultValue, on purpose: the database holds the defaults, so a bulkCreate of rows without these keys omits
+        // them from the INSERT and the column defaults apply. A future curriculums.create() or save() of a NEW
+        // instance must therefore set all three explicitly.
         levelrecognition: { type: DataTypes.STRING(16), allowNull: false },
         graderecognition: { type: DataTypes.STRING(16), allowNull: false },
         curriculumrecognition: { type: DataTypes.STRING(16), allowNull: false },
