@@ -481,13 +481,19 @@ WHERE
   //
   // A lesson is "done" when the student's studentlessonsprogress row has
   // completed === true OR progress >= 100 — the same rule the Expo app's
-  // Level Detail screen uses. A level "counts" only when it has at least one
-  // active lesson; a level with zero active lessons is excluded from both
-  // levelsCompleted and levelsTotal (it can never be "done" and would
-  // otherwise silently deflate the denominator). currentLevel is the first
-  // level, ordered by grade gradeorder then level levelorder, that has at
-  // least one active lesson and is not yet completed; it is null once every
-  // level is completed, or when the curriculum has no active lessons at all.
+  // Level Detail screen uses; it feeds only the lesson counts.
+  // A level is "completed" when the student's studentlevelsprogress row for
+  // it has completed === true: the flag the server sets when the learner
+  // reaches 80% of the level's points, and the same rule awards use, so My
+  // progress and awards agree. It is not "every lesson done"; no row, or a
+  // false/null flag, means not completed. The flags are read in one extra
+  // query for all counted levels. A level "counts" only when it has at least
+  // one active lesson; a level with zero active lessons is excluded from both
+  // levelsCompleted and levelsTotal and stays completed: false even if a flag
+  // is set. currentLevel is the first counted level, ordered by grade
+  // gradeorder then level levelorder, that is not completed; it is null once
+  // every counted level is completed, or when the curriculum has no active
+  // lessons at all. Its lessonsCompleted/lessonsTotal remain lesson counts.
   getprogresssummary = async (user: Token, translations?: ContentTranslations): Promise<StudentProgressSummary> => {
     const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
     const tree = await this.getenrolledtree(user);
@@ -519,6 +525,19 @@ WHERE
       if (p.completed === true || (p.progress ?? 0) >= 100) {
         doneLessonIds.add(p.lessonid);
       }
+    }
+
+    // The stored 80% flag, one query for every counted level (a level with active lessons).
+    const countedLevelIds = [...new Set(activeLessons.map((lesson) => lesson.levelid))];
+    const levelFlagRows = countedLevelIds.length
+      ? await studentlevelsprogress.findAll({
+          where: { studentid: user.studentid, levelid: countedLevelIds },
+          attributes: ["levelid", "completed"],
+        })
+      : [];
+    const completedLevelIds = new Set<string>();
+    for (const row of levelFlagRows) {
+      if (row.completed === true) completedLevelIds.add(row.levelid);
     }
 
     const lessonIdsByLevel = new Map<string, string[]>();
@@ -588,7 +607,7 @@ WHERE
 
           levelsTotal += 1;
           gradeLevelsTotal += 1;
-          const levelComplete = levelLessonsCompleted === levelLessonsTotal;
+          const levelComplete = completedLevelIds.has(level.levelid);
           if (levelComplete) {
             levelsCompleted += 1;
             gradeLevelsCompleted += 1;

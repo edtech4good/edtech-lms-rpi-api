@@ -11,8 +11,9 @@
  *  - a lesson counts as done via studentlessonsprogress.completed === true
  *  - a lesson also counts as done via progress >= 100 even if completed is
  *    false/missing
- *  - a level is "completed" only when it has >=1 active lesson and all of
- *    them are done
+ *  - a level is "completed" only when the student's studentlevelsprogress
+ *    row for it has completed === true (the stored 80% flag awards use);
+ *    lesson counts do not decide it
  *  - a level with zero active lessons is excluded from levelsCompleted AND
  *    levelsTotal (not counted as incomplete, not counted at all)
  *  - currentLevel is the first level, in (grade gradeorder, level
@@ -31,6 +32,7 @@ import { grades } from "src/models/data-models/grades";
 import { levels } from "src/models/data-models/levels";
 import { lessons } from "src/models/data-models/lessons";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
+import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { StudentBusiness } from "./student.business";
 
 describe("StudentBusiness.getprogresssummary", () => {
@@ -65,6 +67,11 @@ describe("StudentBusiness.getprogresssummary", () => {
   let levelsFindAllSpy: jest.SpyInstance;
   let lessonsFindAllSpy: jest.SpyInstance;
   let progressFindAllSpy: jest.SpyInstance;
+  let levelFlagsFindAllSpy: jest.SpyInstance;
+
+  // Stored level flags (studentlevelsprogress), every student's; the mock
+  // filters by the where clause the way the database would.
+  let levelFlagRows: any[];
 
   // Mutable so individual tests can break just the progress rows without
   // duplicating the whole setup.
@@ -77,6 +84,12 @@ describe("StudentBusiness.getprogresssummary", () => {
       { lessonid: "lesson-L2b", completed: false, progress: 50 }, // not done
       // lesson-L4a: no row at all -> not done
       { lessonid: "lesson-LB1a", completed: true, progress: 0 },
+    ];
+
+    // L1 and LB1 carry the stored flag; L2 (1/2 lessons) and L4 do not.
+    levelFlagRows = [
+      { studentid: "student-1", levelid: "level-L1", completed: true },
+      { studentid: "student-1", levelid: "level-LB1", completed: true },
     ];
 
     curriculumsFindAllSpy = jest
@@ -94,6 +107,11 @@ describe("StudentBusiness.getprogresssummary", () => {
     progressFindAllSpy = jest
       .spyOn(studentlessonsprogress, "findAll")
       .mockImplementation(async () => progressRows as never);
+    levelFlagsFindAllSpy = jest.spyOn(studentlevelsprogress, "findAll").mockImplementation((async (opts: any) => {
+      const { studentid, levelid } = opts.where;
+      const wanted = Array.isArray(levelid) ? levelid : [levelid];
+      return levelFlagRows.filter((r) => r.studentid === studentid && wanted.includes(r.levelid));
+    }) as never);
   });
 
   afterEach(() => {
@@ -102,6 +120,7 @@ describe("StudentBusiness.getprogresssummary", () => {
     levelsFindAllSpy.mockRestore();
     lessonsFindAllSpy.mockRestore();
     progressFindAllSpy.mockRestore();
+    levelFlagsFindAllSpy.mockRestore();
   });
 
   it("aggregates lesson/level completion per curriculum with correct currentLevel and totals", async () => {
@@ -201,6 +220,8 @@ describe("StudentBusiness.getprogresssummary", () => {
     expect(levelsFindAllSpy).toHaveBeenCalledTimes(1);
     expect(lessonsFindAllSpy).toHaveBeenCalledTimes(1);
     expect(progressFindAllSpy).toHaveBeenCalledTimes(1);
+    // ...and one more for the stored level flags of all counted levels.
+    expect(levelFlagsFindAllSpy).toHaveBeenCalledTimes(1);
   });
 
   it("scopes every query to the requesting student and to active, non-deleted rows", async () => {
@@ -273,6 +294,7 @@ describe("StudentBusiness.getprogresssummary", () => {
     expect(levelsFindAllSpy).not.toHaveBeenCalled();
     expect(lessonsFindAllSpy).not.toHaveBeenCalled();
     expect(progressFindAllSpy).not.toHaveBeenCalled();
+    expect(levelFlagsFindAllSpy).not.toHaveBeenCalled();
   });
 
   it("counts a lesson as done once even when it has two progress rows and only one qualifies", async () => {
@@ -318,10 +340,128 @@ describe("StudentBusiness.getprogresssummary", () => {
       // incomplete level (in tie-broken order) should be level-L1.
       { lessonid: "lesson-LB1a", completed: true, progress: 0 },
     ];
+    // ...and no level of curriculum A is flagged either.
+    levelFlagRows = [{ studentid: "student-1", levelid: "level-LB1", completed: true }];
 
     const result = await new StudentBusiness().getprogresssummary(user);
     const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
 
     expect(curA.currentLevel).toMatchObject({ levelid: "level-L1", gradeid: "grade-A1" });
+  });
+
+  it("(a) does not complete a level whose every lesson is done when the stored flag is false", async () => {
+    levelFlagRows = [{ studentid: "student-1", levelid: "level-L1", completed: false }];
+    progressRows = [{ lessonid: "lesson-L1a", completed: true, progress: 100 }];
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+    const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
+
+    expect(curA.levelsCompleted).toBe(0);
+    expect(curA.lessonsCompleted).toBe(1);
+    expect(curA.grades[0].levels[0]).toMatchObject({ levelid: "level-L1", lessonsCompleted: 1, lessonsTotal: 1, completed: false });
+    expect(curA.currentLevel).toMatchObject({ levelid: "level-L1", lessonsCompleted: 1, lessonsTotal: 1 });
+  });
+
+  it("(a) treats a missing flag row the same as a false one", async () => {
+    levelFlagRows = [];
+    progressRows = [{ lessonid: "lesson-L1a", completed: true, progress: 100 }];
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+    const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
+
+    expect(curA.levelsCompleted).toBe(0);
+    expect(curA.currentLevel).toMatchObject({ levelid: "level-L1" });
+  });
+
+  it("(b) completes a flagged level with only 2 of 5 lessons done and moves currentLevel on", async () => {
+    // Level L1 gets five lessons, two done; its flag is set (80% of points reached).
+    const five = ["a", "b", "c", "d", "e"].map((x) => ({ lessonid: `lesson-L1${x}`, levelid: "level-L1" }));
+    lessonsFindAllSpy.mockResolvedValue([...five, lessonL2a, lessonL2b, lessonL4a, lessonLB1a] as never);
+    progressRows = [
+      { lessonid: "lesson-L1a", completed: true, progress: 0 },
+      { lessonid: "lesson-L1b", completed: false, progress: 100 },
+    ];
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+    const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
+
+    expect(curA.levelsCompleted).toBe(1);
+    expect(curA.lessonsCompleted).toBe(2);
+    expect(curA.grades[0].levels[0]).toEqual({
+      levelid: "level-L1", levelname: "Level 1", lessonsCompleted: 2, lessonsTotal: 5, completed: true,
+    });
+    expect(curA.currentLevel).toMatchObject({ levelid: "level-L2", lessonsCompleted: 0, lessonsTotal: 2 });
+  });
+
+  it("(c) leaves a flagged level with no active lessons out of both level counts and completed: false", async () => {
+    levelFlagRows.push({ studentid: "student-1", levelid: "level-L3", completed: true });
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+    const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
+    const gradeA2Out = curA.grades.find((g) => g.gradeid === "grade-A2")!;
+
+    expect(gradeA2Out.levelsTotal).toBe(1);
+    expect(gradeA2Out.levelsCompleted).toBe(0);
+    expect(gradeA2Out.levels[0]).toEqual({
+      levelid: "level-L3", levelname: "Level 3 (no lessons)", lessonsCompleted: 0, lessonsTotal: 0, completed: false,
+    });
+    expect(curA.levelsTotal).toBe(3);
+    expect(curA.levelsCompleted).toBe(1);
+  });
+
+  it("(d) ignores another student's flags and queries the flags for the token's studentid", async () => {
+    levelFlagRows = [
+      { studentid: "student-2", levelid: "level-L1", completed: true },
+      { studentid: "student-2", levelid: "level-L2", completed: true },
+      { studentid: "student-1", levelid: "level-LB1", completed: true },
+    ];
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+    const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
+
+    expect(curA.levelsCompleted).toBe(0);
+    expect(result.totals.levelsCompleted).toBe(1); // only student-1's LB1
+    expect(levelFlagsFindAllSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ studentid: "student-1" }) })
+    );
+    const where = levelFlagsFindAllSpy.mock.calls[0][0].where;
+    expect([...where.levelid].sort()).toEqual(["level-L1", "level-L2", "level-L4", "level-LB1"]); // L3 has no lessons
+  });
+
+  it("(e) gives a null currentLevel when every counted level is flagged, even with lessons undone", async () => {
+    levelFlagRows = ["level-L1", "level-L2", "level-L4", "level-LB1"].map((levelid) => ({
+      studentid: "student-1", levelid, completed: true,
+    }));
+    progressRows = [];
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+
+    for (const cur of result.curricula) {
+      expect(cur.currentLevel).toBeNull();
+      expect(cur.levelsCompleted).toBe(cur.levelsTotal);
+    }
+    expect(result.totals).toMatchObject({ levelsCompleted: 4, levelsTotal: 4, lessonsCompleted: 0, lessonsTotal: 5 });
+  });
+
+  it("(f) adds totals and per-grade level counts up across two curricula on the flags", async () => {
+    levelFlagRows = ["level-L2", "level-L4", "level-LB1"].map((levelid) => ({
+      studentid: "student-1", levelid, completed: true,
+    }));
+
+    const result = await new StudentBusiness().getprogresssummary(user);
+    const curA = result.curricula.find((c) => c.curriculumid === "cur-A")!;
+    const curB = result.curricula.find((c) => c.curriculumid === "cur-B")!;
+
+    expect(curA).toMatchObject({ levelsTotal: 3, levelsCompleted: 2 });
+    expect(curA.currentLevel).toMatchObject({ levelid: "level-L1" });
+    expect(curA.grades.map((g) => [g.gradeid, g.levelsCompleted, g.levelsTotal])).toEqual([
+      ["grade-A1", 1, 2],
+      ["grade-A2", 1, 1],
+    ]);
+    expect(curB).toMatchObject({ levelsTotal: 1, levelsCompleted: 1 });
+    expect(curB.currentLevel).toBeNull();
+    expect(result.totals.levelsCompleted).toBe(curA.levelsCompleted + curB.levelsCompleted);
+    expect(result.totals.levelsTotal).toBe(curA.levelsTotal + curB.levelsTotal);
+    expect(result.totals).toMatchObject({ levelsCompleted: 3, levelsTotal: 4 });
   });
 });
