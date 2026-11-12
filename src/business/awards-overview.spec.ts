@@ -33,6 +33,8 @@ describe("StudentBusiness.getawardsoverview", () => {
   let branding: unknown;
   let stored: Row[];
   let counts: number;
+  let recognitionRows: Row[];
+  let recognitionQueries: Row[];
 
   beforeEach(() => {
     curs = [
@@ -57,8 +59,23 @@ describe("StudentBusiness.getawardsoverview", () => {
     branding = null;
     stored = [];
     counts = 0;
+    recognitionRows = [
+      { curriculumid: "c1", levelrecognition: "award", graderecognition: "certificate", curriculumrecognition: "none" },
+      { curriculumid: "c2", levelrecognition: "award", graderecognition: "none", curriculumrecognition: "certificate" },
+    ];
+    recognitionQueries = [];
     const sorted = (rows: Row[], keys: string[]) => [...rows].sort((a, b) => keys.map((k) => (a[k] < b[k] ? -1 : a[k] > b[k] ? 1 : 0)).find((c) => c !== 0) ?? 0);
     jest.spyOn(contentAccess, "enrolledCurriculumIds").mockResolvedValue(["c1", "c2"]);
+    // the recognition columns are read only through their own scope
+    jest.spyOn(curriculums, "scope").mockImplementation(((name: string) => {
+      expect(name).toBe("withRecognition");
+      return {
+        findAll: async (o: { where: Row; attributes: string[] }) => {
+          recognitionQueries.push(o);
+          return recognitionRows.filter((r) => matches(r, o.where)).map((r) => Object.fromEntries(o.attributes.map((a) => [a, r[a]])));
+        },
+      };
+    }) as never);
     jest.spyOn(curriculums, "findAll").mockImplementation((async () => sorted(curs, ["curriculumname"])) as never);
     jest.spyOn(grades, "findAll").mockImplementation((async (o: { where: Row }) => sorted(grs.filter((g) => matches(g, o.where)), ["gradeorder", "gradename", "gradeid"])) as never);
     jest.spyOn(levels, "findAll").mockImplementation((async (o: { where: Row }) => sorted(lvs.filter((l) => matches(l, o.where)), ["levelorder", "levelname", "levelid"])) as never);
@@ -129,6 +146,29 @@ describe("StudentBusiness.getawardsoverview", () => {
     branding = null;
     const off = await new StudentBusiness().getawardsoverview(user);
     expect(levelById(off, "l3").awardable).toBe(true);
+  });
+
+  it("gives each curriculum its stored recognition { level, grade, curriculum }, read in one query through the scope", async () => {
+    recognitionRows = [
+      { curriculumid: "c1", levelrecognition: "certificate", graderecognition: "none", curriculumrecognition: "certificate" },
+      { curriculumid: "c2", levelrecognition: "award", graderecognition: "certificate", curriculumrecognition: "none" },
+    ];
+    const body = await new StudentBusiness().getawardsoverview(user);
+    expect(body.curricula.map((c) => [c.curid, c.recognition])).toEqual([
+      ["c2", { level: "award", grade: "certificate", curriculum: "none" }],
+      ["c1", { level: "certificate", grade: "none", curriculum: "certificate" }],
+    ]);
+    expect(recognitionQueries).toHaveLength(1);
+    expect(recognitionQueries[0].attributes).toEqual(["curriculumid", "levelrecognition", "graderecognition", "curriculumrecognition"]);
+  });
+
+  it.each([["none"], ["certificate"]])("a level is not awardable when its curriculum's levelrecognition is %s, and an earned award is still listed", async (setting) => {
+    recognitionRows[0].levelrecognition = setting; // c1 (Design); c2 (Craft) stays 'award'
+    awards = [award("a1", "l1"), award("a9", "old", "s1", { earnedat: day(9) })];
+    const body = await new StudentBusiness().getawardsoverview(user);
+    expect(levelsOf(body).map((l) => [l.levelid, l.awardable])).toEqual([["l4", true], ["l5", true], ["l1", false], ["l2", false], ["l3", false]]);
+    expect(levelById(body, "l1").award).toMatchObject({ studentawardid: "a1" });
+    expect(body.earnedelsewhere.map((a) => a.studentawardid)).toEqual(["a9"]);
   });
 
   it("lists an award on a level that is no longer live in earnedelsewhere, not in the curricula", async () => {

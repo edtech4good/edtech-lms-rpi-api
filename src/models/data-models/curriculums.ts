@@ -3,7 +3,7 @@ import * as Sequelize from "sequelize";
 import { DataTypes, Model, Optional } from "sequelize";
 import type { grades, gradesId } from "./grades";
 import type { students, studentsId } from "./students";
-import { ownershipDefaultScope } from "./ownership-scope";
+import { RECOGNITION_FIELDS } from "../../constants/recognition";
 
 export interface curriculumsAttributes {
   curriculumid: string;
@@ -13,6 +13,9 @@ export interface curriculumsAttributes {
   subjectid?: string;
   isdeleted?: boolean;
   organisationid: string;
+  levelrecognition?: string;
+  graderecognition?: string;
+  curriculumrecognition?: string;
 }
 
 export type curriculumsPk = "curriculumid";
@@ -33,6 +36,9 @@ export class curriculums
   isdeleted!: boolean;
   subjectid?: string;
   organisationid!: string;
+  levelrecognition?: string;
+  graderecognition?: string;
+  curriculumrecognition?: string;
 
   // curriculums hasMany grades via curriculumid
   grades!: grades[];
@@ -97,13 +103,21 @@ export class curriculums
           type: DataTypes.STRING(36),
           allowNull: false,
         },
+        // The per-tier recognition setting (see constants/recognition.ts). allowNull: false with NO model
+        // defaultValue, on purpose: the database holds the defaults, so a bulkCreate of rows without these keys omits
+        // them from the INSERT and the column defaults apply. A future curriculums.create() or save() of a NEW
+        // instance must therefore set all three explicitly.
+        levelrecognition: { type: DataTypes.STRING(16), allowNull: false },
+        graderecognition: { type: DataTypes.STRING(16), allowNull: false },
+        curriculumrecognition: { type: DataTypes.STRING(16), allowNull: false },
       },
       {
         sequelize,
         tableName: "curriculums",
         timestamps: false,
-        defaultScope: ownershipDefaultScope('organisationid'),
-        scopes: { withOwnership: {} },
+        // A new column stays out of every query unless it is asked for (outward payloads keep their shape).
+        defaultScope: { attributes: { exclude: ['organisationid', ...RECOGNITION_FIELDS] } },
+        scopes: { withOwnership: {}, withRecognition: {} },
         indexes: [
           {
             name: "PRIMARY",

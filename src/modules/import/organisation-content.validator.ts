@@ -3,6 +3,7 @@ import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
 import { fieldForJoiDetail, humanizeJoiMessage } from "src/utils/joi-message";
 import { ORGANISATION_CODE, OwnershipOrganisation, organisation as organisationRow } from "./ownership.request.validator";
+import { ALLOWED_RECOGNITION, RECOGNITION_FIELDS } from "src/constants/recognition";
 import { LEARNING_DOCUMENT_ROLES, LEARNING_ITEM_RULES, LEARNING_ITEM_TYPES, isLearningItemType } from "src/constants/learning-items";
 import {
   ANSWER_BEARING_FIELDS,
@@ -514,6 +515,22 @@ export function validateOrganisationContent(body: unknown): OrganisationContent 
       "documents",
       `documents: ${rows(badAttribution)} ${badAttribution === 1 ? "has" : "have"} a documentattribution that is not null or an object of version 1 with only author, sourceurl and adaptedfrom, each within its length (the sourceurl an http or https address, the whole at most 4096 bytes).`,
     );
+  }
+
+  // Curriculums: the per-tier recognition setting, checked only on a row that carries the key (an export from before
+  // it has none, and still imports: an existing row keeps its values, a new row takes the column defaults).
+  for (const field of RECOGNITION_FIELDS) {
+    let bad = 0;
+    for (const cur of tables.curriculums ?? []) {
+      if (!isRow(cur) || cur[field] === undefined) continue;
+      if (typeof cur[field] !== "string" || !ALLOWED_RECOGNITION[field].includes(cur[field] as string)) bad += 1;
+    }
+    if (bad) {
+      problems.add(
+        `curriculums.${field}`,
+        `curriculums: ${rows(bad)} ${bad === 1 ? "has" : "have"} a ${field} that is not one of: ${ALLOWED_RECOGNITION[field].join(", ")} (lower case, exactly as listed).`,
+      );
+    }
   }
 
   const linkRows = tables.lessonlearningdocuments ?? [];

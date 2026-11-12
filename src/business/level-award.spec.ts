@@ -28,6 +28,8 @@ describe("level awards", () => {
   let awards: Row[];
   let contentlevels: Row[];
   let branding: unknown;
+  let levelrecognition: string | null;
+  let recognitionLookups: number;
   const user = { studentid: "s1", schoolid: "sch1" } as never;
   const day = (d: number) => new Date(Date.UTC(2026, 10, d));
   const tx = {} as never;
@@ -48,6 +50,8 @@ describe("level awards", () => {
     graderow = null;
     awards = [];
     branding = null;
+    levelrecognition = "award";
+    recognitionLookups = 0;
     contentlevels = [
       { levelid: "lv1", gradeid: "g1", levelname: "Level one", levelorder: 1, levelstatus: true, isdeleted: false },
       { levelid: "lv2", gradeid: "g1", levelname: "Level two", levelorder: 2, levelstatus: true, isdeleted: false },
@@ -61,6 +65,17 @@ describe("level awards", () => {
     jest.spyOn(levels, "count").mockImplementation((async (options: { where: Row }) => contentlevels.filter((l) => matches(l, options.where)).length) as never);
     jest.spyOn(levels, "findAll").mockImplementation((async (options: { where: Row }) => contentlevels.filter((l) => matches(l, options.where))) as never);
     jest.spyOn(grades, "findAll").mockResolvedValue([{ gradeid: "g1", gradename: "Grade one" }] as never);
+    // the recognition setting is read through its own scope, for the one curriculum of the level (c1); null = no row
+    jest.spyOn(curriculums, "scope").mockImplementation(((name: string) => {
+      expect(name).toBe("withRecognition");
+      return {
+        findOne: async (options: { where: Row; attributes: string[] }) => {
+          recognitionLookups += 1;
+          expect(options.where).toEqual({ curriculumid: "c1" });
+          return levelrecognition === null ? null : { curriculumid: "c1", levelrecognition };
+        },
+      };
+    }) as never);
     jest.spyOn(curriculums, "findAll").mockResolvedValue([{ curriculumid: "c1", curriculumname: "Curriculum one" }] as never);
     jest.spyOn(studentawards, "findOne").mockImplementation((async (options: { where: Row }) => awards.find((a) => matches(a, options.where)) ?? null) as never);
     jest.spyOn(studentawards, "findAll").mockImplementation((async (options: { where: Row }) => awards.filter((a) => matches(a, options.where))) as never);
@@ -231,6 +246,50 @@ describe("level awards", () => {
     expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(3).getTime(), false]]);
     expect(schoolLookups).not.toHaveBeenCalled();
     expect(levelCounts).not.toHaveBeenCalled();
+    expect(recognitionLookups).toBe(1); // the one made for the first award
+  });
+
+  it.each([["certificate"], ["none"], ["something-else"]])("c1. a curriculum whose levelrecognition is %s gives no award at 80%%, however many results", async (setting) => {
+    levelrecognition = setting;
+    await reward(85, null, day(3));
+    await reward(10, null, day(4));
+    await quiz(null, day(5));
+    expect(awards).toEqual([]);
+  });
+
+  it("c2. a curriculum with no row (or award recognition) is judged on the row: no row gives none, award gives one", async () => {
+    levelrecognition = null;
+    await reward(85, null, day(3));
+    expect(awards).toEqual([]);
+    levelrecognition = "award";
+    await reward(5, null, day(4));
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(4).getTime(), true]]);
+  });
+
+  it("c3. the hidden single-item tier rule still applies on 'award'", async () => {
+    branding = { hideSingleItemTiers: true };
+    contentlevels = [contentlevels[0]];
+    await reward(85, null, day(3));
+    expect(awards).toEqual([]);
+    expect(recognitionLookups).toBeGreaterThan(0);
+  });
+
+  it("c4. a setting switched to 'certificate' or 'none' later: nothing earned is removed or hidden, and nothing new is made", async () => {
+    await reward(85, null, day(3));
+    levelrecognition = "none";
+    await reward(5, null, day(4));
+    expect(awarded()).toEqual([["s1", "lv1", "g1", "c1", day(3).getTime(), false]]);
+    expect((await awardsOfStudent("s1")).map((a) => a.levelid)).toEqual(["lv1"]);
+  });
+
+  it("c5. the recognition lookup is made once, only on the not-yet-awarded path: none while the level is not complete or already awarded", async () => {
+    await reward(50, null, day(1));
+    expect(recognitionLookups).toBe(0);
+    await reward(40, null, day(2));
+    expect(recognitionLookups).toBe(1);
+    await reward(5, null, day(3));
+    await quiz(null, day(4));
+    expect(recognitionLookups).toBe(1);
   });
 
   it("e. hidden at completion gives none; with the switch turned off, the next result gives an approximate award", async () => {
