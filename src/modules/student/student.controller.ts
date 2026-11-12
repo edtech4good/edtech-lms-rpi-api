@@ -212,6 +212,29 @@ export class StudentController {
     });
   }
 
+  @Get("certificates/overview")
+  @OrgPolicy("learner", { note: "The caller's own certificates and eligibility only; read-only.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
+  @ApiResponse({
+    status: 200,
+    description: "Fetched the learner's certificates overview successfully",
+  })
+  @ApiResponse({
+    status: 500,
+    description: "Server error",
+  })
+  @UseGuards(AccessGuard(TokenType.ACCESS))
+  @HttpCode(HttpStatus.OK)
+  async getStudentCertificatesOverview(
+    @User() user: Token,
+    @Headers(CONTENT_TRANSLATIONS_HEADER.toLowerCase()) translationsheader?: string,
+  ): Promise<any> {
+    const translations = ContentTranslations.from(translationsheader, user);
+    return withContentLanguage(translations, {
+      data: await new StudentBusiness().getcertificatesoverview(user, translations),
+      error: false,
+    });
+  }
+
   @Post("logintime")
   @OrgPolicy("learner", { note: "Central calls it with the server key; a learner token gets its own login only.", enforcedBy: "src/modules/org-boundary.leak.spec.ts" })
   @ApiResponse({

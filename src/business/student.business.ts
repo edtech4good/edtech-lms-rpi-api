@@ -20,6 +20,7 @@ import { CurriculumBusiness } from "./curriculum.business";
 import type { ContentTranslations } from "./content-translations";
 import { GradeBusiness } from "./grade.business";
 import { AwardView, awardsOfStudent, hiddenSingleItemTierGradeIds } from "./level-award";
+import { CertificatesOverview, certificatesOverview } from "./learner-certificates";
 import { learnersInScope, ReportScope } from "./report-scope";
 import { schoolRefIsOwn, SchoolScope, studentsOfSchool, withRequiredSchoolIds } from "./school-identity";
 
@@ -792,6 +793,11 @@ WHERE
     const elsewhere = awards.filter((award) => !shown.has(award.levelid));
     return { curricula: curriculaOut, earnedelsewhere: await decorateAwardNames(translations, elsewhere) };
   };
+
+  // Single call backing the learner app's Certificates section (see learner-certificates.ts): the same enrolled tree as the
+  // awards overview and "My progress", then the certificates and the eligibility for the tiers set to 'certificate'.
+  getcertificatesoverview = async (user: Token, translations?: ContentTranslations): Promise<CertificatesOverview> =>
+    certificatesOverview(user, await this.getenrolledtree(user), translations);
 
   // `scope` (see report-scope.ts): only logins of learners and staff in the scope are answered; the rest are left
   // out, as if they had never signed in. Undefined or null: no limit (the platform's view).

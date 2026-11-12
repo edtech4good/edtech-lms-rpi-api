@@ -42,6 +42,7 @@ export const ACTIVITY_SOURCES: ReadonlyArray<{ table: string; column: string; ow
   { table: "studentlevelsprogress", column: "studentid", owner: "learner" },
   { table: "studentlessonsprogress", column: "studentid", owner: "learner" },
   { table: "studentawards", column: "studentid", owner: "learner" },
+  { table: "studentcertificates", column: "studentid", owner: "learner" },
   { table: "studentpoints", column: "studentid", owner: "learner" },
   { table: "studentactives", column: "studentid", owner: "learner" },
   { table: "studenttrash", column: "studentid", owner: "learner" },

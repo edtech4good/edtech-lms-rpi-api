@@ -38,6 +38,7 @@ import { studentlearningprogress } from "src/models/data-models/studentlearningp
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
 import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { studentawards } from "src/models/data-models/studentawards";
+import { studentcertificates } from "src/models/data-models/studentcertificates";
 import { studentpoints } from "src/models/data-models/studentpoints";
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { studentprogressquestions } from "src/models/data-models/studentprogressquestions";
@@ -214,7 +215,7 @@ const MODELS = [
   organisations, schools, students, schoolusers, standards, curriculums, grades, levels, lessons, lessonlearnings, lessonlearningdocuments, lessonplans,
   lessonpractices, lessonquizzes, curriculumbaseline, lessonpracticequestions, lessonquizquestions, levelquizquestions,
   baselinequestion, documents, studentappusages, studentprogress, studentprogressquestions, studentlessonsprogress,
-  studentlevelsprogress, studentawards, studentgradesprogress, studentlearningprogress, studentpoints, studentactives, studenttrash,
+  studentlevelsprogress, studentawards, studentcertificates, studentgradesprogress, studentlearningprogress, studentpoints, studentactives, studenttrash,
   rpiuseraccess, questions, countries,
 ] as unknown as Array<typeof Model & { name: string }>;
 const rowsOf = (model: unknown): Row[] => tables.get(model) ?? [];
@@ -502,6 +503,18 @@ const seedData = () => {
     { studentawardid: uid("f4", 1), studentid: ST_X1, levelid: T_X1.level, gradeid: T_X1.grade, curid: T_X1.curriculum, earnedat: new Date("2026-05-01T00:00:00Z"), earnedat_approximate: false },
     { studentawardid: uid("f4", 2), studentid: ST_X1, levelid: uid("f4", 90), gradeid: T_X1.grade, curid: T_X1.curriculum, earnedat: new Date("2026-06-01T00:00:00Z"), earnedat_approximate: true },
     { studentawardid: uid("f4", 3), studentid: ST_Y1, levelid: T_Y1.level, gradeid: T_Y1.grade, curid: T_Y1.curriculum, earnedat: new Date("2026-07-01T00:00:00Z"), earnedat_approximate: false },
+  ]);
+  // Certificates: X's learner 1 holds a valid one for the grade (and a revoked one for the level, which is not a certificate tier here),
+  // X's learner 2 holds one for the same grade, Y's learner 1 holds one for its own grade.
+  const certificate = (n: number, studentid: string, tree: Tree, scope: string, scopeid: string, extra: Row = {}): Row => ({
+    certificateid: uid("f5", n), shortcode: `AAAA-${String(1000 + n)}`, studentid, curriculumid: tree.curriculum, scope, scopeid,
+    issuedat: new Date("2026-08-01T00:00:00Z"), revokedat: null, snapshot: {}, checkurl: `https://check.example.org/v/AAAA-${1000 + n}`, ...extra,
+  });
+  put(studentcertificates, [
+    certificate(1, ST_X1, T_X1, "grade", T_X1.grade),
+    certificate(2, ST_X1, T_X1, "level", T_X1.level, { revokedat: new Date("2026-08-02T00:00:00Z") }),
+    certificate(3, ST_X2, T_X1, "grade", T_X1.grade),
+    certificate(4, ST_Y1, T_Y1, "grade", T_Y1.grade),
   ]);
   put(studentlessonsprogress, [
     { studentlessonprogressid: uid("f3", 1), studentid: ST_X2, lessonid: T_X1.lesson, points: 10 },
@@ -1060,6 +1073,25 @@ describe("list routes: the scope is the token's, and what the query names can on
     const t = await ask(X_TEACHER);
     check(`X teacher (no learner record of its own) -> ${t.status}, ${JSON.stringify(t.levelAwards)}, ${JSON.stringify(t.elsewhere)} (wanted no awards)`, t.status === 200 && t.levelAwards.length === 0 && t.elsewhere.length === 0);
     await refusedEverywhere(check, "get", "/student/awards/overview");
+    expect(failures).toEqual([]);
+  });
+
+  it("GET /student/certificates/overview answers the token's own learner's certificates only, never a revoked one and never another learner's", async () => {
+    const { failures, check } = scenario();
+    const ask = async (auth: Auth) => {
+      const r = await send("get", "/student/certificates/overview", auth);
+      const items = ((r.body?.data?.curricula ?? []) as Row[]).flatMap((c) => c.items as Row[]);
+      return { status: r.status, issued: items.filter((i) => i.status === "issued").map((i) => i.certificate.certificateid), all: items.map((i) => [i.scope, i.status]) };
+    };
+    const x = await ask(X_LEARNER);
+    check(`X learner -> ${x.status}, ${JSON.stringify(x.issued)} (wanted exactly its own valid grade certificate)`, x.status === 200 && JSON.stringify(x.issued) === JSON.stringify([uid("f5", 1)]));
+    const y = await ask(Y_LEARNER);
+    check(`Y learner -> ${y.status}, ${JSON.stringify(y.issued)} (wanted exactly its own)`, y.status === 200 && JSON.stringify(y.issued) === JSON.stringify([uid("f5", 4)]));
+    const t = await ask(X_TEACHER);
+    check(`X teacher (no learner record of its own) -> ${t.status}, ${JSON.stringify(t.all)} (wanted nothing)`, t.status === 200 && t.all.length === 0);
+    const key = await send("get", "/student/certificates/overview", { key: true, org: ORG_X });
+    check(`the server key -> ${key.status} (wanted refused: it is a learner route)`, key.status === 401 || key.status === 403);
+    await refusedEverywhere(check, "get", "/student/certificates/overview");
     expect(failures).toEqual([]);
   });
 
