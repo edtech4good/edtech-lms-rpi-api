@@ -2700,3 +2700,79 @@ describe("a Module 1 of several lessons", () => {
     });
   });
 });
+
+describe("a question's audio", () => {
+  const withAudio = (number = 2): Json => {
+    const c = laterSample(number);
+    c.lessons[0].practice[0].audio = { source: "/media/Module 2/L01/M02_L01_P1_Voice_Enhanced.m4a" };
+    c.lessons[0].quiz[0].audio = { source: "/media/Module 2/L01/M02_L01_Q1.m4a" };
+    return c;
+  };
+  const questionStep = (p: Json, id: string) => p.steps.find((s: Json) => s.table === "questions" && s.id === id);
+
+  it("writes the recording as the question's heading file (a FileMeta of type audio) and lists the copy to make", () => {
+    const p = planContent(withAudio(), ID, { organisationid: ORG, now: NOW });
+    const p1 = questionStep(p, moduleId(2, "q", "practice", 1, 1));
+    expect(JSON.parse(p1.values.questionheading)).toEqual({
+      headingtext: p1.values.questiontext,
+      headingfile: { filetype: 1, filename: "dcrs-m2-l1-p1.m4a", fileext: "m4a" },
+    });
+    expect(JSON.parse(questionStep(p, moduleId(2, "q", "quiz", 1, 1)).values.questionheading).headingfile).toEqual({ filetype: 1, filename: "dcrs-m2-l1-q1.m4a", fileext: "m4a" });
+    expect(p.media.filter((m: Json) => m.audio)).toEqual([
+      { lessonid: moduleId(2, "lesson", 1), order: 1, ref: "DCRS-M2-P1", keep: false, audio: true, source: "/media/Module 2/L01/M02_L01_P1_Voice_Enhanced.m4a", filename: "dcrs-m2-l1-p1.m4a" },
+      { lessonid: moduleId(2, "lesson", 1), order: 1, ref: "DCRS-M2-Q1", keep: false, audio: true, source: "/media/Module 2/L01/M02_L01_Q1.m4a", filename: "dcrs-m2-l1-q1.m4a" },
+    ]);
+    // the heading is part of what a re-run updates, and no documents row is written for a recording
+    expect(p1.update).toContain("questionheading");
+    expect(p.steps.filter((s: Json) => s.kind === "upsert" && s.table === "documents")).toHaveLength(2);
+  });
+
+  it("leaves headingfile null for a question with no recording, and the video media entries as they were", () => {
+    const p = planContent(withAudio(), ID, { organisationid: ORG, now: NOW });
+    expect(JSON.parse(questionStep(p, moduleId(2, "q", "practice", 1, 2)).values.questionheading).headingfile).toBeNull();
+    expect(p.media.filter((m: Json) => !m.audio)).toEqual([
+      { lessonid: moduleId(2, "lesson", 1), order: 1, ref: "REF-L1", keep: false, source: "synthetic.mp4", filename: "dcrs-m2-l1.mp4" },
+      { lessonid: moduleId(2, "lesson", 2), order: 2, ref: "REF-L2", keep: false, source: null, filename: "dcrs-m2-l2.mp4" },
+    ]);
+    expect(planContent(laterSample(2), ID, { organisationid: ORG, now: NOW }).media.some((m: Json) => m.audio)).toBe(false);
+  });
+
+  it("prints the copy exactly like a video's in a dry run", () => {
+    const out: string[] = [];
+    const log = jest.spyOn(console, "log").mockImplementation((m: string) => void out.push(m));
+    try {
+      printDryRun(withAudio(3), ID, { levelSwitch: "draft" });
+    } finally {
+      log.mockRestore();
+    }
+    expect(out).toContain("  media: copy /media/Module 2/L01/M02_L01_P1_Voice_Enhanced.m4a to <media folder>/dcrs-m3-l1-p1.m4a");
+    expect(out).toContain("  media: copy synthetic.mp4 to <media folder>/dcrs-m3-l1.mp4");
+  });
+
+  it("refuses an audio source that is not the absolute path of a plain .m4a file, or has anything beside its source", () => {
+    const bad = (source: unknown) => {
+      const c = withAudio();
+      c.lessons[0].practice[0].audio = { source };
+      return refusal(c);
+    };
+    const expected = ['lessons[0].practice[0].audio.source must be the absolute path of a plain .m4a file (letters, digits, dots, dashes and underscores in the file name; no "..")'];
+    for (const source of ["/media/evil.m4a.sh", "/media/evil.mp4", "/media/x.m4a/", "relative/M02_L01_P1.m4a", "M02_L01_P1.m4a", "/media/../M02_L01_P1.m4a", "/media/a\nb/x.m4a", "/media/sp ace.m4a", 5, ""]) {
+      expect(bad(source)).toEqual(expected);
+    }
+    expect(() => validateContent((() => { const c = withAudio(); c.lessons[0].practice[0].audio = { source: "/media/Module 2/M02_L01_P1.M4A" }; return c; })(), ID)).not.toThrow();
+    const extra = withAudio();
+    extra.lessons[0].practice[0].audio = { source: "/media/x.m4a", filename: "other.m4a" };
+    expect(refusal(extra)).toEqual(['lessons[0].practice[0].audio must be { "source": "<absolute path of the .m4a file>" } and nothing else']);
+    const notObject = withAudio();
+    notObject.lessons[0].practice[0].audio = "/media/x.m4a";
+    expect(refusal(notObject)).toEqual(['lessons[0].practice[0].audio must be { "source": "<absolute path of the .m4a file>" } and nothing else']);
+  });
+
+  it("keeps refusing a video file name that is not a plain .mp4 name", () => {
+    for (const name of ["dcrs-m2-l1.m4a", "dcrs-m2-l1.mp4.sh", "../dcrs-m2-l1.mp4", "dcrs m2.mp4"]) {
+      const c = laterSample(2);
+      c.lessons[0].video.filename = name;
+      expect(refusal(c)).toEqual(["lessons[0].video.filename must be a bare key like dcrs-m1-l1.mp4"]);
+    }
+  });
+});
