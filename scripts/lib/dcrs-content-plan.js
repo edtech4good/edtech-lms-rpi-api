@@ -24,6 +24,7 @@
  *     //  or, to leave the lesson's existing video document alone:  { "ref": "...", "keep": true }   (no filename, no source)
  *     "practice": [ QUESTION, ... ], "quiz": [ QUESTION, ... ] } ] }
  * QUESTION = { "ident": "DCRS-M1-P1", "text": { "en", "km" }, "title": { "en", "km" } /* optional, not stored *\/,
+ *              "audio": { "source": "/absolute/path/M02_L01_P1.m4a" } /* optional: one recording, played with the question; copied to dcrs-m2-l1-p1.m4a *\/,
  *              "options": [ { "text": { "en", "km" }, "correct": true | false }, ... ],
  *              "feedback": { "correctmessage": { "en", "km" }, "incorrectmessage": { "en", "km" } } /* optional, each message optional *\/ }
  * ```
@@ -121,6 +122,11 @@ const QUESTION_TEMPLATE = 1;
 // A copy of ANSWER_BEARING_FIELDS in src/constants/content-translations.ts (a spec in each repo pins them equal).
 const ANSWER_BEARING_FIELDS = { 8: ["questiontext"], 21: ["questiontext", "questionoptiontext"], 23: ["questiontext"] };
 const FILENAME = /^[A-Za-z0-9_-]+\.mp4$/;
+// A question's audio: the copy's own name (the plan builds it: dcrs-m2-l1-p1.m4a) and the file it is copied from (an absolute path, no "..", a plain .m4a name).
+const AUDIO_FILENAME = /^[A-Za-z0-9_-]+\.m4a$/;
+const AUDIO_SOURCE = /^(?:\/|[A-Za-z]:[\\/])(?:[^\0\r\n\\/]+[\\/])*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m4a$/i;
+const PARENT_SEGMENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+const AUDIO_FILETYPE = 1; // FileType.AUDIO (src/models/enums)
 const IDENT = /^DCRS-[A-Za-z0-9-]+$/;
 const MAX_QUESTIONS_PER_SET = 4;
 const MIN_OPTIONS = 2;
@@ -462,6 +468,13 @@ function validateContent(content, ID) {
         else if (seenIdents.has(q.ident)) problems.push(`${qat}.ident ${q.ident} is used twice`);
         else seenIdents.add(q.ident);
         bilingual(q.text, `${qat}.text`);
+        if (q.audio !== undefined) {
+          if (!isObject(q.audio) || Object.keys(q.audio).some((k) => k !== "source")) {
+            problems.push(`${qat}.audio must be { "source": "<absolute path of the .m4a file>" } and nothing else`);
+          } else if (typeof q.audio.source !== "string" || !AUDIO_SOURCE.test(q.audio.source) || PARENT_SEGMENT.test(q.audio.source)) {
+            problems.push(`${qat}.audio.source must be the absolute path of a plain .m4a file (letters, digits, dots, dashes and underscores in the file name; no "..")`);
+          }
+        }
         if (!Array.isArray(q.options)) {
           problems.push(`${qat}.options must be a list`);
           return;
@@ -856,32 +869,44 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     "questioncorrectvalue",
     "questionfeedback",
   ];
-  for (const { practice, quiz } of placed) {
-    for (const { q, id } of [...practice, ...quiz]) {
-      const text = t(q.text);
-      const options = q.options.map((o, j) => ({ ...optionRow(j + 1, t(o.text), o.correct), questionoptionid: `${id}-opt-${j + 1}` }));
-      upsert(
-        "questions",
-        "questionid",
-        {
-          questionid: id,
-          questionheading: JSON.stringify({ headingtext: text, headingfile: null }),
-          questionoptions: JSON.stringify(options),
-          questiontext: text,
-          questiondistractors: JSON.stringify([]),
-          questionfile: null,
-          templatetypeid: 1,
-          isdeleted: 0,
-          questionstatus: 1,
-          questionidentifier: q.ident,
-          questiontags: JSON.stringify(["demo", "dcrs"]),
-          questioncorrectvalue: null,
-          questionfeedback: q.feedback ? JSON.stringify(Object.fromEntries(FEEDBACK_KEYS.filter((k) => q.feedback[k]).map((k) => [k, t(q.feedback[k])]))) : null,
-          organisationid,
-        },
-        questionUpdate,
-      );
-      for (const x of questionTexts(QUESTION_TEMPLATE, id, q)) translate("questions", id, x.field, x.subkey, x);
+  // A question with a recording keeps its audio file name in the heading (a FileMeta, filetype AUDIO); the learner app resolves the bare name
+  // through the media route, so no documents row is written for it. A question without one keeps headingfile null.
+  const audioFiles = [];
+  for (const { slot, lesson, practice, quiz } of placed) {
+    for (const [set, letter] of [[practice, "p"], [quiz, "q"]]) {
+      set.forEach(({ q, id }, k) => {
+        const text = t(q.text);
+        let headingfile = null;
+        if (q.audio) {
+          const filename = `dcrs-m${moduleNumber}-l${lesson.order}-${letter}${k + 1}.m4a`;
+          if (!AUDIO_FILENAME.test(filename)) throw new ContentRefused([`question ${q.ident}: the audio file name ${filename} is not a plain .m4a name`]);
+          headingfile = { filetype: AUDIO_FILETYPE, filename, fileext: "m4a" };
+          audioFiles.push({ lessonid: slot.id, order: lesson.order, ref: q.ident, keep: false, audio: true, source: q.audio.source, filename });
+        }
+        const options = q.options.map((o, j) => ({ ...optionRow(j + 1, t(o.text), o.correct), questionoptionid: `${id}-opt-${j + 1}` }));
+        upsert(
+          "questions",
+          "questionid",
+          {
+            questionid: id,
+            questionheading: JSON.stringify({ headingtext: text, headingfile }),
+            questionoptions: JSON.stringify(options),
+            questiontext: text,
+            questiondistractors: JSON.stringify([]),
+            questionfile: null,
+            templatetypeid: 1,
+            isdeleted: 0,
+            questionstatus: 1,
+            questionidentifier: q.ident,
+            questiontags: JSON.stringify(["demo", "dcrs"]),
+            questioncorrectvalue: null,
+            questionfeedback: q.feedback ? JSON.stringify(Object.fromEntries(FEEDBACK_KEYS.filter((k) => q.feedback[k]).map((k) => [k, t(q.feedback[k])]))) : null,
+            organisationid,
+          },
+          questionUpdate,
+        );
+        for (const x of questionTexts(QUESTION_TEMPLATE, id, q)) translate("questions", id, x.field, x.subkey, x);
+      });
     }
   }
   for (const { slot, practice, quiz } of placed) {
@@ -955,6 +980,8 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
     source: lesson.video.keep === true ? null : lesson.video.source ?? null,
     filename: lesson.video.keep === true ? null : lesson.video.filename,
   }));
+  // then one entry per question recording: a file to copy, like a video (`audio: true`; `ref` is the question's ident)
+  media.push(...audioFiles);
   const owned = [
     { table: "curriculums", pk: "curriculumid", ids: [ID.curriculum] },
     { table: "documents", pk: "documentid", ids: placed.map((p) => p.slot.doc) }, // a kept video's row too: its owner is the organisation's or nobody's
