@@ -2762,10 +2762,72 @@ describe("a question's audio", () => {
     expect(() => validateContent((() => { const c = withAudio(); c.lessons[0].practice[0].audio = { source: "/media/Module 2/M02_L01_P1.M4A" }; return c; })(), ID)).not.toThrow();
     const extra = withAudio();
     extra.lessons[0].practice[0].audio = { source: "/media/x.m4a", filename: "other.m4a" };
-    expect(refusal(extra)).toEqual(['lessons[0].practice[0].audio must be { "source": "<absolute path of the .m4a file>" } and nothing else']);
+    expect(refusal(extra)).toEqual(['lessons[0].practice[0].audio must be { "source": "<absolute path of the .m4a file>" } with an optional "sha256", and nothing else']);
     const notObject = withAudio();
     notObject.lessons[0].practice[0].audio = "/media/x.m4a";
-    expect(refusal(notObject)).toEqual(['lessons[0].practice[0].audio must be { "source": "<absolute path of the .m4a file>" } and nothing else']);
+    expect(refusal(notObject)).toEqual(['lessons[0].practice[0].audio must be { "source": "<absolute path of the .m4a file>" } with an optional "sha256", and nothing else']);
+  });
+
+  describe("a content fingerprint and an answer's own recording", () => {
+    const HEX_B = "0123456789abcdef".repeat(4);
+    const HEX_P = "fedcba9876543210".repeat(4);
+    const withOption = (): Json => {
+      const c = laterSample(2);
+      c.lessons[0].practice[0].audio = { source: "/media/Module 2/L01/M02_L01_P1_Question.m4a", sha256: HEX_P };
+      c.lessons[0].practice[0].options[1].audio = { source: "/media/Module 2/L01/M02_L01_P1_Choice_B.m4a", sha256: HEX_B };
+      return c;
+    };
+    const optionsOf = (p: Json, id: string): Json[] => JSON.parse(questionStep(p, id).values.questionoptions);
+
+    it("names a question's copy with no sha256 exactly as before, and with one by its first 8 hex characters", () => {
+      const plain = planContent(withAudio(), ID, { organisationid: ORG, now: NOW });
+      expect(JSON.parse(questionStep(plain, moduleId(2, "q", "practice", 1, 1)).values.questionheading).headingfile.filename).toBe("dcrs-m2-l1-p1.m4a");
+      const p = planContent(withOption(), ID, { organisationid: ORG, now: NOW });
+      expect(JSON.parse(questionStep(p, moduleId(2, "q", "practice", 1, 1)).values.questionheading).headingfile).toEqual({ filetype: 1, filename: "dcrs-m2-l1-p1-fedcba98.m4a", fileext: "m4a" });
+    });
+
+    it("writes an option's recording as that option's questionoptionfile, changes nothing else in the options, and lists the copy after its question's", () => {
+      const base = planContent(laterSample(2), ID, { organisationid: ORG, now: NOW });
+      const p = planContent(withOption(), ID, { organisationid: ORG, now: NOW });
+      const id = moduleId(2, "q", "practice", 1, 1);
+      const after = optionsOf(p, id);
+      const before = optionsOf(base, id);
+      expect(after[1].questionoptionfile).toEqual({ filetype: 1, filename: "dcrs-m2-l1-p1-b-01234567.m4a", fileext: "m4a" });
+      expect(after.filter((_, i) => i !== 1).map((o) => o.questionoptionfile)).toEqual(after.filter((_, i) => i !== 1).map(() => null));
+      expect(after.map((o) => ({ ...o, questionoptionfile: null }))).toEqual(before.map((o) => ({ ...o, questionoptionfile: null })));
+      expect(after[1].questionoptionistext).toBe(true);
+      expect(after[1].questionoptionisstaticfile).toBe(false);
+      expect(after[1].questionoptionid).toBe(`${id}-opt-2`);
+      expect(p.media.filter((m: Json) => m.audio)).toEqual([
+        { lessonid: moduleId(2, "lesson", 1), order: 1, ref: "DCRS-M2-P1", keep: false, audio: true, source: "/media/Module 2/L01/M02_L01_P1_Question.m4a", filename: "dcrs-m2-l1-p1-fedcba98.m4a" },
+        { lessonid: moduleId(2, "lesson", 1), order: 1, ref: "DCRS-M2-P1 option B", keep: false, audio: true, source: "/media/Module 2/L01/M02_L01_P1_Choice_B.m4a", filename: "dcrs-m2-l1-p1-b-01234567.m4a" },
+      ]);
+    });
+
+    it("names an option's copy without a sha256 dcrs-m<m>-l<l>-<p|q><k>-<letter>.m4a", () => {
+      const c = laterSample(2);
+      c.lessons[0].quiz[0].options[2].audio = { source: "/media/x/M02_L01_Q1_C.m4a" };
+      const p = planContent(c, ID, { organisationid: ORG, now: NOW });
+      expect(optionsOf(p, moduleId(2, "q", "quiz", 1, 1))[2].questionoptionfile.filename).toBe("dcrs-m2-l1-q1-c.m4a");
+    });
+
+    it("refuses an option audio with an extra key, a relative or parent-walking source, or a sha256 that is not 64 lowercase hex", () => {
+      const at = "lessons[0].practice[0].options[1].audio";
+      const mk = (audio: unknown) => {
+        const c = withOption();
+        c.lessons[0].practice[0].options[1].audio = audio;
+        return refusal(c);
+      };
+      expect(mk({ source: "/media/x.m4a", filename: "y.m4a" })).toEqual([`${at} must be { "source": "<absolute path of the .m4a file>" } with an optional "sha256", and nothing else`]);
+      expect(mk({ source: "relative/x.m4a" })).toEqual([`${at}.source must be the absolute path of a plain .m4a file (letters, digits, dots, dashes and underscores in the file name; no "..")`]);
+      expect(mk({ source: "/media/../x.m4a" })).toEqual([`${at}.source must be the absolute path of a plain .m4a file (letters, digits, dots, dashes and underscores in the file name; no "..")`]);
+      for (const sha256 of ["abc", HEX_B.toUpperCase(), HEX_B + "0", HEX_B.slice(1) + "g", 5]) {
+        expect(mk({ source: "/media/x.m4a", sha256 })).toEqual([`${at}.sha256 must be 64 lowercase hex characters when given`]);
+      }
+      const q = withOption();
+      q.lessons[0].practice[0].audio = { source: "/media/x.m4a", sha256: "ABC" };
+      expect(refusal(q)).toEqual(['lessons[0].practice[0].audio.sha256 must be 64 lowercase hex characters when given']);
+    });
   });
 
   it("keeps refusing a video file name that is not a plain .mp4 name", () => {
