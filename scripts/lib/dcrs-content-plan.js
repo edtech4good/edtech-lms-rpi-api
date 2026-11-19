@@ -24,8 +24,12 @@
  *     //  or, to leave the lesson's existing video document alone:  { "ref": "...", "keep": true }   (no filename, no source)
  *     "practice": [ QUESTION, ... ], "quiz": [ QUESTION, ... ] } ] }
  * QUESTION = { "ident": "DCRS-M1-P1", "text": { "en", "km" }, "title": { "en", "km" } /* optional, not stored *\/,
- *              "audio": { "source": "/absolute/path/M02_L01_P1.m4a" } /* optional: one recording, played with the question; copied to dcrs-m2-l1-p1.m4a *\/,
- *              "options": [ { "text": { "en", "km" }, "correct": true | false }, ... ],
+ *              "audio": { "source": "/absolute/path/M02_L01_P1.m4a", "sha256": "<64 lowercase hex>" (optional) } /* optional: one recording, played with the
+ *                       question; copied to dcrs-m2-l1-p1.m4a, or with a sha256 to dcrs-m2-l1-p1-<first 8 hex>.m4a, so a re-recorded clip gets a new name and no
+ *                       cache can serve the old one (the old file is left in the media folder) *\/,
+ *              "options": [ { "text": { "en", "km" }, "correct": true | false,
+ *                             "audio": { "source": "...", "sha256": "..." } /* optional: the option's own recording, same shape; copied to
+ *                             dcrs-m2-l1-p1-b.m4a (option 2 = b), with a sha256 dcrs-m2-l1-p1-b-<first 8 hex>.m4a; kept in the option's questionoptionfile *\/ }, ... ],
  *              "feedback": { "correctmessage": { "en", "km" }, "incorrectmessage": { "en", "km" } } /* optional, each message optional *\/ }
  * ```
  * The first shape of this file had `curriculum` and `level` (both the module title) and an optional `programme`; it is refused,
@@ -126,6 +130,7 @@ const FILENAME = /^[A-Za-z0-9_-]+\.mp4$/;
 const AUDIO_FILENAME = /^[A-Za-z0-9_-]+\.m4a$/;
 const AUDIO_SOURCE = /^(?:\/|[A-Za-z]:[\\/])(?:[^\0\r\n\\/]+[\\/])*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.m4a$/i;
 const PARENT_SEGMENT = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+const AUDIO_SHA256 = /^[0-9a-f]{64}$/;
 const AUDIO_FILETYPE = 1; // FileType.AUDIO (src/models/enums)
 const IDENT = /^DCRS-[A-Za-z0-9-]+$/;
 const MAX_QUESTIONS_PER_SET = 4;
@@ -468,13 +473,20 @@ function validateContent(content, ID) {
         else if (seenIdents.has(q.ident)) problems.push(`${qat}.ident ${q.ident} is used twice`);
         else seenIdents.add(q.ident);
         bilingual(q.text, `${qat}.text`);
-        if (q.audio !== undefined) {
-          if (!isObject(q.audio) || Object.keys(q.audio).some((k) => k !== "source")) {
-            problems.push(`${qat}.audio must be { "source": "<absolute path of the .m4a file>" } and nothing else`);
-          } else if (typeof q.audio.source !== "string" || !AUDIO_SOURCE.test(q.audio.source) || PARENT_SEGMENT.test(q.audio.source)) {
-            problems.push(`${qat}.audio.source must be the absolute path of a plain .m4a file (letters, digits, dots, dashes and underscores in the file name; no "..")`);
+        const checkAudio = (audio, where) => {
+          if (audio === undefined) return;
+          if (!isObject(audio) || Object.keys(audio).some((k) => k !== "source" && k !== "sha256")) {
+            problems.push(`${where}.audio must be { "source": "<absolute path of the .m4a file>" } with an optional "sha256", and nothing else`);
+          } else {
+            if (typeof audio.source !== "string" || !AUDIO_SOURCE.test(audio.source) || PARENT_SEGMENT.test(audio.source)) {
+              problems.push(`${where}.audio.source must be the absolute path of a plain .m4a file (letters, digits, dots, dashes and underscores in the file name; no "..")`);
+            }
+            if (audio.sha256 !== undefined && (typeof audio.sha256 !== "string" || !AUDIO_SHA256.test(audio.sha256))) {
+              problems.push(`${where}.audio.sha256 must be 64 lowercase hex characters when given`);
+            }
           }
-        }
+        };
+        checkAudio(q.audio, qat);
         if (!Array.isArray(q.options)) {
           problems.push(`${qat}.options must be a list`);
           return;
@@ -496,6 +508,7 @@ function validateContent(content, ID) {
           if (!isObject(o) || typeof o.correct !== "boolean") problems.push(`${qat}.options[${k}] needs a true/false "correct"`);
           else if (o.correct) correct += 1;
           bilingual(isObject(o) ? o.text : undefined, `${qat}.options[${k}].text`);
+          if (isObject(o)) checkAudio(o.audio, `${qat}.options[${k}]`);
         });
         if (correct !== 1) problems.push(`${qat} has ${correct} correct options; it needs exactly 1`);
       });
@@ -878,12 +891,21 @@ function planContent(content, ID, { organisationid, now, levelSwitch = null, ren
         const text = t(q.text);
         let headingfile = null;
         if (q.audio) {
-          const filename = `dcrs-m${moduleNumber}-l${lesson.order}-${letter}${k + 1}.m4a`;
+          const filename = `dcrs-m${moduleNumber}-l${lesson.order}-${letter}${k + 1}${q.audio.sha256 ? `-${q.audio.sha256.slice(0, 8)}` : ""}.m4a`;
           if (!AUDIO_FILENAME.test(filename)) throw new ContentRefused([`question ${q.ident}: the audio file name ${filename} is not a plain .m4a name`]);
           headingfile = { filetype: AUDIO_FILETYPE, filename, fileext: "m4a" };
           audioFiles.push({ lessonid: slot.id, order: lesson.order, ref: q.ident, keep: false, audio: true, source: q.audio.source, filename });
         }
-        const options = q.options.map((o, j) => ({ ...optionRow(j + 1, t(o.text), o.correct), questionoptionid: `${id}-opt-${j + 1}` }));
+        const options = q.options.map((o, j) => {
+          const row = { ...optionRow(j + 1, t(o.text), o.correct), questionoptionid: `${id}-opt-${j + 1}` };
+          if (o.audio) {
+            const optionFilename = `dcrs-m${moduleNumber}-l${lesson.order}-${letter}${k + 1}-${String.fromCharCode(97 + j)}${o.audio.sha256 ? `-${o.audio.sha256.slice(0, 8)}` : ""}.m4a`;
+            if (!AUDIO_FILENAME.test(optionFilename)) throw new ContentRefused([`question ${q.ident}: the audio file name ${optionFilename} is not a plain .m4a name`]);
+            row.questionoptionfile = { filetype: AUDIO_FILETYPE, filename: optionFilename, fileext: "m4a" };
+            audioFiles.push({ lessonid: slot.id, order: lesson.order, ref: `${q.ident} option ${String.fromCharCode(65 + j)}`, keep: false, audio: true, source: o.audio.source, filename: optionFilename });
+          }
+          return row;
+        });
         upsert(
           "questions",
           "questionid",
