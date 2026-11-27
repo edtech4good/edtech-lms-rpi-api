@@ -51,9 +51,9 @@ import {
 
 // Pinned on purpose. When you add or remove a route, update these numbers AND run
 // `npm run routes:policy -- --write` to refresh the committed files.
-const EXPECTED_TOTAL = 90;
-const EXPECTED_BY_POLICY = { public: 5, learner: 45, teacher: 34, server: 5, "pi-import": 1 };
-const EXPECTED_PROVED = 85;
+const EXPECTED_TOTAL = 91;
+const EXPECTED_BY_POLICY = { public: 5, learner: 45, teacher: 35, server: 5, "pi-import": 1 };
+const EXPECTED_PROVED = 86;
 const EXPECTED_NOT_APPLICABLE = 5;
 const EXPECTED_PENDING = 0;
 
@@ -106,7 +106,7 @@ describe("route inventory (real application wiring)", () => {
   });
 
   describe("proved and pending", () => {
-    it("divides the routes into 85 proved by a spec, 5 not applicable (public) and none pending", () => {
+    it("divides the routes into 86 proved by a spec, 5 not applicable (public) and none pending", () => {
       const count = (state: string) => routes.filter((r) => enforcementState(r) === state).length;
       expect(count("yes")).toBe(EXPECTED_PROVED);
       expect(count("n/a")).toBe(EXPECTED_NOT_APPLICABLE);
@@ -194,6 +194,7 @@ describe("route inventory (real application wiring)", () => {
       expect(routes.filter((r) => r.admitsServerKey && r.policy !== "server").map(key).sort()).toEqual([
         "GET /curriculum/:curriculumbaselineid/getstudentresult",
         "POST /report/certificate-eligibility",
+        "POST /report/learner-progress",
         "POST /report/student-awards",
         "POST /report/student-grade-progress",
         "POST /report/student-lesson-progress",

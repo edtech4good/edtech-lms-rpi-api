@@ -13,7 +13,7 @@ import { schools } from "src/models/data-models/school";
 import { LessonBusiness } from "src/business/lesson.business";
 import { Token } from "src/models/token.model";
 import { GradeBusiness } from "./grade.business";
-import { callerKindOf, enrolledCurriculumIds, curriculumIdsInScope } from "./content-access";
+import { callerKindOf, enrolledCurriculumIds, curriculumIdsInScope, liveCurriculaByIds } from "./content-access";
 import { findSchoolIdByName, schoolRefIsOwn, schoolScopeFromToken, studentsOfSchool } from "./school-identity";
 import { ApiError } from "src/models/ApiError";
 import { ErrorCode } from "src/models/enums/errorcode.enum";
@@ -200,16 +200,7 @@ export class CurriculumBusiness {
   getEnrolledCurriculums = async (user?: Token) => {
     // The enrolment is read from the database now (the token's own copy is stale until the next sign-in),
     // and only curricula the token's organisation owns count.
-    const where: WhereOptions<curriculumsAttributes> = {
-      isdeleted: false,
-      curriculumstatus: true,
-      curriculumid: {
-        [Op.in]: await enrolledCurriculumIds(user)
-      }
-    };
-    const order = ["curriculumname"];
-
-    return await curriculums.findAll({ where, order });
+    return await liveCurriculaByIds(await enrolledCurriculumIds(user));
   };
 
   getCurriculumsWithSubject = async (user?: Token, translations?: ContentTranslations) => {
