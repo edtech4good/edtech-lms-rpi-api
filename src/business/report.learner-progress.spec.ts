@@ -45,7 +45,7 @@ let tables: { students: Row[]; schoolusers: Row[]; schools: Row[]; standards: Ro
 let studentQueries: any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const learner = (n: string, over: Row = {}): [Row, Row] => [
-  { studentid: `st-${n}`, studentfirstname: `First ${n}`, studentlastname: `Last ${n}`, schoolid: SCHOOL_A, standard: CLASS_1, schooluserid: `su-${n}`, is_teacher_acc: false, curriculumids: [CUR], ...over },
+  { studentid: `st-${n}`, studentfirstname: `សុខា ${n}`, studentlastname: `ចាន់ ${n}`, schoolid: SCHOOL_A, standard: CLASS_1, schooluserid: `su-${n}`, is_teacher_acc: false, curriculumids: [CUR], ...over },
   { schooluserid: `su-${n}`, schoolusername: `user.${n}`, isdisabled: false, isdeleted: false, schooluserstatus: 1 },
 ];
 
@@ -56,13 +56,13 @@ const reset = () => {
     students: [],
     schoolusers: [],
     schools: [
-      { schoolid: SCHOOL_A, schoolname: "Alpha School", organisationid: ORG },
-      { schoolid: SCHOOL_B, schoolname: "Beta School", organisationid: ORG },
+      { schoolid: SCHOOL_A, schoolname: "Alpha School", organisationid: ORG, isdeleted: false },
+      { schoolid: SCHOOL_B, schoolname: "Beta School", organisationid: ORG, isdeleted: false },
     ],
     standards: [
-      { standardid: CLASS_1, standardname: "Class 1", schoolid: SCHOOL_A },
-      { standardid: CLASS_2, standardname: "Class 2", schoolid: SCHOOL_A },
-      { standardid: CLASS_B, standardname: "Class B", schoolid: SCHOOL_B },
+      { standardid: CLASS_1, standardname: "ថ្នាក់ទី ១", schoolid: SCHOOL_A },
+      { standardid: CLASS_2, standardname: "ថ្នាក់ទី ២", schoolid: SCHOOL_A },
+      { standardid: CLASS_B, standardname: "ថ្នាក់ទី ក", schoolid: SCHOOL_B },
     ],
     curriculums: [
       { curriculumid: CUR, curriculumname: "Programme One", curriculumstatus: true, isdeleted: false, organisationid: ORG },
@@ -130,8 +130,13 @@ beforeEach(() => {
     studentQueries.push(options);
     const joined: Row[] = tables.students
       .map((s): Row => ({ ...s, schooluser: tables.schoolusers.find((u) => u.schooluserid === s.schooluserid), school: tables.schools.find((c) => c.schoolid === s.schoolid), class: tables.standards.find((c) => c.standardid === s.standard) }))
-      .filter((s) => s.schooluser && s.school && matches(s, options.where));
-    joined.sort((a, b) => [a.school.schoolname, a.class?.standardname ?? "", a.schooluser.schoolusername, a.studentid].join("\u0000").localeCompare([b.school.schoolname, b.class?.standardname ?? "", b.schooluser.schoolusername, b.studentid].join("\u0000")));
+      .filter((s) => s.schooluser && s.school && matches(s, options.where))
+      // the school include is an inner join with its own condition (a soft-deleted school's learners are not listed)
+      .filter((s) => (options.include as any[]).filter((i) => i.model === schools && i.where).every((i) => matches(s.school, i.where))); // eslint-disable-line @typescript-eslint/no-explicit-any
+    // NOTE: this sort is JavaScript's, by code point. How MySQL orders Khmer text under the column collation is not proved by
+    // this spec; it was proved by the PM's run of the route on a real MySQL.
+    const sortKey = (r: Row) => [r.school.schoolname, r.class?.standardname ?? "", r.schooluser.schoolusername, r.studentid].join("\u0000");
+    joined.sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0));
     const page = options.limit ? joined.slice(options.offset ?? 0, (options.offset ?? 0) + options.limit) : joined;
     return { rows: page, count: joined.length };
   }) as never);
@@ -263,7 +268,7 @@ describe("ReportBusiness.getLearnerProgress", () => {
   it("the row carries names as text, the school and class names, and the username", async () => {
     add("amy", { studentlastname: null });
     const row = (await run()).rows[0];
-    expect(row).toMatchObject({ studentid: "st-amy", username: "user.amy", firstname: "First amy", lastname: "", schoolid: SCHOOL_A, schoolname: "Alpha School", standard: CLASS_1, classname: "Class 1" });
+    expect(row).toMatchObject({ studentid: "st-amy", username: "user.amy", firstname: "សុខា amy", lastname: "", schoolid: SCHOOL_A, schoolname: "Alpha School", standard: CLASS_1, classname: "ថ្នាក់ទី ១" });
   });
 
   it("a learner in no class has classname ''", async () => {
@@ -281,30 +286,36 @@ describe("ReportBusiness.getLearnerProgress", () => {
 
   describe("search", () => {
     beforeEach(() => {
-      add("amy", { studentfirstname: "Amelia", studentlastname: "Stone" });
-      add("ben", { studentfirstname: "Benedict", studentlastname: "Fields" });
-      add("cat", { studentfirstname: "Cathy", studentlastname: "100% Real" });
-      add("dee", { studentfirstname: "Dee", studentlastname: "Under_score" });
-      add("eve", { studentfirstname: "Eve", studentlastname: "Plain" });
+      add("amy", { studentfirstname: "ដារា", studentlastname: "ស្រីមុំ" });
+      add("ben", { studentfirstname: "វិចិត្រ", studentlastname: "សៅ" });
+      add("cat", { studentfirstname: "ចន្ទា", studentlastname: "១០០% ពិត" });
+      add("dee", { studentfirstname: "ដេវីដ", studentlastname: "ក្រោម_ខ្សែ" });
+      add("eve", { studentfirstname: "Zoé", studentlastname: "Plain" });
     });
     const found = async (text: string) => (await run([{ key: "search", value: text }])).rows.map((r) => r.studentid);
 
     it("matches the first name, the last name and the username, in any case", async () => {
-      expect(await found("amel")).toEqual(["st-amy"]);
-      expect(await found("FIELDS")).toEqual(["st-ben"]);
+      expect(await found("ដារ")).toEqual(["st-amy"]); // Khmer, first name
+      expect(await found("សៅ")).toEqual(["st-ben"]); // Khmer, last name
+      expect(await found("PLAIN")).toEqual(["st-eve"]);
       expect(await found("USER.EVE")).toEqual(["st-eve"]);
-      expect(await found("  stone  ")).toEqual(["st-amy"]);
+      expect(await found("  ស្រីមុំ  ")).toEqual(["st-amy"]);
+    });
+
+    it("is matched after Unicode NFC normalisation: a decomposed text finds the composed name", async () => {
+      expect(await found("Zoe\u0301")).toEqual(["st-eve"]);
+      expect(await found("  zoe\u0301 ")).toEqual(["st-eve"]);
     });
 
     it("a percent sign in the text matches only a literal percent sign", async () => {
       expect(await found("%")).toEqual(["st-cat"]);
-      expect(await found("100%")).toEqual(["st-cat"]);
+      expect(await found("១០០%")).toEqual(["st-cat"]);
     });
 
     it("an underscore in the text matches only a literal underscore", async () => {
       expect(await found("_")).toEqual(["st-dee"]);
-      expect(await found("r_s")).toEqual(["st-dee"]);
-      expect(await found("pl_in")).toEqual([]);
+      expect(await found("ម_ខ")).toEqual(["st-dee"]);
+      expect(await found("ក្រោ_ខ្សែ")).toEqual([]);
     });
 
     it("is applied in the query and counted there, not after paging", async () => {
@@ -313,7 +324,7 @@ describe("ReportBusiness.getLearnerProgress", () => {
       expect(options.limit).toBe(1);
       expect(Object.getOwnPropertySymbols(options.where[Op.and][options.where[Op.and].length - 1])).toEqual([Op.or]);
       expect(result.rows).toHaveLength(1);
-      expect(result.count).toBe(5); // every one has an e somewhere in a name or username (user.*)
+      expect(result.count).toBe(5); // every login is "user.<name>", and every one of them has an e (amy, ben, cat, dee, eve)
     });
 
     it("a blank search is no search", async () => {
@@ -344,9 +355,24 @@ describe("ReportBusiness.getLearnerProgress", () => {
       expect(first.count).toBe(4);
     });
 
-    it("pagesize 0 means all", async () => {
-      expect(await ids({ pagesize: 0 })).toHaveLength(4);
-      expect(studentQueries[studentQueries.length - 1].limit).toBeUndefined();
+    it("a missing, zero, negative or non-numeric pagesize is a page of 20; above 200 is 200", async () => {
+      for (let i = 0; i < 21; i++) add(`fill${String(i).padStart(2, "0")}`);
+      for (const asked of [0, -3, undefined, "abc", NaN]) {
+        const result = await run([], { pagesize: asked as never });
+        expect([asked, result.rows.length, result.count]).toEqual([asked, 20, 24]); // 3 in school A already, plus 21
+        expect(studentQueries[studentQueries.length - 1].limit).toBe(20);
+      }
+      await run([], { pagesize: 500 });
+      expect(studentQueries[studentQueries.length - 1].limit).toBe(200);
+      await run([], { pagesize: 7, pageindex: 3 });
+      expect(studentQueries[studentQueries.length - 1]).toMatchObject({ limit: 7, offset: 14 });
+    });
+
+    it("orders Khmer class names and Khmer user names by code point here (MySQL's own order is not proved by this spec)", async () => {
+      add("kha", { standard: CLASS_2 }, { schoolusername: "ខ្មែរ-ខ" });
+      add("ka", { standard: CLASS_2 }, { schoolusername: "ខ្មែរ-ក" });
+      const result = await run([{ key: "standard", value: CLASS_2 }]);
+      expect(result.rows.map((r) => r.studentid)).toEqual(["st-bob", "st-ka", "st-kha"]);
     });
   });
 
@@ -368,6 +394,28 @@ describe("ReportBusiness.getLearnerProgress", () => {
     const rows = (await run()).rows;
     expect(rows.find((r) => r.studentid === "st-amy")?.lastlogin).toBe("2026-06-02T07:00:00.000Z");
     expect(rows.find((r) => r.studentid === "st-ben")?.lastlogin).toBeNull();
+  });
+
+  it("learners of a soft-deleted school are not listed (nor counted)", async () => {
+    add("amy");
+    add("cat", { schoolid: SCHOOL_B, standard: CLASS_B });
+    tables.schools.find((c) => c.schoolid === SCHOOL_B)!.isdeleted = true;
+    const result = await run([], {}, scopeOf(SCHOOL_A, SCHOOL_B));
+    expect(result.rows.map((r) => r.studentid)).toEqual(["st-amy"]);
+    expect(result.count).toBe(1);
+  });
+
+  it("the grade, level and lesson tree is read once per set of enrolled curricula in a request, not once per learner", async () => {
+    add("amy");
+    add("ben");
+    add("cat");
+    add("dee", { curriculumids: [] });
+    const spies = [jest.spyOn(grades, "findAll"), jest.spyOn(levels, "findAll"), jest.spyOn(lessons, "findAll")];
+    const rows = (await run()).rows;
+    expect(spies.map((s) => s.mock.calls.length)).toEqual([1, 1, 1]);
+    expect(rows.map((r) => r.curricula.length)).toEqual([1, 1, 1, 0]);
+    expect(rows[0].curricula[0].lessonsTotal).toBe(6);
+    expect(rows[2].curricula[0].lessonsTotal).toBe(6);
   });
 
   it("teachers' own learner records are not learners of the report", async () => {

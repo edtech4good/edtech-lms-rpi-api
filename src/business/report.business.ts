@@ -27,7 +27,7 @@ import { buildCustomWhere } from "src/services/util.service";
 import { findSchoolIdByName, resolveSchoolScope, schoolOfStudent, studentsOfSchool } from "./school-identity";
 import { contentFiltersInScope, learnersInScope, ReportScope } from "./report-scope";
 import { enrolledCurriculumIdsOfLearner, liveCurriculaByIds } from "./content-access";
-import { summariseLearnerProgress } from "./student.business";
+import { loadProgressContent, ProgressContent, summariseLearnerProgress } from "./student.business";
 
 export interface ChartItemFormat {
     name: Date | string;
@@ -60,6 +60,9 @@ export const toProgressPercent = (done: number, total: number): number => {
     if (done > 0 && percent === 0) return 1;
     return percent;
 };
+
+const DEFAULT_LEARNER_PAGE = 20;
+const MAX_LEARNER_PAGE = 200;
 
 /** A text to match literally under LIKE: the escape character and both wildcards are escaped. */
 const likeLiteral = (text: string): string => text.replace(/[\\%_]/g, "\\$&");
@@ -748,7 +751,8 @@ export class ReportBusiness {
     // One row per learner of the scope (disabled ones included, deleted ones not), with the SAME progress numbers
     // the learner's own app shows: each learner's enrolled curricula are resolved as the app resolves them and
     // counted by `summariseLearnerProgress`, the function behind `GET student/progress/summary`. Paging is over
-    // learners, ordered by school name, class name, username (a learner's id breaks ties). `pagesize` 0 means all.
+    // learners, ordered by school name, class name, username (a learner's id breaks ties). `pagesize` is 20 when missing
+    // or not a positive number, and at most 200; `pageindex` counts from 1.
     // Each learner costs a few queries; a page is small, and so is a school.
     getLearnerProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {
         if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
@@ -766,7 +770,7 @@ export class ReportBusiness {
         if (schoolids.length) conditions.push({ schoolid: { [Op.in]: schoolids } });
         if (classids.length) conditions.push({ standard: { [Op.in]: classids } });
         if (searchfilter) {
-            const like = `%${likeLiteral((searchfilter.value as string).trim().slice(0, 100))}%`;
+            const like = `%${likeLiteral((searchfilter.value as string).trim().normalize("NFC").slice(0, 100))}%`;
             conditions.push({
                 [Op.or]: [
                     { "$schooluser.schoolusername$": { [Op.like]: like } },
@@ -776,20 +780,18 @@ export class ReportBusiness {
             } as any);
         }
 
-        const pagesize = Number(paging.pagesize) > 0 ? Math.floor(Number(paging.pagesize)) : 0;
+        // A page is 20 learners unless the body asks for another size from 1 to 200 (larger is 200). pageindex counts from 1.
+        const asked = Math.floor(Number(paging.pagesize));
+        const pagesize = Number.isFinite(asked) && asked > 0 ? Math.min(asked, MAX_LEARNER_PAGE) : DEFAULT_LEARNER_PAGE;
         const pageindex = Number(paging.pageindex) > 1 ? Math.floor(Number(paging.pageindex)) : 1;
-        const options: any = {};
-        if (pagesize) {
-            options.limit = pagesize;
-            options.offset = pagesize * (pageindex - 1);
-        }
+        const options: any = { limit: pagesize, offset: pagesize * (pageindex - 1) };
         const found = await students.scope("withOwnership").findAndCountAll({
             ...options,
             where: { [Op.and]: conditions },
             attributes: ["studentid", "studentfirstname", "studentlastname", "schoolid", "standard", "schooluserid"],
             include: [
                 { model: schoolusers, as: "schooluser", required: true, attributes: ["schoolusername", "isdisabled", "schooluserstatus"] },
-                { model: schools, required: true, attributes: ["schoolid", "schoolname"] },
+                { model: schools, required: true, attributes: ["schoolid", "schoolname"], where: { isdeleted: false } },
                 { model: standards, as: "class", required: false, attributes: ["standardname"] },
             ],
             order: [[col("school.schoolname"), "ASC"], [col("class.standardname"), "ASC"], [col("schooluser.schoolusername"), "ASC"], ["studentid", "ASC"]],
@@ -802,12 +804,15 @@ export class ReportBusiness {
             : [];
         const organisationOf = new Map(owners.map(o => [String(o.schoolid).toLowerCase(), o.organisationid]));
 
+        const contentOf = new Map<string, Promise<ProgressContent>>(); // the content tree, once per set of enrolled curricula
         const rows = [];
         for (const st of found.rows) {
             const organisationid = organisationOf.get(String(st.schoolid).toLowerCase());
             const enrolledids = organisationid ? await enrolledCurriculumIdsOfLearner(st.studentid, organisationid) : [];
             const enrolled = enrolledids.length ? await liveCurriculaByIds(enrolledids) : [];
-            const summary = await summariseLearnerProgress(st.studentid, enrolled);
+            const tree = enrolled.map(c => c.curriculumid).sort().join(",");
+            if (enrolled.length && !contentOf.has(tree)) contentOf.set(tree, loadProgressContent(enrolled));
+            const summary = await summariseLearnerProgress(st.studentid, enrolled, enrolled.length ? await contentOf.get(tree) : undefined);
             const login = await rpiuseraccess.findOne({ order: [["logintime", "DESC"]], where: { userid: st.schooluserid } });
             const lastprogress = (await studentlessonsprogress.findOne({
                 attributes: [[fn("max", col("lastupdated")), "lastprogressat"]],

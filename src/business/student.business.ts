@@ -73,21 +73,14 @@ export interface StudentProgressSummary {
   };
 }
 
-/**
- * The core of the progress summary for ONE learner and the curricula they are enrolled in (the caller resolves
- * those: the learner's own token for the app, the learner's school's organisation for a report). Both the app's
- * `GET student/progress/summary` and the admin learner-progress report call this, so the numbers cannot disagree.
- * See `getprogresssummary` below for the counting rules.
- */
-export async function summariseLearnerProgress(
-  studentid: string | undefined,
-  curricula: Array<{ curriculumid: string; curriculumname: string }>,
-): Promise<StudentProgressSummary> {
-  const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
-  if (curricula.length === 0) {
-    return { curricula: [], totals: emptyTotals };
-  }
+/** The active grades, levels and lessons of some curricula: what a learner's progress is counted against. The same for every learner with the same enrolment. */
+export interface ProgressContent {
+  activeGrades: grades[];
+  activeLevels: levels[];
+  activeLessons: lessons[];
+}
 
+export async function loadProgressContent(curricula: Array<{ curriculumid: string }>): Promise<ProgressContent> {
   const curriculumids = curricula.map((cur) => cur.curriculumid);
 
   const activeGrades = await grades.findAll({
@@ -112,6 +105,27 @@ export async function summariseLearnerProgress(
         attributes: ["lessonid", "levelid"],
       })
     : [];
+  return { activeGrades, activeLevels, activeLessons };
+}
+
+/**
+ * The core of the progress summary for ONE learner and the curricula they are enrolled in (the caller resolves
+ * those: the learner's own token for the app, the learner's school's organisation for a report). Both the app's
+ * `GET student/progress/summary` and the admin learner-progress report call this, so the numbers cannot disagree.
+ * See `getprogresssummary` below for the counting rules. A caller that counts many learners with the same
+ * enrolment may pass the `content` it loaded once (`loadProgressContent`); without it the content is read here.
+ */
+export async function summariseLearnerProgress(
+  studentid: string | undefined,
+  curricula: Array<{ curriculumid: string; curriculumname: string }>,
+  content?: ProgressContent,
+): Promise<StudentProgressSummary> {
+  const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
+  if (curricula.length === 0) {
+    return { curricula: [], totals: emptyTotals };
+  }
+
+  const { activeGrades, activeLevels, activeLessons } = content ?? (await loadProgressContent(curricula));
   const lessonids = activeLessons.map((lesson) => lesson.lessonid);
 
   const studentLessonProgresses = lessonids.length
