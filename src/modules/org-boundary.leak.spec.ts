@@ -1708,6 +1708,38 @@ describe("report-style routes: the scope is X's header (central), or the token's
     expect(await runReport(REPORTS["POST /report/student-lesson-progress"])).toEqual([]);
   });
 
+  // Admin and super admin only (the answer names every learner), so it has its own cases rather than the teacher-based ones above.
+  it("POST /report/learner-progress reads only learners in the scope, for an admin and for central's key; a teacher or a learner is refused", async () => {
+    const { failures, check } = scenario();
+    const answer = async (auth: Auth, body: unknown) => {
+      reset();
+      const r = await send("post", "/report/learner-progress", auth, body);
+      return { status: r.status, ids: idsIn(r.body, "studentid"), seen: new Set(seen), total: r.body?.data?.total };
+    };
+    const both = bodyOf("schoolid", [SCH_X, SCH_Y]);
+    for (const [name, auth, body, wanted] of [
+      ["X admin, no filter", X_ADMIN, { pageindex: 1, pagesize: 50 }, [ST_X1, ST_X2]],
+      ["X admin, both schools", X_ADMIN, both, [ST_X1, ST_X2]],
+      ["X admin, Y's school", X_ADMIN, bodyOf("schoolid", SCH_Y), []],
+      ["X admin, Y's class", X_ADMIN, bodyOf("standard", CLS_Y), []],
+      ["X admin, X's class", X_ADMIN, bodyOf("standard", CLS_X), [ST_X1, ST_X2]],
+      ["server key + X's header, Y's school", SERVER_X, bodyOf("schoolid", SCH_Y), []],
+      ["server key + X's header, both schools", SERVER_X, both, [ST_X1, ST_X2]],
+      ["server key + X's header, no filter", SERVER_X, { pageindex: 1, pagesize: 50 }, [ST_X1, ST_X2]],
+      ["server key + header platform: both schools (unscoped)", SERVER_PLATFORM, both, [ST_X1, ST_X2, ST_Y1, ST_Y2, ST_Y3, ST_R]],
+    ] as Array<[string, Auth, unknown, string[]]>) {
+      const r = await answer(auth, body);
+      check(`${name} -> ${r.status}, ${JSON.stringify(r.ids)} (wanted exactly ${JSON.stringify(wanted)}); total ${r.total}`, r.status === 200 && sameSet(r.ids, wanted) && r.total === wanted.length && subset(r.seen, wanted));
+    }
+    let r = await answer(SERVER_NOHEADER, both);
+    check(`server key, no header -> ${r.status}, read ${JSON.stringify([...r.seen])} (wanted 400 and nothing read)`, r.status === 400 && r.seen.size === 0);
+    for (const [name, auth] of [["X teacher", X_TEACHER], ["Y teacher", Y_TEACHER], ["X learner", X_LEARNER]] as Array<[string, Auth]>) {
+      r = await answer(auth, both);
+      check(`${name} -> ${r.status}, read ${JSON.stringify([...r.seen])} (wanted 403 and nothing read)`, r.status === 403 && r.seen.size === 0);
+    }
+    expect(failures).toEqual([]);
+  });
+
   it("the rows a list report answers are the scope's learners (the class and status lists carry them)", async () => {
     const { failures, check } = scenario();
     const rows = async (path: string, auth: Auth, body: unknown, headers: Record<string, string> = {}) => {

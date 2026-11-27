@@ -86,6 +86,7 @@ const mockGetStudentLessonProgress = jest
   .fn()
   .mockResolvedValue({ rows: [], count: 0, student: null });
 const mockGetStudentsOfflineOnline = jest.fn().mockResolvedValue([]);
+const mockGetLearnerProgress = jest.fn().mockResolvedValue({ rows: [], count: 0 });
 
 jest.mock("src/business/report.business", () => ({
   ReportBusiness: jest.fn().mockImplementation(() => ({
@@ -99,6 +100,7 @@ jest.mock("src/business/report.business", () => ({
     getStudentLevelProgress: mockGetStudentLevelProgress,
     getStudentLessonProgress: mockGetStudentLessonProgress,
     getStudentsOfflineOnline: mockGetStudentsOfflineOnline,
+    getLearnerProgress: mockGetLearnerProgress,
   })),
 }));
 
@@ -227,6 +229,7 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
       ["post", "/report/studentlevelquiz", mockGetLevelQuizScoresData],
       ["post", "/report/studentlevelquiz/class", mockGetClassLevelQuizScoresData],
       ["post", "/report/studentstatus", mockGetStudentStatus],
+      ["post", "/report/learner-progress", mockGetLearnerProgress],
       ["post", "/report/student-grade-progress", mockGetStudentGradeProgress],
       ["post", "/report/student-level-progress", mockGetStudentLevelProgress],
       ["post", "/report/student-lesson-progress", mockGetStudentLessonProgress],
@@ -290,6 +293,21 @@ describe("AccessOrServerSyncGuard (edtech4good/workspace#45)", () => {
       const res = await call("post", "/student/logintime", tokenFor(SchoolRole.STUDENT));
       expect(res.status).toBe(200);
       expect(mockGetlogintime).toHaveBeenCalledTimes(1);
+    });
+
+    it("report/learner-progress takes an ADMIN and a SUPER ADMIN token, and refuses a TEACHER (the answer names every learner) and a STUDENT with 403", async () => {
+      for (const role of [SchoolRole.ADMIN, SchoolRole.SUPERADMIN]) {
+        mockGetLearnerProgress.mockClear();
+        const res = await call("post", "/report/learner-progress", tokenFor(role));
+        expect([role, res.status]).toEqual([role, 200]);
+        expect(mockGetLearnerProgress).toHaveBeenCalledTimes(1);
+      }
+      mockGetLearnerProgress.mockClear();
+      for (const role of [SchoolRole.TEACHER, SchoolRole.STUDENT]) {
+        const res = await call("post", "/report/learner-progress", tokenFor(role));
+        expect([role, res.status]).toEqual([role, 403]);
+      }
+      expect(mockGetLearnerProgress).not.toHaveBeenCalled();
     });
 
     it("a missing token still gives 401 on an allow-listed route", async () => {

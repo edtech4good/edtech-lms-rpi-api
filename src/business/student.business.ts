@@ -73,6 +73,182 @@ export interface StudentProgressSummary {
   };
 }
 
+/**
+ * The core of the progress summary for ONE learner and the curricula they are enrolled in (the caller resolves
+ * those: the learner's own token for the app, the learner's school's organisation for a report). Both the app's
+ * `GET student/progress/summary` and the admin learner-progress report call this, so the numbers cannot disagree.
+ * See `getprogresssummary` below for the counting rules.
+ */
+export async function summariseLearnerProgress(
+  studentid: string | undefined,
+  curricula: Array<{ curriculumid: string; curriculumname: string }>,
+): Promise<StudentProgressSummary> {
+  const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
+  if (curricula.length === 0) {
+    return { curricula: [], totals: emptyTotals };
+  }
+
+  const curriculumids = curricula.map((cur) => cur.curriculumid);
+
+  const activeGrades = await grades.findAll({
+    where: { curriculumid: curriculumids, gradestatus: true, isdeleted: false },
+    attributes: ["gradeid", "curriculumid", "gradename", "gradeorder"],
+    order: [["gradeorder", "ASC"], ["gradename", "ASC"], ["gradeid", "ASC"]],
+  });
+  const gradeids = activeGrades.map((grade) => grade.gradeid);
+
+  const activeLevels = gradeids.length
+    ? await levels.findAll({
+        where: { gradeid: gradeids, levelstatus: true, isdeleted: false },
+        attributes: ["levelid", "gradeid", "levelname", "levelorder"],
+        order: [["levelorder", "ASC"], ["levelname", "ASC"], ["levelid", "ASC"]],
+      })
+    : [];
+  const levelids = activeLevels.map((level) => level.levelid);
+
+  const activeLessons = levelids.length
+    ? await lessons.findAll({
+        where: { levelid: levelids, lessonstatus: true, isdeleted: false },
+        attributes: ["lessonid", "levelid"],
+      })
+    : [];
+  const lessonids = activeLessons.map((lesson) => lesson.lessonid);
+
+  const studentLessonProgresses = lessonids.length
+    ? await studentlessonsprogress.findAll({
+        where: { studentid, lessonid: lessonids },
+        attributes: ["lessonid", "completed", "progress"],
+      })
+    : [];
+
+  const doneLessonIds = new Set<string>();
+  for (const p of studentLessonProgresses) {
+    if (p.completed === true || (p.progress ?? 0) >= 100) {
+      doneLessonIds.add(p.lessonid);
+    }
+  }
+
+  const lessonIdsByLevel = new Map<string, string[]>();
+  for (const lesson of activeLessons) {
+    const list = lessonIdsByLevel.get(lesson.levelid) ?? [];
+    list.push(lesson.lessonid);
+    lessonIdsByLevel.set(lesson.levelid, list);
+  }
+
+  const levelsByGrade = new Map<string, typeof activeLevels>();
+  for (const level of activeLevels) {
+    const list = levelsByGrade.get(level.gradeid) ?? [];
+    list.push(level);
+    levelsByGrade.set(level.gradeid, list);
+  }
+
+  const gradesByCurriculum = new Map<string, typeof activeGrades>();
+  for (const grade of activeGrades) {
+    const list = gradesByCurriculum.get(grade.curriculumid) ?? [];
+    list.push(grade);
+    gradesByCurriculum.set(grade.curriculumid, list);
+  }
+
+  const totals = { ...emptyTotals };
+
+  const curriculaOut: StudentProgressSummaryCurriculum[] = curricula.map((cur) => {
+    const curriculumGrades = gradesByCurriculum.get(cur.curriculumid) ?? [];
+
+    let lessonsCompleted = 0;
+    let lessonsTotal = 0;
+    let levelsCompleted = 0;
+    let levelsTotal = 0;
+    let currentLevel: StudentProgressSummaryCurrentLevel | null = null;
+    const gradesOut: StudentProgressSummaryGrade[] = [];
+
+    for (const grade of curriculumGrades) {
+      const gradeLevels = levelsByGrade.get(grade.gradeid) ?? [];
+      let gradeLessonsCompleted = 0;
+      let gradeLessonsTotal = 0;
+      let gradeLevelsCompleted = 0;
+      let gradeLevelsTotal = 0;
+      const levelsOut: StudentProgressSummaryLevel[] = [];
+
+      for (const level of gradeLevels) {
+        const levelLessonIds = lessonIdsByLevel.get(level.levelid) ?? [];
+        if (levelLessonIds.length === 0) {
+          // No active lessons: excluded from levelsCompleted/levelsTotal,
+          // and contributes nothing to the lesson counts either way. Still
+          // surfaced in the grades/levels array (with 0/0, not completed)
+          // so the app can show a "no lessons" state.
+          levelsOut.push({
+            levelid: level.levelid,
+            levelname: level.levelname,
+            lessonsCompleted: 0,
+            lessonsTotal: 0,
+            completed: false,
+          });
+          continue;
+        }
+
+        const levelLessonsTotal = levelLessonIds.length;
+        const levelLessonsCompleted = levelLessonIds.filter((id) => doneLessonIds.has(id)).length;
+        lessonsTotal += levelLessonsTotal;
+        lessonsCompleted += levelLessonsCompleted;
+        gradeLessonsTotal += levelLessonsTotal;
+        gradeLessonsCompleted += levelLessonsCompleted;
+
+        levelsTotal += 1;
+        gradeLevelsTotal += 1;
+        const levelComplete = levelLessonsCompleted === levelLessonsTotal;
+        if (levelComplete) {
+          levelsCompleted += 1;
+          gradeLevelsCompleted += 1;
+        } else if (!currentLevel) {
+          currentLevel = {
+            levelid: level.levelid,
+            levelname: level.levelname,
+            gradeid: grade.gradeid,
+            gradename: grade.gradename,
+            lessonsCompleted: levelLessonsCompleted,
+            lessonsTotal: levelLessonsTotal,
+          };
+        }
+
+        levelsOut.push({
+          levelid: level.levelid,
+          levelname: level.levelname,
+          lessonsCompleted: levelLessonsCompleted,
+          lessonsTotal: levelLessonsTotal,
+          completed: levelComplete,
+        });
+      }
+
+      gradesOut.push({
+        gradeid: grade.gradeid,
+        gradename: grade.gradename,
+        lessonsCompleted: gradeLessonsCompleted,
+        lessonsTotal: gradeLessonsTotal,
+        levelsCompleted: gradeLevelsCompleted,
+        levelsTotal: gradeLevelsTotal,
+        levels: levelsOut,
+      });
+    }
+
+    totals.lessonsCompleted += lessonsCompleted;
+    totals.lessonsTotal += lessonsTotal;
+    totals.levelsCompleted += levelsCompleted;
+    totals.levelsTotal += levelsTotal;
+
+    return {
+      curriculumid: cur.curriculumid,
+      curriculumname: cur.curriculumname,
+      lessonsCompleted,
+      lessonsTotal,
+      levelsCompleted,
+      levelsTotal,
+      currentLevel,
+      grades: gradesOut,
+    };
+  });
+  return { curricula: curriculaOut, totals };
+}
+
 export class StudentBusiness {
   getstudentbyid = (studentid: string) => {
     return students.findOne({ where: { studentid } });
@@ -386,171 +562,12 @@ WHERE
   // least one active lesson and is not yet completed; it is null once every
   // level is completed, or when the curriculum has no active lessons at all.
   getprogresssummary = async (user: Token, translations?: ContentTranslations): Promise<StudentProgressSummary> => {
-    const emptyTotals = { lessonsCompleted: 0, lessonsTotal: 0, levelsCompleted: 0, levelsTotal: 0 };
     const curricula = await new CurriculumBusiness().getEnrolledCurriculums(user);
-    if (curricula.length === 0) {
-      return { curricula: [], totals: emptyTotals };
+    const summary = await summariseLearnerProgress(user.studentid, curricula);
+    if (summary.curricula.length === 0) {
+      return summary;
     }
-
-    const curriculumids = curricula.map((cur) => cur.curriculumid);
-
-    const activeGrades = await grades.findAll({
-      where: { curriculumid: curriculumids, gradestatus: true, isdeleted: false },
-      attributes: ["gradeid", "curriculumid", "gradename", "gradeorder"],
-      order: [["gradeorder", "ASC"], ["gradename", "ASC"], ["gradeid", "ASC"]],
-    });
-    const gradeids = activeGrades.map((grade) => grade.gradeid);
-
-    const activeLevels = gradeids.length
-      ? await levels.findAll({
-          where: { gradeid: gradeids, levelstatus: true, isdeleted: false },
-          attributes: ["levelid", "gradeid", "levelname", "levelorder"],
-          order: [["levelorder", "ASC"], ["levelname", "ASC"], ["levelid", "ASC"]],
-        })
-      : [];
-    const levelids = activeLevels.map((level) => level.levelid);
-
-    const activeLessons = levelids.length
-      ? await lessons.findAll({
-          where: { levelid: levelids, lessonstatus: true, isdeleted: false },
-          attributes: ["lessonid", "levelid"],
-        })
-      : [];
-    const lessonids = activeLessons.map((lesson) => lesson.lessonid);
-
-    const studentLessonProgresses = lessonids.length
-      ? await studentlessonsprogress.findAll({
-          where: { studentid: user.studentid, lessonid: lessonids },
-          attributes: ["lessonid", "completed", "progress"],
-        })
-      : [];
-
-    const doneLessonIds = new Set<string>();
-    for (const p of studentLessonProgresses) {
-      if (p.completed === true || (p.progress ?? 0) >= 100) {
-        doneLessonIds.add(p.lessonid);
-      }
-    }
-
-    const lessonIdsByLevel = new Map<string, string[]>();
-    for (const lesson of activeLessons) {
-      const list = lessonIdsByLevel.get(lesson.levelid) ?? [];
-      list.push(lesson.lessonid);
-      lessonIdsByLevel.set(lesson.levelid, list);
-    }
-
-    const levelsByGrade = new Map<string, typeof activeLevels>();
-    for (const level of activeLevels) {
-      const list = levelsByGrade.get(level.gradeid) ?? [];
-      list.push(level);
-      levelsByGrade.set(level.gradeid, list);
-    }
-
-    const gradesByCurriculum = new Map<string, typeof activeGrades>();
-    for (const grade of activeGrades) {
-      const list = gradesByCurriculum.get(grade.curriculumid) ?? [];
-      list.push(grade);
-      gradesByCurriculum.set(grade.curriculumid, list);
-    }
-
-    const totals = { ...emptyTotals };
-
-    const curriculaOut: StudentProgressSummaryCurriculum[] = curricula.map((cur) => {
-      const curriculumGrades = gradesByCurriculum.get(cur.curriculumid) ?? [];
-
-      let lessonsCompleted = 0;
-      let lessonsTotal = 0;
-      let levelsCompleted = 0;
-      let levelsTotal = 0;
-      let currentLevel: StudentProgressSummaryCurrentLevel | null = null;
-      const gradesOut: StudentProgressSummaryGrade[] = [];
-
-      for (const grade of curriculumGrades) {
-        const gradeLevels = levelsByGrade.get(grade.gradeid) ?? [];
-        let gradeLessonsCompleted = 0;
-        let gradeLessonsTotal = 0;
-        let gradeLevelsCompleted = 0;
-        let gradeLevelsTotal = 0;
-        const levelsOut: StudentProgressSummaryLevel[] = [];
-
-        for (const level of gradeLevels) {
-          const levelLessonIds = lessonIdsByLevel.get(level.levelid) ?? [];
-          if (levelLessonIds.length === 0) {
-            // No active lessons: excluded from levelsCompleted/levelsTotal,
-            // and contributes nothing to the lesson counts either way. Still
-            // surfaced in the grades/levels array (with 0/0, not completed)
-            // so the app can show a "no lessons" state.
-            levelsOut.push({
-              levelid: level.levelid,
-              levelname: level.levelname,
-              lessonsCompleted: 0,
-              lessonsTotal: 0,
-              completed: false,
-            });
-            continue;
-          }
-
-          const levelLessonsTotal = levelLessonIds.length;
-          const levelLessonsCompleted = levelLessonIds.filter((id) => doneLessonIds.has(id)).length;
-          lessonsTotal += levelLessonsTotal;
-          lessonsCompleted += levelLessonsCompleted;
-          gradeLessonsTotal += levelLessonsTotal;
-          gradeLessonsCompleted += levelLessonsCompleted;
-
-          levelsTotal += 1;
-          gradeLevelsTotal += 1;
-          const levelComplete = levelLessonsCompleted === levelLessonsTotal;
-          if (levelComplete) {
-            levelsCompleted += 1;
-            gradeLevelsCompleted += 1;
-          } else if (!currentLevel) {
-            currentLevel = {
-              levelid: level.levelid,
-              levelname: level.levelname,
-              gradeid: grade.gradeid,
-              gradename: grade.gradename,
-              lessonsCompleted: levelLessonsCompleted,
-              lessonsTotal: levelLessonsTotal,
-            };
-          }
-
-          levelsOut.push({
-            levelid: level.levelid,
-            levelname: level.levelname,
-            lessonsCompleted: levelLessonsCompleted,
-            lessonsTotal: levelLessonsTotal,
-            completed: levelComplete,
-          });
-        }
-
-        gradesOut.push({
-          gradeid: grade.gradeid,
-          gradename: grade.gradename,
-          lessonsCompleted: gradeLessonsCompleted,
-          lessonsTotal: gradeLessonsTotal,
-          levelsCompleted: gradeLevelsCompleted,
-          levelsTotal: gradeLevelsTotal,
-          levels: levelsOut,
-        });
-      }
-
-      totals.lessonsCompleted += lessonsCompleted;
-      totals.lessonsTotal += lessonsTotal;
-      totals.levelsCompleted += levelsCompleted;
-      totals.levelsTotal += levelsTotal;
-
-      return {
-        curriculumid: cur.curriculumid,
-        curriculumname: cur.curriculumname,
-        lessonsCompleted,
-        lessonsTotal,
-        levelsCompleted,
-        levelsTotal,
-        currentLevel,
-        grades: gradesOut,
-      };
-    });
-
+    const { curricula: curriculaOut } = summary;
     if (translations) {
       // One query per table for the whole payload: every curriculum, grade and level row names itself, and the
       // current level (which names its level and its grade) takes both rows' translations.
@@ -571,7 +588,7 @@ WHERE
         current.translations = merged;
       }
     }
-    return { curricula: curriculaOut, totals };
+    return summary;
   };
 
   // `scope` (see report-scope.ts): only logins of learners and staff in the scope are answered; the rest are left

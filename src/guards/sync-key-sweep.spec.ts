@@ -52,6 +52,7 @@ const ALLOWLIST: Array<RouteKey> = [
   routeKey("POST", "/report/studentlevelquiz"),
   routeKey("POST", "/report/studentlevelquiz/class"),
   routeKey("POST", "/report/studentstatus"),
+  routeKey("POST", "/report/learner-progress"),
   routeKey("POST", "/report/student-grade-progress"),
   routeKey("POST", "/report/student-level-progress"),
   routeKey("POST", "/report/student-lesson-progress"),
@@ -99,6 +100,7 @@ const ALLOWLIST_HANDLERS: Record<RouteKey, [any, string]> = {
   [routeKey("POST", "/report/studentlevelquiz")]: [ReportController, "getLevelQuiz"],
   [routeKey("POST", "/report/studentlevelquiz/class")]: [ReportController, "getClassLevelQuiz"],
   [routeKey("POST", "/report/studentstatus")]: [ReportController, "getStudentStatus"],
+  [routeKey("POST", "/report/learner-progress")]: [ReportController, "getLearnerProgress"],
   [routeKey("POST", "/report/student-grade-progress")]: [
     ReportController,
     "getStudentGradeProgress",

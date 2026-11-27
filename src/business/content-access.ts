@@ -328,6 +328,23 @@ export async function enrolledCurriculumIds(user: Token | undefined): Promise<st
   return curriculaInScope(scope, own);
 }
 
+/**
+ * The curricula a LEARNER is enrolled in, by id: their own record's current list, and only those the given
+ * organisation owns. This is `enrolledCurriculumIds` for a learner token, for a caller that has the learner's
+ * record and school rather than the learner's token (the admin learner-progress report).
+ */
+export async function enrolledCurriculumIdsOfLearner(studentid: unknown, organisationid: string): Promise<string[]> {
+  return curriculaInScope({ organisationid }, await learnerCurriculumList(studentid));
+}
+
+/** The live (active, not deleted) curriculum rows among these ids, in `curriculumname` order: what a learner's screens list. */
+export async function liveCurriculaByIds(ids: string[]) {
+  return curriculums.findAll({
+    where: { isdeleted: false, curriculumstatus: true, curriculumid: { [Op.in]: ids } },
+    order: ["curriculumname"],
+  });
+}
+
 /** May the token's holder see this content? An id that names nothing is not visible either. */
 export async function canAccessContent(user: Token | undefined, kind: ContentKind, id: unknown): Promise<boolean> {
   const caller = callerOf(user);

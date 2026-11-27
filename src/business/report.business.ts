@@ -22,10 +22,12 @@ import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogr
 import { studentprogress } from "src/models/data-models/studentprogress";
 import { students, studentsAttributes } from "src/models/data-models/students";
 import { Default_Test_Student_ID } from "src/models/enums/user.enum";
-import { IMultiPaging } from "src/models/IPaging";
+import { IMultiFilter, IMultiPaging } from "src/models/IPaging";
 import { buildCustomWhere } from "src/services/util.service";
 import { findSchoolIdByName, resolveSchoolScope, schoolOfStudent, studentsOfSchool } from "./school-identity";
 import { contentFiltersInScope, learnersInScope, ReportScope } from "./report-scope";
+import { enrolledCurriculumIdsOfLearner, liveCurriculaByIds } from "./content-access";
+import { summariseLearnerProgress } from "./student.business";
 
 export interface ChartItemFormat {
     name: Date | string;
@@ -47,6 +49,33 @@ export const pinStudent = (where: any, student: students, hide = false) => {
     where.studentid = id;
     const raw = (student as any).dataValues;
     if (hide && raw) delete raw.studentid;
+};
+
+
+/** The app's own percent rule (edtech-expo src/models/ProgressSummary.ts `toPercent`): rounding never shows a learner as finished, or as not started, when they are not. */
+export const toProgressPercent = (done: number, total: number): number => {
+    if (total <= 0) return 0;
+    const percent = Math.min(100, Math.max(0, Math.round((done / total) * 100)));
+    if (done < total && percent === 100) return 99;
+    if (done > 0 && percent === 0) return 1;
+    return percent;
+};
+
+/** A text to match literally under LIKE: the escape character and both wildcards are escaped. */
+const likeLiteral = (text: string): string => text.replace(/[\\%_]/g, "\\$&");
+
+const isoOrNull = (value: unknown): string | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const date = value instanceof Date ? value : new Date(value as string | number);
+    return isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+/** The text values of a body filter (one id or a list), or `null` when it names something that is not text. */
+const textValuesOf = (filters: IMultiFilter[], key: string): string[] | null => {
+    const filter = filters.filter(f => f && f.key === key && f.value !== "" && f.value !== null && f.value !== undefined).pop();
+    if (!filter) return [];
+    const values = [filter.value].flat().filter(v => v !== "" && v !== null && v !== undefined);
+    return values.every(v => typeof v === "string") ? (values as string[]) : null;
 };
 
 export class ReportBusiness {
@@ -714,6 +743,103 @@ export class ReportBusiness {
             (st as any).lastLogin = logins?.logintime;
         }
         return allstudents;
+    }
+
+    // One row per learner of the scope (disabled ones included, deleted ones not), with the SAME progress numbers
+    // the learner's own app shows: each learner's enrolled curricula are resolved as the app resolves them and
+    // counted by `summariseLearnerProgress`, the function behind `GET student/progress/summary`. Paging is over
+    // learners, ordered by school name, class name, username (a learner's id breaks ties). `pagesize` 0 means all.
+    // Each learner costs a few queries; a page is small, and so is a school.
+    getLearnerProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {
+        if (!(await contentFiltersInScope(scope, paging.filter))) return { rows: [], count: 0 };
+        const filters = Array.isArray(paging.filter) ? paging.filter : [];
+        const schoolids = textValuesOf(filters, "schoolid");
+        const classids = textValuesOf(filters, "standard");
+        if (schoolids === null || classids === null) return { rows: [], count: 0 };
+        const searchfilter = filters.filter(f => f && f.key === "search" && typeof f.value === "string" && f.value.trim()).pop();
+
+        const conditions: WhereOptions<studentsAttributes>[] = [
+            { is_teacher_acc: false },
+            learnersInScope(scope),
+            { "$schooluser.isdeleted$": false } as any,
+        ];
+        if (schoolids.length) conditions.push({ schoolid: { [Op.in]: schoolids } });
+        if (classids.length) conditions.push({ standard: { [Op.in]: classids } });
+        if (searchfilter) {
+            const like = `%${likeLiteral((searchfilter.value as string).trim().slice(0, 100))}%`;
+            conditions.push({
+                [Op.or]: [
+                    { "$schooluser.schoolusername$": { [Op.like]: like } },
+                    { studentfirstname: { [Op.like]: like } },
+                    { studentlastname: { [Op.like]: like } },
+                ],
+            } as any);
+        }
+
+        const pagesize = Number(paging.pagesize) > 0 ? Math.floor(Number(paging.pagesize)) : 0;
+        const pageindex = Number(paging.pageindex) > 1 ? Math.floor(Number(paging.pageindex)) : 1;
+        const options: any = {};
+        if (pagesize) {
+            options.limit = pagesize;
+            options.offset = pagesize * (pageindex - 1);
+        }
+        const found = await students.scope("withOwnership").findAndCountAll({
+            ...options,
+            where: { [Op.and]: conditions },
+            attributes: ["studentid", "studentfirstname", "studentlastname", "schoolid", "standard", "schooluserid"],
+            include: [
+                { model: schoolusers, as: "schooluser", required: true, attributes: ["schoolusername", "isdisabled", "schooluserstatus"] },
+                { model: schools, required: true, attributes: ["schoolid", "schoolname"] },
+                { model: standards, as: "class", required: false, attributes: ["standardname"] },
+            ],
+            order: [[col("school.schoolname"), "ASC"], [col("class.standardname"), "ASC"], [col("schooluser.schoolusername"), "ASC"], ["studentid", "ASC"]],
+        });
+
+        // A learner's enrolment counts only curricula their school's organisation owns (as their own token's claim does).
+        const pageSchoolIds = [...new Set(found.rows.map(r => r.schoolid))];
+        const owners = pageSchoolIds.length
+            ? ((await schools.scope("withOwnership").findAll({ where: { schoolid: { [Op.in]: pageSchoolIds } }, attributes: ["schoolid", "organisationid"], raw: true })) as unknown as Array<{ schoolid: string; organisationid: string | null }>)
+            : [];
+        const organisationOf = new Map(owners.map(o => [String(o.schoolid).toLowerCase(), o.organisationid]));
+
+        const rows = [];
+        for (const st of found.rows) {
+            const organisationid = organisationOf.get(String(st.schoolid).toLowerCase());
+            const enrolledids = organisationid ? await enrolledCurriculumIdsOfLearner(st.studentid, organisationid) : [];
+            const enrolled = enrolledids.length ? await liveCurriculaByIds(enrolledids) : [];
+            const summary = await summariseLearnerProgress(st.studentid, enrolled);
+            const login = await rpiuseraccess.findOne({ order: [["logintime", "DESC"]], where: { userid: st.schooluserid } });
+            const lastprogress = (await studentlessonsprogress.findOne({
+                attributes: [[fn("max", col("lastupdated")), "lastprogressat"]],
+                where: { studentid: st.studentid },
+                raw: true,
+            })) as unknown as { lastprogressat?: unknown } | null;
+            const login_ = (st as any).schooluser;
+            rows.push({
+                studentid: st.studentid,
+                username: login_?.schoolusername ?? "",
+                firstname: st.studentfirstname ?? "",
+                lastname: st.studentlastname ?? "",
+                schoolid: st.schoolid,
+                schoolname: (st as any).school?.schoolname ?? "",
+                standard: st.standard ?? "",
+                classname: (st as any).class?.standardname ?? "",
+                status: login_?.isdisabled || login_?.schooluserstatus === false || (login_?.schooluserstatus as unknown) === 0 ? "disabled" : "enabled",
+                curricula: summary.curricula.map(c => ({
+                    curriculumid: c.curriculumid,
+                    curriculumname: c.curriculumname,
+                    lessonsCompleted: c.lessonsCompleted,
+                    lessonsTotal: c.lessonsTotal,
+                    percent: toProgressPercent(c.lessonsCompleted, c.lessonsTotal),
+                    levelsCompleted: c.levelsCompleted,
+                    levelsTotal: c.levelsTotal,
+                    currentLevel: c.currentLevel ? { levelid: c.currentLevel.levelid, levelname: c.currentLevel.levelname } : null,
+                })),
+                lastlogin: isoOrNull(login?.logintime),
+                lastprogressat: isoOrNull(lastprogress?.lastprogressat),
+            });
+        }
+        return { rows, count: found.count };
     }
 
     getStudentGradeProgress = async (paging: IMultiPaging, scope?: ReportScope | null) => {
