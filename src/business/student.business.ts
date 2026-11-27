@@ -666,7 +666,9 @@ WHERE
   }
 
   // The curricula, active grades and active levels the learner sees, in the order every learner screen shows them:
-  // shared by "My progress" (getprogresssummary) and the awards overview so the two always agree on what exists.
+  // used by the awards and certificates overviews. "My progress" (getprogresssummary) and the admin report read the same
+  // grades and levels through `loadProgressContent` instead; the two are the same queries written twice, and
+  // student.enrolled-tree.spec.ts fails if their lists ever differ (content or order).
   // No grade or level query is made when there is no enrolled curriculum (or no active grade).
   private getenrolledtree = async (user: Token) => {
     const curricula = await new CurriculumBusiness().getEnrolledCurriculums(user);
@@ -749,8 +751,8 @@ WHERE
     return summary;
   };
 
-  // Single call backing the learner app's Awards screen: the same curricula, grades and levels as "My progress" (one
-  // shared selection, getenrolledtree), each level with the learner's progress, whether it can be awarded and the award
+  // Single call backing the learner app's Awards screen: the same curricula, grades and levels as "My progress" (getenrolledtree
+  // and loadProgressContent select them alike, pinned by student.enrolled-tree.spec.ts), each level with the learner's progress, whether it can be awarded and the award
   // earned for it. An award is kept for good, so a level that is now on a hidden single-item tier still shows the
   // award it already has, and an award whose level is no longer one of those levels is listed in `earnedelsewhere`.
   // A fixed number of queries: the curriculum tree, the school, one grouped count of live levels per grade, the level
