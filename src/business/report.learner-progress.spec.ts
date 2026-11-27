@@ -18,7 +18,9 @@ import { rpiuseraccess } from "src/models/data-models/rpiuseraccess";
 import { schools } from "src/models/data-models/school";
 import { schoolusers } from "src/models/data-models/schoolusers";
 import { standards } from "src/models/data-models/standards";
+import { studentawards } from "src/models/data-models/studentawards";
 import { studentlessonsprogress } from "src/models/data-models/studentlessonsprogress";
+import { studentlevelsprogress } from "src/models/data-models/studentlevelsprogress";
 import { students } from "src/models/data-models/students";
 import { ReportBusiness, toProgressPercent } from "./report.business";
 import { StudentBusiness } from "./student.business";
@@ -41,7 +43,7 @@ const CLASS_B = "class-b";
 const CUR = "cur-1";
 const OTHER_CUR = "cur-other-org";
 
-let tables: { students: Row[]; schoolusers: Row[]; schools: Row[]; standards: Row[]; curriculums: Row[]; grades: Row[]; levels: Row[]; lessons: Row[]; progress: Row[]; logins: Row[] };
+let tables: { students: Row[]; schoolusers: Row[]; schools: Row[]; standards: Row[]; curriculums: Row[]; grades: Row[]; levels: Row[]; lessons: Row[]; progress: Row[]; logins: Row[]; levelflags: Row[]; awards: Row[] };
 let studentQueries: any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
 
 const learner = (n: string, over: Row = {}): [Row, Row] => [
@@ -76,6 +78,8 @@ const reset = () => {
     lessons: [...lessonRows("level-1", 4), ...lessonRows("level-2", 2)],
     progress: [],
     logins: [],
+    levelflags: [],
+    awards: [],
   };
   studentQueries = [];
 };
@@ -89,6 +93,10 @@ const add = (n: string, over: Row = {}, login: Row = {}) => {
 const done = (studentid: string, lessonids: string[], lastupdated = new Date("2026-03-01T10:00:00Z")) => {
   for (const lessonid of lessonids) tables.progress.push({ studentid, lessonid, completed: true, progress: 100, lastupdated });
 };
+
+/** The stored 80% flag of a level (what the app counts a level done by), and an earned award for it. */
+const flag = (studentid: string, levelid: string, completed = true) => tables.levelflags.push({ studentid, levelid, completed });
+const award = (studentid: string, levelid: string) => tables.awards.push({ studentid, levelid });
 
 // ---- a small evaluator for the `where` shapes this code builds -------------------------------------------------------
 const likeToRegExp = (pattern: string): RegExp => {
@@ -148,6 +156,8 @@ beforeEach(() => {
   jest.spyOn(levels, "findAll").mockImplementation((async (options: any) => simple(tables.levels, options.where)) as never); // eslint-disable-line @typescript-eslint/no-explicit-any
   jest.spyOn(lessons, "findAll").mockImplementation((async (options: any) => simple(tables.lessons, options.where)) as never); // eslint-disable-line @typescript-eslint/no-explicit-any
   jest.spyOn(studentlessonsprogress, "findAll").mockImplementation((async (options: any) => simple(tables.progress, options.where)) as never); // eslint-disable-line @typescript-eslint/no-explicit-any
+  jest.spyOn(studentlevelsprogress, "findAll").mockImplementation((async (options: any) => simple(tables.levelflags, options.where)) as never); // eslint-disable-line @typescript-eslint/no-explicit-any
+  jest.spyOn(studentawards, "findAll").mockImplementation((async (options: any) => simple(tables.awards, options.where)) as never); // eslint-disable-line @typescript-eslint/no-explicit-any
   jest.spyOn(studentlessonsprogress, "findOne").mockImplementation((async (options: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     const dates = simple(tables.progress, options.where).map((r) => r.lastupdated as Date);
     return { lastprogressat: dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null };
@@ -228,8 +238,30 @@ describe("ReportBusiness.getLearnerProgress", () => {
   it("a learner who has finished a level has it counted, and the next level is current", async () => {
     const amy = add("amy");
     done(amy.studentid, ["level-1-lesson-1", "level-1-lesson-2", "level-1-lesson-3", "level-1-lesson-4"]);
+    flag(amy.studentid, "level-1"); // a level counts as completed by the stored flag, not by every lesson being done
     const mine = (await run()).rows[0].curricula[0];
     expect(mine).toMatchObject({ lessonsCompleted: 4, lessonsTotal: 6, levelsCompleted: 1, levelsTotal: 2, percent: 67, currentLevel: { levelid: "level-2", levelname: "Level Two" } });
+  });
+
+  it("levelsCompleted equals the app's summary in every case of the level rule: flag, award alone (flag dropped back), lessons all done but no flag", async () => {
+    const flagged = add("amy");
+    const awarded = add("ben");
+    const allDone = add("cat");
+    const nothing = add("dee");
+    flag(flagged.studentid, "level-1");
+    flag(awarded.studentid, "level-1", false);
+    award(awarded.studentid, "level-1");
+    award(awarded.studentid, "level-2");
+    done(allDone.studentid, ["level-1-lesson-1", "level-1-lesson-2", "level-1-lesson-3", "level-1-lesson-4"]);
+    const rows = (await run()).rows;
+    const expected: Record<string, number> = { "st-amy": 1, "st-ben": 2, "st-cat": 0, "st-dee": 0 };
+    for (const st of [flagged, awarded, allDone, nothing]) {
+      const summary = await new StudentBusiness().getprogresssummary({ studentid: st.studentid, organisationid: ORG, schoolid: SCHOOL_A, schooluserrole: 4, curriculumids: [CUR] } as never);
+      const mine = rows.find((r) => r.studentid === st.studentid)!.curricula[0];
+      expect([st.studentid, mine.levelsCompleted]).toEqual([st.studentid, expected[st.studentid]]);
+      expect(mine.levelsCompleted).toBe(summary.curricula[0].levelsCompleted);
+      expect(mine.currentLevel?.levelid ?? null).toBe(summary.curricula[0].currentLevel?.levelid ?? null);
+    }
   });
 
   it("a learner with no progress shows zero done, 0 percent, and the first level as current", async () => {
